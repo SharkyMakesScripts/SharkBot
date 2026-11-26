@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SharkBot
 // @namespace    https://spacealpha.net/
-// @version      3.9.1
+// @version      3.9.3
 // @description  SharkBot for Space Alpha: saves your planets' units, facilities, inventory, research, bank and market prices, and calculates credit generation and Tick Generator upgrade costs.
 // @author       SharkBot
 // @match        https://spacealpha.net/*
@@ -41,7 +41,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     const PANEL_ID = 'sa-helper-panel';
     const SLOT_IDS = 'ABCDEFGHIJ'.split('');   // up to 10 planets
     // Version comes from the @version header so it's never out of sync
-    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.9.1';
+    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.9.3';
     // Another copy of SharkBot already put its panel on the page: warn and stop,
     // so two installed copies are obvious instead of silently showing the old one.
     const existing = document.getElementById(PANEL_ID);
@@ -5858,7 +5858,8 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     // the fleet list is a scan: for each player, all their fleets in it are added up (total ships), and the fleets you open
     // during that scan add their ship types, units and resources (each fleet once). Each player keeps the latest 50 scan
     // snapshots and the highest per-scan sums ever seen (a floor on what they own). Stored in sa-admin-fleets.
-    const FLEET_SESSION_MS = 10 * 60e3;
+    const FLEET_SESSION_MS = 15 * 60e3;   // a new scan at most every 15 minutes (since v3.9.3)
+    var fleetScanNow = false;
     function fleetsLoad() {
         const d = GM_getValue('sa-admin-fleets', null) || { players: {}, session: null };
         // v3.9.0 read the fleet list's title row as a fleet by "Sender"
@@ -5877,9 +5878,13 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     function readFleetList() {
         const t = document.querySelector('#targets_list table'); if (!t) return null;
         const rows = [];
-        Array.from(t.querySelectorAll(':scope > tr, :scope > tbody > tr')).forEach(tr => {
+        Array.from(t.querySelectorAll(':scope > tr, :scope > tbody > tr')).forEach(tr => { const r = parseFleetRow(tr); if (r) rows.push(r); });
+        return rows;
+    }
+    function parseFleetRow(tr) {
+        {
             const all = fTxt(tr);
-            if (!/ships?\b/i.test(all) || /fleet\s*info/i.test(all)) return;   // title row or not a fleet
+            if (!/ships?\b/i.test(all) || /fleet\s*info/i.test(all)) return null;   // title row or not a fleet
             const lines = all.split('\n').map(x => x.trim()).filter(Boolean);
             const senderEl = tr.querySelector('td div span') || tr.querySelector('span');
             const sender = senderEl ? fTxt(senderEl).split('\n')[0].trim() : '';
@@ -5891,10 +5896,41 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             const ci = lines.findIndex(l => /^#\d+\s*-\s*\d+/.test(l));
             const coords = ci >= 0 ? lines[ci] : '';
             const target = ci > 0 && !/ships?\b|KM$/i.test(lines[ci - 1]) && !MISSION_RE.test(lines[ci - 1]) && lines[ci - 1] !== arrival ? lines[ci - 1] : '';
-            if (!sender || /^sender$/i.test(sender)) return;
-            rows.push({ sender, ships, mission, target, coords, arrival });
+            if (!sender || /^sender$/i.test(sender)) return null;
+            return { sender, ships, mission, target, coords, arrival };
+        }
+    }
+    // Hovering a fleet in the list shows a box with its ships, units and resources (since v3.9.2): remember the row
+    // under the pointer, and read the box when it appears
+    let fleetHover = null;
+    document.addEventListener('mouseover', (e) => {
+        const tr = e.target && e.target.closest && e.target.closest('#targets_list tr');
+        if (!tr) return;
+        const r = parseFleetRow(tr);
+        if (r) { fleetHover = { row: r, at: Date.now() }; setTimeout(() => { try { checkFleets(); } catch (er) {} }, 400); }
+    }, true);
+    function readHoverFleet() {
+        if (!fleetHover || Date.now() - fleetHover.at > 8000) return null;
+        const boxes = Array.from(document.querySelectorAll('fleet-ships')).filter(fs => !fs.closest('#selected_target') && !fs.closest('#' + PANEL_ID) && fs.offsetParent !== null);
+        if (!boxes.length) return null;
+        const fs = boxes[boxes.length - 1], box = fs.closest('table') || fs.parentElement;
+        const lines = (box.innerText || '').split('\n').map(x => x.trim()).filter(Boolean);
+        const si = lines.findIndex(l => /^ships$/i.test(l));
+        const types = {};
+        Array.from(fs.querySelectorAll('td')).forEach(td => {
+            const amt = td.querySelector('amount span') || td.querySelector('amount'); if (!amt) return;
+            const n = parseNumber(fTxt(amt)); const name = fTxt(td).replace(fTxt(amt), '').replace(/\s+/g, ' ').trim();
+            if (name && n != null) types[name] = (types[name] || 0) + n;
         });
-        return rows;
+        if (!Object.keys(types).length) return null;
+        const after = (label) => { const i = lines.findIndex(l => new RegExp('^' + label + '$', 'i').test(l)); const m = i >= 0 && lines[i + 1] && lines[i + 1].match(/^([^/]+?)\s*\/\s*(.+)$/); return m ? [parseNumber(m[1]), parseNumber(m[2])] : [null, null]; };
+        const [units, unitsCap] = after('Units'), [res, resCap] = after('Resources');
+        const head = si > 0 ? lines.slice(0, si) : [];
+        const ri = lines.findIndex(l => /^resources$/i.test(l));
+        const cargo = ri >= 0 ? lines.slice(ri + 2).filter(l => !/^[\d.,]+\s*[kKmMbBtTqQ]?$/.test(l)).join(', ') : (head[1] || '');
+        const r = fleetHover.row;
+        return { owner: r.sender, target: fKnown(r.target) ? r.target : '', coords: r.coords, types, units, unitsCap, res, resCap, cargo: cargo || head[1] || '',
+                 mission: r.mission || head[0] || '' };
     }
     function readSelectedFleet() {
         const box = document.getElementById('selected_target'); if (!box) return null;
@@ -5914,7 +5950,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         const mission = lines.find(l => /^(Mining|Attack|Reinforc|Return|Transport|Spy|Colon|Defend|Station)/i.test(l)) || '';
         return { owner, target, types, units, unitsCap, res, resCap, mission };
     }
-    let fleetSig = '', selSig = '';
+    let fleetSig = '', selSig = '', hovSig = '';
     // Every fleet scanned (since v3.9.0), for Admin → Fleets: one entry per fleet (owner, ships, mission, target), updated
     // when seen again; fleets you opened add ship types, units and resources. The latest 500 are kept (shared by admins).
     function logFleet(d, e, now) {
@@ -5922,7 +5958,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         const low = (x) => String(x || '').trim().toLowerCase();
         const key = e.key || [low(e.owner), e.ships, low(e.mission), low(e.target), e.coords || ''].join('|');
         let x = d.log.find(y => y.key === key);
-        if (!x && e.types) x = d.log.find(y => low(y.owner) === low(e.owner) && low(y.target) === low(e.target) && y.ships === e.ships);
+        if (!x && e.types) x = d.log.find(y => low(y.owner) === low(e.owner) && y.ships === e.ships && (e.coords ? y.coords === e.coords : low(y.target) === low(e.target)));
         if (!x) { x = { key, first: now }; d.log.unshift(x); }
         Object.keys(e).forEach(k => { if (e[k] != null && e[k] !== '' && k !== 'key') x[k] = e[k]; });
         x.at = now;
@@ -5934,30 +5970,39 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         if (!list && !sel) return;
         const d = fleetsLoad(), now = new Date().toISOString(), low = (x) => String(x || '').trim().toLowerCase();
         let changed = false;
-        // A new scan when the fleet list changes (ignoring arrival countdowns) or the last scan is over 10 minutes old
+        // Scans (since v3.9.3): a new scan at most every 15 minutes (or Scan now). In between, only fleets that weren't in
+        // the list before are added; the list re-sorting or its timers and distances ticking don't count as a change.
         if (list && list.length) {
-            const sig = list.map(r => [r.sender, r.ships, r.mission, r.target, r.coords].join('|')).join(';');
-            if (sig !== fleetSig || !d.session || Date.now() - new Date(d.session.at) > FLEET_SESSION_MS) {
-                if (sig !== (d.session && d.session.sig) || !d.session || Date.now() - new Date(d.session.at) > FLEET_SESSION_MS)
-                    d.session = { id: now, at: now, sig, players: {}, opened: {} };
+            const keyOf = (r) => [low(r.sender), r.ships, low(r.mission), low(r.target), r.coords].join('|');
+            const sig = list.map(keyOf).sort().join(';');
+            const start = d.session && (d.session.start || d.session.id);
+            const fresh = !d.session || !start || Date.now() - new Date(start) >= FLEET_SESSION_MS || fleetScanNow;
+            if (fresh || sig !== fleetSig) {
+                if (fresh) { d.session = { id: now, start: now, at: now, sig, players: {}, opened: {}, logged: [] }; fleetScanNow = false; }
+                d.session.logged = d.session.logged || [];
                 fleetSig = sig;
                 list.filter(r => fKnown(r.sender)).forEach(r => {
+                    const rk = keyOf(r);
+                    if (d.session.logged.includes(rk)) return;   // already counted in this scan
+                    d.session.logged.push(rk);
                     logFleet(d, { owner: r.sender, ships: r.ships || 0, mission: r.mission, target: fKnown(r.target) ? r.target : '', coords: r.coords, arrival: r.arrival }, now);
                     const k = low(r.sender), sp = d.session.players[k] || (d.session.players[k] = { name: r.sender, fleets: 0, ships: 0, rows: [] });
-                    const rk = [r.ships, r.mission, r.target, r.coords].join('|');
-                    if (!sp.rows.includes(rk)) { sp.rows.push(rk); sp.fleets++; sp.ships += r.ships || 0; }
+                    sp.rows.push(rk); sp.fleets++; sp.ships += r.ships || 0;
+                    changed = true;
                 });
-                changed = true;
+                if (fresh) changed = true;
             }
         }
-        // The fleet open in the selected-target window: its ship types, units and resources count once in this scan
+        // The fleet open in the selected-target window, or shown in the hover box of the fleet list (since v3.9.2):
+        // its ship types, units and resources count once in this scan
+        [[sel, 'sel'], [readHoverFleet(), 'hov']].forEach(([sel, src]) => {
         if (sel && fKnown(sel.owner) && Object.keys(sel.types).length) {
-            const fk = [low(sel.owner), sel.target, JSON.stringify(sel.types), sel.mission].join('|');
-            if (fk !== selSig) {
-                selSig = fk;
-                if (!d.session || Date.now() - new Date(d.session.at) > FLEET_SESSION_MS) d.session = { id: now, at: now, sig: '', players: {}, opened: {} };
-                logFleet(d, { owner: sel.owner, target: fKnown(sel.target) ? sel.target : '', mission: sel.mission, types: sel.types, units: sel.units, unitsCap: sel.unitsCap, res: sel.res, resCap: sel.resCap,
-                    ships: Object.values(sel.types).reduce((a, b) => a + b, 0) }, now); changed = true;
+            const fk = [low(sel.owner), fKnown(sel.target) ? low(sel.target) : '', JSON.stringify(sel.types)].join('|');
+            if (fk !== (src === 'sel' ? selSig : hovSig)) {
+                if (src === 'sel') selSig = fk; else hovSig = fk;
+                if (!d.session || Date.now() - new Date(d.session.start || d.session.id) >= FLEET_SESSION_MS) d.session = { id: now, start: now, at: now, sig: '', players: {}, opened: {}, logged: [] };
+                logFleet(d, { owner: sel.owner, target: fKnown(sel.target) ? sel.target : '', coords: sel.coords, mission: sel.mission, types: sel.types, units: sel.units, unitsCap: sel.unitsCap, res: sel.res, resCap: sel.resCap,
+                    cargo: sel.cargo, ships: Object.values(sel.types).reduce((a, b) => a + b, 0) }, now); changed = true;
                 if (!d.session.opened[fk]) {
                     d.session.opened[fk] = 1;
                     const k = low(sel.owner), sp = d.session.players[k] || (d.session.players[k] = { name: sel.owner, fleets: 0, ships: 0, rows: [] });
@@ -5970,6 +6015,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                 }
             }
         }
+        });
         if (!changed || !d.session) return;
         // Save this scan's sums as each player's snapshot, and update their maximums
         Object.entries(d.session.players).forEach(([k, sp]) => {
@@ -5991,10 +6037,24 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         let added = false;
         Object.values(d.session.players).forEach(sp => { if (!byName.has(low(sp.name))) { const id = 'hs:' + low(sp.name); pd.players[id] = { id, name: sp.name, first: now, alliance: '' }; added = true; } });
         if (added) GM_setValue('sa-players', pd);
-        adminSyncSoon();
+        fleetSyncSoon();
         try { renderPlayers(); renderFleets(); } catch (e) {}
     }
     setInterval(() => { try { checkFleets(); } catch (e) {} }, 2000);
+    // Fleet activity sends shared admin data at most once a minute (since v3.9.3)
+    var fleetSyncAt = 0, fleetSyncTimer = null;
+    function fleetSyncSoon() {
+        if (!adminCreds || fleetSyncTimer) return;
+        fleetSyncTimer = setTimeout(() => { fleetSyncTimer = null; fleetSyncAt = Date.now(); adminSync(); }, Math.max(20000, 60000 - (Date.now() - fleetSyncAt)));
+    }
+    function fleetNextText() {
+        const s0 = fleetsLoad().session; if (!s0) return 'No scan yet: open the fleet list';
+        const left = FLEET_SESSION_MS - (Date.now() - new Date(s0.start || s0.id));
+        if (left <= 0) return 'Next scan when the fleet list is open';
+        const m = Math.floor(left / 60e3), sec = Math.floor(left / 1000) % 60;
+        return `Scan started ${agoText(s0.start || s0.id)} · next scan in ${m}:${String(sec).padStart(2, '0')}`;
+    }
+    setInterval(() => { const el = document.getElementById('sa-fl-next'); if (el) el.textContent = fleetNextText(); }, 1000);
     // Admin → Fleets (since v3.9.0)
     var flFilter = { q: '', ally: '', mission: '', range: '24h' };
     function renderFleets() {
@@ -6022,9 +6082,10 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                 <select class="sa-select" id="sa-fl-mission" style="width:auto"><option value="">All missions</option>${missions.map(m => `<option ${flFilter.mission === m ? 'selected' : ''}>${escapeHtml(m)}</option>`).join('')}</select>
                 <select class="sa-select" id="sa-fl-range" style="width:auto">${[['1h', 'Last hour'], ['24h', 'Last 24 hours'], ['7d', 'Last 7 days'], ['all', 'All']].map(([k, l]) => `<option value="${k}" ${flFilter.range === k ? 'selected' : ''}>${l}</option>`).join('')}</select>
             </div>
-            <div class="sa-recommend" style="margin-bottom:6px">${rows.length} fleet${rows.length === 1 ? '' : 's'} · ${f(total)} ships${log.length > rows.length ? ` <span style="color:var(--muted)">(${log.length} kept)</span>` : ''}</div>
+            <div class="sa-recommend" style="margin-bottom:6px; display:flex; gap:8px; align-items:center; flex-wrap:wrap"><span style="flex:1">${rows.length} fleet${rows.length === 1 ? '' : 's'} · ${f(total)} ships${log.length > rows.length ? ` <span style="color:var(--muted)">(${log.length} kept)</span>` : ''}</span>
+                <span style="color:var(--muted); font-size:10px" id="sa-fl-next">${fleetNextText()}</span><button class="sa-btn" id="sa-fl-scan" style="margin:0" title="Start a new scan the next time the fleet list is read">Scan now</button></div>
             ${rows.length ? `<div style="overflow-x:auto"><table class="sa-unit-table" data-sort-id="admin-fleets">
-                <thead><tr><th>Seen</th><th>Owner</th><th>Alliance</th><th style="text-align:right">Ships</th><th>Mission</th><th>Target</th><th>Arrival</th><th>Ship types</th><th style="text-align:right">Units</th><th style="text-align:right">Resources</th></tr></thead>
+                <thead><tr><th>Seen</th><th>Owner</th><th>Alliance</th><th style="text-align:right">Ships</th><th>Mission</th><th>Target</th><th>Arrival</th><th>Ship types</th><th style="text-align:right">Units</th><th style="text-align:right">Resources</th><th>Cargo</th></tr></thead>
                 <tbody>${rows.map(x => `<tr>
                     <td data-sort="${new Date(x.at).getTime()}" title="${escapeHtml(new Date(x.at).toLocaleString())}">${escapeHtml(agoText(x.at))}</td>
                     <td><span class="sa-fl-owner" data-owner="${escapeHtml(x.owner)}" style="cursor:pointer; text-decoration:underline dotted">${escapeHtml(x.owner)}</span></td>
@@ -6034,8 +6095,10 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                     <td style="color:var(--muted)">${escapeHtml(x.arrival || '')}</td>
                     <td style="font-size:10px">${x.types ? Object.entries(x.types).map(([t, v]) => `${escapeHtml(t)} ${f(v)}`).join(', ') : ''}</td>
                     <td class="sa-num" data-sort="${x.units ?? ''}">${x.units != null ? f(x.units) + (x.unitsCap ? `<span style="color:var(--muted)"> / ${f(x.unitsCap)}</span>` : '') : ''}</td>
-                    <td class="sa-num" data-sort="${x.res ?? ''}">${x.res != null ? f(x.res) + (x.resCap ? `<span style="color:var(--muted)"> / ${f(x.resCap)}</span>` : '') : ''}</td></tr>`).join('')}</tbody></table></div>`
+                    <td class="sa-num" data-sort="${x.res ?? ''}">${x.res != null ? f(x.res) + (x.resCap ? `<span style="color:var(--muted)"> / ${f(x.resCap)}</span>` : '') : ''}</td>
+                    <td>${escapeHtml(x.cargo || '')}</td></tr>`).join('')}</tbody></table></div>`
                 : `<div class="sa-empty">${log.length ? 'No fleets match.' : 'No fleets scanned yet. Open the game\'s fleet list (and a fleet) while this is an admin copy.'}</div>`}`;
+        view.querySelector('#sa-fl-scan').addEventListener('click', () => { fleetScanNow = true; fleetSig = ''; try { checkFleets(); } catch (e) {} renderFleets(); });
         const q = view.querySelector('#sa-fl-q');
         q.addEventListener('input', () => { flFilter.q = q.value; const pos = q.selectionStart; q.blur(); renderFleets(); const n = document.getElementById('sa-fl-q'); if (n) { n.focus(); n.setSelectionRange(pos, pos); } });
         [['#sa-fl-ally', 'ally'], ['#sa-fl-mission', 'mission'], ['#sa-fl-range', 'range']].forEach(([id, k]) => view.querySelector(id).addEventListener('change', (e) => { flFilter[k] = e.target.value; renderFleets(); }));
