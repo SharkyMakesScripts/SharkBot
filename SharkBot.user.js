@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SharkBot
 // @namespace    https://spacealpha.net/
-// @version      3.8.0
+// @version      3.8.1
 // @description  SharkBot for Space Alpha: saves your planets' units, facilities, inventory, research, bank and market prices, and calculates credit generation and Tick Generator upgrade costs.
 // @author       SharkBot
 // @match        https://spacealpha.net/*
@@ -41,7 +41,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     const PANEL_ID = 'sa-helper-panel';
     const SLOT_IDS = 'ABCDEFGHIJ'.split('');   // up to 10 planets
     // Version comes from the @version header so it's never out of sync
-    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.8.0';
+    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.8.1';
     // Another copy of SharkBot already put its panel on the page: warn and stop,
     // so two installed copies are obvious instead of silently showing the old one.
     const existing = document.getElementById(PANEL_ID);
@@ -5632,11 +5632,19 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         const seenNames = new Set(all.map(p => String(p.name || '').trim().toLowerCase()));
         // Members under an open alliance row (since v2.25.3): online first, then name
         const isOpen = (where, name) => plOpen && plOpen.where === where && plOpen.name.toLowerCase() === String(name).toLowerCase();
+        // Who has investments (since v3.8.1): sharing players, temp profiles and investments seen on profiles
+        const lowK = (n) => String(n || '').trim().toLowerCase();
+        const sharesSet = new Set((adminData || []).map(sp => lowK(sp.player)));
+        const tempSet = new Set((adminTemps || []).map(t => lowK(t.player)));
+        const invName = (n) => invBy[lowK(n)]?.total;
+        const coin = (n) => invName(n) > 0 ? ' <span title="Has investments">💰</span>' : '';
         const memberRow = (name, on, last, ass) => `<tr data-child="1" data-pname="${escapeHtml(name)}" data-pwhere="alliances" title="Click to ${isOpen('alliances', name) ? 'hide' : 'show'} their shared data"
                     style="background:${isOpen('alliances', name) ? 'var(--hover)' : 'var(--inset)'}; font-size:10px; cursor:pointer">
-                    <td></td><td style="padding-left:16px"><span style="color:${on ? 'var(--pos)' : 'var(--dim)'}">●</span> ${escapeHtml(name)}</td>
+                    <td></td><td style="padding-left:16px; white-space:nowrap"><span style="color:${on ? 'var(--pos)' : 'var(--dim)'}">●</span> ${escapeHtml(name)}${coin(name)}</td>
                     <td colspan="2" style="color:var(--muted)">${on ? 'online' : last ? agoText(last) : 'not seen'}</td>
-                    <td class="sa-num">${ass != null ? escapeHtml(fmt(ass)) : ''}</td><td></td><td></td></tr>`;
+                    <td class="sa-num">${ass != null ? escapeHtml(fmt(ass)) : ''}</td>
+                    <td class="sa-num" style="color:var(--muted)">${sharesSet.has(lowK(name)) ? '<span class="sa-diff-pos" title="Shares SharkBot data">✓</span>' : tempSet.has(lowK(name)) ? '<span title="Temp profile noted by an admin">temp</span>' : ''}</td>
+                    <td class="sa-num" data-sort="${invName(name) > 0 ? invName(name) : ''}">${invName(name) > 0 ? escapeHtml(fmt(invName(name))) : ''}</td></tr>`;
         const membersOf = (id) => all.filter(p => (p.alliance || '') === id)
             .sort((a, b) => onlineSet.has(b.id) - onlineSet.has(a.id) || String(a.name).localeCompare(String(b.name), undefined, { sensitivity: 'base' }))
             .map(p => memberRow(p.name, onlineSet.has(p.id), p.last, assOf(p))).join('');
@@ -5663,7 +5671,8 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         // Player list
         const q = (GM_getValue('sa-players-q', '') || '').toLowerCase();
         const onlyMine = !!my && GM_getValue('sa-players-mine', false);
-        const shown = all.filter(p => (!q || (p.name || '').toLowerCase().includes(q)) && (!onlyMine || p.alliance === my))
+        const onlyInv = GM_getValue('sa-players-inv', false);
+        const shown = all.filter(p => (!q || (p.name || '').toLowerCase().includes(q)) && (!onlyMine || p.alliance === my) && (!onlyInv || invOf(p) > 0))
             .sort((a, b) => onlineSet.has(b.id) - onlineSet.has(a.id) || new Date(b.last) - new Date(a.last));
         const dt = (t) => t ? escapeHtml(new Date(t).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })) : '—';
         const ts = (t) => t ? new Date(t).getTime() : '';
@@ -5677,6 +5686,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                 <button class="sa-btn" id="sa-players-refresh" style="margin:0">${playersFetching ? 'Loading…' : '↻ Refresh'}</button>
                 <input id="sa-players-q" class="sa-amt" value="${escapeHtml(GM_getValue('sa-players-q', '') || '')}" placeholder="Search name" style="flex:1; min-width:90px" />
                 ${my ? `<label class="sa-check" style="margin:0"><input type="checkbox" id="sa-players-mine" ${onlyMine ? 'checked' : ''} /><span>Only my alliance</span></label>` : ''}
+                <label class="sa-check" style="margin:0"><input type="checkbox" id="sa-players-inv" ${onlyInv ? 'checked' : ''} /><span>Has investments</span></label>
             </div>
             <div class="sa-label">Alliances</div>
             ${alRows.length ? `<table class="sa-unit-table" data-sort-id="admin-alliances"><thead><tr><th title="Your alliance">★</th><th>Alliance</th><th style="text-align:right">Online</th><th style="text-align:right">Seen</th>
@@ -5707,7 +5717,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             ${shown.length ? `<div style="overflow-x:auto"><table class="sa-unit-table" data-sort-id="admin-players"><thead><tr><th title="Online">●</th><th>Name</th><th>Alliance</th><th>Last seen</th><th>First seen</th><th style="text-align:right" title="From their shared data (blank if they don't share)">Assassins</th><th style="text-align:right" title="Credits invested, if their investments are known">Invested</th><th style="text-align:right" title="Most ships seen in one scan: all their fleets in the fleet list at that moment, added up">Ships (max)</th></tr></thead><tbody>
                 ${shown.map(p => `<tr data-pname="${escapeHtml(p.name)}" data-pwhere="players" title="Click to ${isOpen('players', p.name) ? 'hide' : 'show'} their shared data"
                     style="cursor:pointer${isOpen('players', p.name) ? '; background:var(--hover)' : ''}"><td data-sort="${onlineSet.has(p.id) ? 1 : 0}" style="color:${onlineSet.has(p.id) ? 'var(--pos)' : 'var(--dim)'}" title="${onlineSet.has(p.id) ? 'Online now' : 'Offline'}">●</td>
-                    <td title="User ID ${escapeHtml(p.id)}" data-sort="${escapeHtml((p.name || '').toLowerCase())}">${escapeHtml(p.name)}</td>
+                    <td title="User ID ${escapeHtml(p.id)}" data-sort="${escapeHtml((p.name || '').toLowerCase())}" style="white-space:nowrap">${escapeHtml(p.name)}${coin(p.name)}</td>
                     <td data-sort="${escapeHtml(sortKey(p.alliance))}" ${p.alliance ? '' : 'data-sort-last="1"'}>${allyName(p.alliance)}</td>
                     <td data-sort="${onlineSet.has(p.id) ? Date.now() : ts(p.last)}">${onlineSet.has(p.id) ? 'online' : agoText(p.last)}</td>
                     <td data-sort="${ts(p.first)}">${dt(p.first)}</td>
@@ -5721,6 +5731,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         qi.addEventListener('input', () => { GM_setValue('sa-players-q', qi.value); renderPlayers();
             const n = document.getElementById('sa-players-q'); if (n) { n.focus(); n.setSelectionRange(n.value.length, n.value.length); } });
         view.querySelector('#sa-players-mine')?.addEventListener('change', (e) => { GM_setValue('sa-players-mine', e.target.checked); renderPlayers(); });
+        view.querySelector('#sa-players-inv')?.addEventListener('change', (e) => { GM_setValue('sa-players-inv', e.target.checked); renderPlayers(); });
         // Click a player (under an alliance, or in Players) to show / hide their shared data
         view.querySelectorAll('tr[data-pname]').forEach(tr => tr.addEventListener('click', (e) => {
             if (e.target.closest('.sa-ally-id, input, button')) return;
