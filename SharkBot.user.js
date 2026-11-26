@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SharkBot
 // @namespace    https://spacealpha.net/
-// @version      3.9.5
+// @version      3.9.6
 // @description  SharkBot for Space Alpha: saves your planets' units, facilities, inventory, research, bank and market prices, and calculates credit generation and Tick Generator upgrade costs.
 // @author       SharkBot
 // @match        https://spacealpha.net/*
@@ -41,7 +41,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     const PANEL_ID = 'sa-helper-panel';
     const SLOT_IDS = 'ABCDEFGHIJ'.split('');   // up to 10 planets
     // Version comes from the @version header so it's never out of sync
-    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.9.5';
+    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.9.6';
     // Another copy of SharkBot already put its panel on the page: warn and stop,
     // so two installed copies are obvious instead of silently showing the old one.
     const existing = document.getElementById(PANEL_ID);
@@ -5863,6 +5863,12 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     var fleetScanNow = false;
     function fleetsLoad() {
         const d = GM_getValue('sa-admin-fleets', null) || { players: {}, session: null };
+        // v3.9.2–v3.9.5 kept a free-text cargo (which could pick up other page text) and "Stationed" in the mission: tidy
+        if ((d.log || []).some(x => x.cargo != null || /\sStationed\s*$/i.test(String(x.mission || '')))) {
+            d.log.forEach(x => { if (x.cargo != null) { const r = {}; String(x.cargo).split(',').forEach(c => { const nm = canonName(c, RES_NAMES); if (nm) r[nm] = r[nm] || null; }); delete x.cargo; }
+                if (/\sStationed\s*$/i.test(String(x.mission || ''))) { x.mission = cleanMission(x.mission); x.arrival = x.arrival || 'Stationed'; } });
+            GM_setValue('sa-admin-fleets', d);
+        }
         // v3.9.0–v3.9.3 kept the timer in the mission ("Returning home 104:42 minutes"), so one fleet became many: merge them
         if ((d.log || []).some(x => TIME_RE.test(String(x.mission || '')))) {
             const low = (x) => String(x || '').trim().toLowerCase(), by = {};
@@ -5890,8 +5896,28 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     // sender is the first name span, ships are "N ships", the mission follows, arrival is "Stationed" or a time, and the
     // destination is the name above its "#x-y" coordinates
     const MISSION_RE = /^(Mining|Attack|Reinforc|Return|Transport|Spy|Colon|Defend|Station|Explor|Patrol|Invad|Harvest|Trad)/i;
+    // What a fleet can be made of and carry (since v3.9.6): names are matched loosely and shown in these forms
+    const SHIP_NAMES = [['Probe', /^probe/i], ['Invader Ship', /^invader/i], ['Space Fighter', /^(space\s*)?fighter/i], ['Carrier', /^carrier/i], ['Colony ship', /^colony/i], ['Miner', /^miner/i]];
+    const UNIT_NAMES = [['Assassins', /^assassin/i], ['Spies', /^(spy|spies)\b/i], ['Attack Corporal', /^attack\s*corp/i], ['Attack Major', /^attack\s*maj/i], ['Attack Champion', /^attack\s*champ/i]];
+    const RES_NAMES = [['Gold', /^gold\b/i], ['Tritium', /^trit/i], ['Iron', /^iron\b/i], ['Coal', /^coal\b/i]];
+    function canonName(n, list) { const t = String(n || '').trim(); const m = list.find(([, re]) => re.test(t)); return m ? m[0] : (list === UNIT_NAMES && /^attack\b/i.test(t) ? t : null); }
+    const CNT = /^[\d.,]+\s*[kKmMbBtTqQ]?$/;
+    // Count + name pairs among lines: tiles show the count above the name ("18,000 / Carrier") or below it ("Probe / 28,906");
+    // the first line tells which. Reading stops at the first line that's neither a count nor a known name.
+    function namedCounts(lines, list) {
+        const out = {}, L = lines.filter(Boolean);
+        const countFirst = CNT.test(L[0] || '');
+        for (let x = 0; x < L.length; x++) {
+            const a = L[x], b = L[x + 1] || '';
+            const [cnt, nm] = countFirst ? [a, b] : [b, a];
+            const name = canonName(nm, list);
+            if (CNT.test(cnt) && name) { const v = parseNumber(cnt); if (v != null) out[name] = (out[name] || 0) + v; x++; continue; }
+            break;
+        }
+        return out;
+    }
     const TIME_RE = /\d[\d:.,]*\s*(seconds?|secs?|minutes?|mins?|hours?|days?|weeks?|months?|years?)\b/i;
-    function cleanMission(m) { return String(m || '').replace(/\s*\d[\d:.,]*\s*(seconds?|secs?|minutes?|mins?|hours?|days?|weeks?|months?|years?)\b.*$/i, '').replace(/\s+/g, ' ').trim(); }
+    function cleanMission(m) { return String(m || '').replace(/\s*\d[\d:.,]*\s*(seconds?|secs?|minutes?|mins?|hours?|days?|weeks?|months?|years?)\b.*$/i, '').replace(/\s+Stationed\s*$/i, '').replace(/\s+/g, ' ').trim(); }
     function readFleetList() {
         const t = document.querySelector('#targets_list table'); if (!t) return null;
         const rows = [];
@@ -5914,7 +5940,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             const mission = cleanMission(mline);
             const tline = lines.find(l => TIME_RE.test(l) && !/ships?\b/i.test(l)) || lines.find(l => /^Stationed$/i.test(l)) || '';
             const tm = tline.match(TIME_RE);
-            const arrival = tm ? tm[0].trim() : /stationed/i.test(tline) ? 'Stationed' : '';
+            const arrival = tm ? tm[0].trim() : /stationed/i.test(tline) || /\bStationed\s*$/i.test(mline) ? 'Stationed' : '';
             const ci = lines.findIndex(l => /^#\d+\s*-\s*\d+/.test(l));
             const coords = ci >= 0 ? lines[ci] : '';
             const target = ci > 0 && !/ships?\b|KM$/i.test(lines[ci - 1]) && !MISSION_RE.test(lines[ci - 1]) && !TIME_RE.test(lines[ci - 1]) && !/^stationed$/i.test(lines[ci - 1]) ? lines[ci - 1] : '';
@@ -5945,28 +5971,17 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         const lines = (box.innerText || '').split('\n').map(x => x.trim()).filter(Boolean);
         const si = lines.findIndex(l => isHead(l, 'Ships')), ui = lines.findIndex(l => isHead(l, 'Units')), ri = lines.findIndex(l => isHead(l, 'Resources'));
         if (si < 0 || ui < si) return null;
-        const types = {};
-        const NUM = /^[\d.,]+\s*[kKmMbBtTqQ]?$/;
-        // Prefer the ship tiles' own count elements; otherwise pair "18,000" with the name after it
-        const tiles = Array.from(box.querySelectorAll('amount span, amount')).filter(a => !a.closest('#' + PANEL_ID));
-        if (tiles.length) {
-            tiles.forEach(a => { const td = a.closest('td') || a.parentElement?.parentElement; const n = parseNumber(fTxt(a)); const name = td ? fTxt(td).replace(fTxt(a), '').replace(/\s+/g, ' ').trim() : '';
-                if (name && n != null && !/^(units|resources)/i.test(name) && lines.slice(si, ui).some(l => l === name)) types[name] = (types[name] || 0) + n; });
-        }
-        if (!Object.keys(types).length) {
-            const part = lines.slice(si + 1, ui);
-            for (let x = 0; x < part.length; x++) {
-                if (NUM.test(part[x]) && part[x + 1] && !NUM.test(part[x + 1])) { const n = parseNumber(part[x]); if (n != null) types[part[x + 1]] = (types[part[x + 1]] || 0) + n; x++; }
-            }
-        }
+        // Ships: known ship types only; Units / Resources: "used / capacity", then each unit type or resource carried
+        const types = namedCounts(lines.slice(si + 1, ui), SHIP_NAMES);
         if (!Object.keys(types).length) return null;
         const pair = (idx) => { const m = idx >= 0 && lines[idx + 1] && lines[idx + 1].match(/^([^/]+?)\s*\/\s*(.+)$/); return m ? [parseNumber(m[1]), parseNumber(m[2])] : [null, null]; };
         const [units, unitsCap] = pair(ui), [res, resCap] = pair(ri);
-        const cargoLines = ri >= 0 ? lines.slice(ri + 2).filter(l => !NUM.test(l)) : [];
+        const unitsCarried = namedCounts(lines.slice(ui + 2, ri >= 0 ? ri : undefined), UNIT_NAMES);
+        const resCarried = ri >= 0 ? namedCounts(lines.slice(ri + 2), RES_NAMES) : {};
         const head = lines.slice(0, si);
         const r = fleetHover.row;
         return { owner: r.sender, target: fKnown(r.target) ? r.target : '', coords: r.coords, types, units, unitsCap, res, resCap,
-                 cargo: cargoLines.join(', ') || head[1] || '', mission: r.mission || head[0] || '' };
+                 unitsCarried, resCarried, mission: r.mission || head[0] || '' };
     }
     function readSelectedFleet() {
         const box = document.getElementById('selected_target'); if (!box) return null;
@@ -5979,12 +5994,16 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         Array.from(fs.querySelectorAll('td')).forEach(td => {
             const amt = td.querySelector('amount span') || td.querySelector('amount'); if (!amt) return;
             const n = parseNumber(fTxt(amt)); const name = fTxt(td).replace(fTxt(amt), '').replace(/\s+/g, ' ').trim();
-            if (name && n != null) types[name] = (types[name] || 0) + n;
+            const c = canonName(name, SHIP_NAMES) || (name && !canonName(name, UNIT_NAMES) && !canonName(name, RES_NAMES) ? name : null);
+            if (c && n != null) types[c] = (types[c] || 0) + n;
         });
         const num = (re) => { const l = lines.find(x => re.test(x)); const m = l && l.match(/:\s*([^/]+?)\s*\/\s*(.+)$/); return m ? [parseNumber(m[1]), parseNumber(m[2])] : [null, null]; };
         const [units, unitsCap] = num(/^Units\s*:/i), [res, resCap] = num(/^Resources\s*:/i);
-        const mission = lines.find(l => /^(Mining|Attack|Reinforc|Return|Transport|Spy|Colon|Defend|Station)/i.test(l)) || '';
-        return { owner, target, types, units, unitsCap, res, resCap, mission };
+        const mission = cleanMission(lines.find(l => /^(Mining|Attack|Reinforc|Return|Transport|Spy|Colon|Defend)/i.test(l)) || '');
+        const ui = lines.findIndex(l => /^Units\s*:/i.test(l)), ri = lines.findIndex(l => /^Resources\s*:/i.test(l));
+        const unitsCarried = ui >= 0 ? namedCounts(lines.slice(ui + 1, ri > ui ? ri : undefined), UNIT_NAMES) : {};
+        const resCarried = ri >= 0 ? namedCounts(lines.slice(ri + 1), RES_NAMES) : {};
+        return { owner, target, types, units, unitsCap, res, resCap, mission, unitsCarried, resCarried };
     }
     let fleetSig = '', selSig = '', hovSig = '';
     // Every fleet scanned (since v3.9.0), for Admin → Fleets: one entry per fleet (owner, ships, mission, target), updated
@@ -6038,12 +6057,14 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                 if (src === 'sel') selSig = fk; else hovSig = fk;
                 if (!d.session || Date.now() - new Date(d.session.start || d.session.id) >= FLEET_SESSION_MS) d.session = { id: now, start: now, at: now, sig: '', players: {}, opened: {}, logged: [] };
                 logFleet(d, { owner: sel.owner, target: fKnown(sel.target) ? sel.target : '', coords: sel.coords, mission: sel.mission, types: sel.types, units: sel.units, unitsCap: sel.unitsCap, res: sel.res, resCap: sel.resCap,
-                    cargo: sel.cargo, ships: Object.values(sel.types).reduce((a, b) => a + b, 0) }, now); changed = true;
+                    unitsCarried: sel.unitsCarried, resCarried: sel.resCarried, ships: Object.values(sel.types).reduce((a, b) => a + b, 0) }, now); changed = true;
                 if (!d.session.opened[fk]) {
                     d.session.opened[fk] = 1;
                     const k = low(sel.owner), sp = d.session.players[k] || (d.session.players[k] = { name: sel.owner, fleets: 0, ships: 0, rows: [] });
                     sp.types = sp.types || {}; Object.entries(sel.types).forEach(([t, n]) => { sp.types[t] = (sp.types[t] || 0) + n; });
                     sp.units = (sp.units || 0) + (sel.units || 0); sp.res = (sp.res || 0) + (sel.res || 0); sp.opened = (sp.opened || 0) + 1;
+                    sp.unitTypes = sp.unitTypes || {}; Object.entries(sel.unitsCarried || {}).forEach(([t, n]) => { sp.unitTypes[t] = (sp.unitTypes[t] || 0) + n; });
+                    sp.resTypes = sp.resTypes || {}; Object.entries(sel.resCarried || {}).forEach(([t, n]) => { sp.resTypes[t] = (sp.resTypes[t] || 0) + n; });
                     // Total ships for the scan: the fleet list's sum, or the opened fleets' sum if that's bigger (e.g. the list wasn't open)
                     sp.openedShips = (sp.openedShips || 0) + Object.values(sel.types).reduce((a, b) => a + b, 0);
                     if (!sp.fleets) sp.fleets = sp.opened;
@@ -6057,7 +6078,8 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         Object.entries(d.session.players).forEach(([k, sp]) => {
             const P = d.players[k] || (d.players[k] = { name: sp.name, snaps: [], max: {} });
             P.name = sp.name;
-            const snap = { id: d.session.id, at: now, fleets: Math.max(sp.fleets || 0, sp.opened || 0), ships: Math.max(sp.ships || 0, sp.openedShips || 0), types: Object.assign({}, sp.types || {}), units: sp.units || 0, res: sp.res || 0, opened: sp.opened || 0 };
+            const snap = { id: d.session.id, at: now, fleets: Math.max(sp.fleets || 0, sp.opened || 0), ships: Math.max(sp.ships || 0, sp.openedShips || 0), types: Object.assign({}, sp.types || {}), units: sp.units || 0, res: sp.res || 0, opened: sp.opened || 0,
+                unitTypes: Object.assign({}, sp.unitTypes || {}), resTypes: Object.assign({}, sp.resTypes || {}) };
             const i = P.snaps.findIndex(x => x.id === snap.id);
             if (i >= 0) P.snaps[i] = snap; else P.snaps.unshift(snap);
             P.snaps = P.snaps.slice(0, 50);
@@ -6121,7 +6143,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             <div class="sa-recommend" style="margin-bottom:6px; display:flex; gap:8px; align-items:center; flex-wrap:wrap"><span style="flex:1">${rows.length} fleet${rows.length === 1 ? '' : 's'} · ${f(total)} ships${log.length > rows.length ? ` <span style="color:var(--muted)">(${log.length} kept)</span>` : ''}</span>
                 <span style="color:var(--muted); font-size:10px" id="sa-fl-next">${fleetNextText()}</span><button class="sa-btn" id="sa-fl-scan" style="margin:0" title="Start a new scan the next time the fleet list is read">Scan now</button></div>
             ${rows.length ? `<div style="overflow-x:auto"><table class="sa-unit-table" data-sort-id="admin-fleets">
-                <thead><tr><th>Seen</th><th>Owner</th><th>Alliance</th><th style="text-align:right">Ships</th><th>Mission</th><th>Target</th><th>Arrival</th><th>Ship types</th><th style="text-align:right">Units</th><th style="text-align:right">Resources</th><th>Cargo</th></tr></thead>
+                <thead><tr><th>Seen</th><th>Owner</th><th>Alliance</th><th style="text-align:right">Ships</th><th>Mission</th><th>Target</th><th>Arrival</th><th>Ship types</th><th style="text-align:right">Units</th><th style="text-align:right">Resources</th><th>Units carried</th><th>Resources carried</th></tr></thead>
                 <tbody>${rows.map(x => `<tr>
                     <td data-sort="${new Date(x.at).getTime()}" title="${escapeHtml(new Date(x.at).toLocaleString())}">${escapeHtml(agoText(x.at))}</td>
                     <td><span class="sa-fl-owner" data-owner="${escapeHtml(x.owner)}" style="cursor:pointer; text-decoration:underline dotted">${escapeHtml(x.owner)}</span></td>
@@ -6132,7 +6154,8 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                     <td style="font-size:10px">${x.types ? Object.entries(x.types).map(([t, v]) => `${escapeHtml(t)} ${f(v)}`).join(', ') : ''}</td>
                     <td class="sa-num" data-sort="${x.units ?? ''}">${x.units != null ? f(x.units) + (x.unitsCap ? `<span style="color:var(--muted)"> / ${f(x.unitsCap)}</span>` : '') : ''}</td>
                     <td class="sa-num" data-sort="${x.res ?? ''}">${x.res != null ? f(x.res) + (x.resCap ? `<span style="color:var(--muted)"> / ${f(x.resCap)}</span>` : '') : ''}</td>
-                    <td>${escapeHtml(x.cargo || '')}</td></tr>`).join('')}</tbody></table></div>`
+                    <td style="font-size:10px">${Object.entries(x.unitsCarried || {}).map(([t, v]) => `${escapeHtml(t)} ${f(v)}`).join(', ')}</td>
+                    <td style="font-size:10px">${Object.entries(x.resCarried || {}).map(([t, v]) => `${escapeHtml(t)} ${f(v)}`).join(', ')}</td></tr>`).join('')}</tbody></table></div>`
                 : `<div class="sa-empty">${log.length ? 'No fleets match.' : 'No fleets scanned yet. Open the game\'s fleet list (and a fleet) while this is an admin copy.'}</div>`}`;
         view.querySelector('#sa-fl-scan').addEventListener('click', () => { fleetScanNow = true; fleetSig = ''; try { checkFleets(); } catch (e) {} renderFleets(); });
         const q = view.querySelector('#sa-fl-q');
@@ -6154,6 +6177,9 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                 ${types.map(([t, x]) => `<tr><td>${escapeHtml(t)}</td><td class="sa-num">${f(x.v)}</td><td style="color:var(--muted)">${when(x)}</td></tr>`).join('')}
                 ${m.units ? `<tr><td>Units moved</td><td class="sa-num">${f(m.units.v)}</td><td style="color:var(--muted)">${when(m.units)}</td></tr>` : ''}
                 ${m.res ? `<tr><td>Resources carried</td><td class="sa-num">${f(m.res.v)}</td><td style="color:var(--muted)">${when(m.res)}</td></tr>` : ''}
+                ${(() => { const mx = (field) => { const o = {}; (P.snaps || []).forEach(sn => Object.entries(sn[field] || {}).forEach(([t, v]) => { if (!o[t] || v > o[t].v) o[t] = { v, at: sn.at }; })); return Object.entries(o).sort((a, b) => b[1].v - a[1].v); };
+                    return mx('unitTypes').map(([t, x]) => `<tr><td>${escapeHtml(t)} carried</td><td class="sa-num">${f(x.v)}</td><td style="color:var(--muted)">${when(x)}</td></tr>`).join('')
+                        + mx('resTypes').map(([t, x]) => `<tr><td>${escapeHtml(t)} carried</td><td class="sa-num">${f(x.v)}</td><td style="color:var(--muted)">${when(x)}</td></tr>`).join(''); })()}
             </tbody></table>
             <details class="sa-dd" style="margin-top:3px"><summary style="cursor:pointer; font-size:10px; color:var(--muted)">Scans (${P.snaps.length})</summary>
                 <table class="sa-unit-table" style="font-size:10px"><thead><tr><th>When</th><th style="text-align:right">Fleets</th><th style="text-align:right">Ships</th><th>Ship types (fleets opened)</th><th style="text-align:right">Units</th><th style="text-align:right">Resources</th></tr></thead><tbody>
