@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SharkBot
 // @namespace    https://spacealpha.net/
-// @version      3.5.4
+// @version      3.6.0
 // @description  SharkBot for Space Alpha: saves your planets' units, facilities, inventory, research, bank and market prices, and calculates credit generation and Tick Generator upgrade costs.
 // @author       SharkBot
 // @match        https://spacealpha.net/*
@@ -41,7 +41,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     const PANEL_ID = 'sa-helper-panel';
     const SLOT_IDS = 'ABCDEFGHIJ'.split('');   // up to 10 planets
     // Version comes from the @version header so it's never out of sync
-    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.5.4';
+    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.6.0';
     // Another copy of SharkBot already put its panel on the page: warn and stop,
     // so two installed copies are obvious instead of silently showing the old one.
     const existing = document.getElementById(PANEL_ID);
@@ -5519,7 +5519,12 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             const d = playersLoad(), now = new Date().toISOString(), online = [];
             list.forEach(x => {
                 if (!x || !x.user_id) return;
-                const id = String(x.user_id), p = d.players[id] || (d.players[id] = { id, first: now });
+                const id = String(x.user_id);
+                // Seen on the highscore before (since v3.6.0): the online entry takes over that one
+                const hk = 'hs:' + String(x.user_name || '').trim().toLowerCase();
+                if (d.players[hk] && !d.players[id]) { d.players[id] = Object.assign({}, d.players[hk], { id }); }
+                delete d.players[hk];
+                const p = d.players[id] || (d.players[id] = { id, first: now });
                 p.name = String(x.user_name || p.name || '?'); p.alliance = x.alliance ? String(x.alliance) : ''; p.last = now;
                 online.push(id);
             });
@@ -5567,7 +5572,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         const fresh = d.checkedAt && Date.now() - new Date(d.checkedAt) < 10 * 60e3;
         const onlineSet = new Set(fresh ? d.online : []);
         const all = Object.values(d.players);
-        const label = (a) => names[a] || '';
+        const label = (a) => names[a] || (String(a).startsWith('tag:') ? String(a).slice(4) : '');   // tag-only alliances from the highscore (since v3.6.0)
         // Alliance name (or shortened ID) for a cell
         const allyName = (a) => !a ? '<span style="color:var(--dim)">none</span>'
             : label(a) ? (a === my ? `<b style="color:var(--accent)">${escapeHtml(label(a))}</b>` : escapeHtml(label(a)))
@@ -5633,7 +5638,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         const ts = (t) => t ? new Date(t).getTime() : '';
         const myLabel = my ? escapeHtml(label(my) || my.slice(0, 8) + '…') : '';
         view.innerHTML = `
-            <div class="sa-recommend" style="margin-bottom:6px">Online now: <b>${onlineSet.size}</b> · players seen: ${all.length}${
+            <div class="sa-recommend" style="margin-bottom:6px">Online now: <b>${onlineSet.size}</b> · players seen: ${all.length}${d.hsLast ? ` · highscore read ${escapeHtml(agoText(d.hsLast.at))} (${d.hsLast.rows} rows, ${d.hsLast.added} new)` : ''}${
                 invKnown.length ? ` · credits invested (known): <b>${escapeHtml(fmt(invAll))}</b> across ${invKnown.length} player${invKnown.length === 1 ? '' : 's'}` : ''}${
                 my ? ` · your alliance (${myLabel}): ${(al[my] || { online: 0 }).online} online of ${(al[my] || { seen: 0 }).seen} seen` : ''}<br><span style="font-size:10px; color:var(--muted)">${playersFetching ? 'Checking…' : d.checkedAt ? 'Checked ' + agoText(d.checkedAt) : 'Not checked yet'}${
                 d.error ? ` · <span class="sa-diff-neg">last check failed: ${escapeHtml(d.error)}</span>` : ''}${fresh ? '' : d.checkedAt ? ' · online list is old' : ''}</span></div>
@@ -5646,11 +5651,11 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             ${alRows.length ? `<table class="sa-unit-table" data-sort-id="admin-alliances"><thead><tr><th title="Your alliance">★</th><th>Alliance</th><th style="text-align:right">Online</th><th style="text-align:right">Seen</th>
                 <th style="text-align:right" title="Total assassins of the alliance's players who share data">Assassins</th><th style="text-align:right">Sharing</th><th style="text-align:right">Invested</th></tr></thead><tbody>
                 ${alRows.map(a => `<tr data-agroup="${escapeHtml(openKey(a.id))}" style="cursor:pointer" title="Click to ${allyOpen[openKey(a.id)] ? 'hide' : 'show'} its players">
-                    <td data-sort="${a.id === my ? 1 : 0}">${a.id ? `<span class="sa-ally-star" data-star="${escapeHtml(a.id)}" title="${a.id === my ? 'Your alliance (click to unmark)' : 'Mark as your alliance'}"
+                    <td data-sort="${a.id === my ? 1 : 0}">${a.id && !a.id.startsWith('tag:') ? `<span class="sa-ally-star" data-star="${escapeHtml(a.id)}" title="${a.id === my ? 'Your alliance (click to unmark)' : 'Mark as your alliance'}"
                         style="cursor:pointer; color:${a.id === my ? 'var(--accent)' : 'var(--dim)'}">${a.id === my ? '★' : '☆'}</span>` : ''}</td>
                     <td data-sort="${escapeHtml(sortKey(a.id))}" ${a.id ? '' : 'data-sort-last="1"'}>${a.id && allyEditing === a.id
                         ? `<input class="sa-ally-input" data-edit="${escapeHtml(a.id)}" value="${escapeHtml(label(a.id))}" placeholder="name (blank = show the ID)" />`
-                        : `<span style="color:var(--muted)">${allyOpen[openKey(a.id)] ? '▾' : '▸'}</span> ${allyName(a.id)}${a.id ? ` <span class="sa-ally-edit" data-edit="${escapeHtml(a.id)}" title="Rename" style="cursor:pointer; color:var(--muted)">✏</span>` : ''}`}</td>
+                        : `<span style="color:var(--muted)">${allyOpen[openKey(a.id)] ? '▾' : '▸'}</span> ${allyName(a.id)}${a.id && a.id.startsWith('tag:') ? ' <span style="color:var(--muted); font-size:9px" title="From the highscore; link it to an alliance ID with Name an alliance (use this tag as the name)">tag</span>' : ''}${a.id && !a.id.startsWith('tag:') ? ` <span class="sa-ally-edit" data-edit="${escapeHtml(a.id)}" title="Rename" style="cursor:pointer; color:var(--muted)">✏</span>` : ''}`}</td>
                     <td class="sa-num">${a.online}</td><td class="sa-num">${a.seen}</td>${assCells(a)}</tr>${allyOpen[openKey(a.id)] ? membersOf(a.id) : ''}`).join('')}${
                 unseen.length ? `<tr data-pin="1" data-agroup="__unseen" style="cursor:pointer" title="Players who share data but haven't been seen online, so their alliance isn't known. Click to ${allyOpen.__unseen ? 'hide' : 'show'} them">
                     <td></td><td style="color:var(--muted)">${allyOpen.__unseen ? '▾' : '▸'} not seen online</td><td class="sa-num">—</td><td class="sa-num">—</td>
@@ -5741,6 +5746,58 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     renderPlayers();
     fetchAllianceCfg(false);
     fetchHolders(false);   // Bank holder lists (since v3.1.0)
+    // ---------- Highscore (since v3.6.0) ----------
+    // On /highscore, your admin copy reads every player and alliance tag in the table and adds them to Players.
+    // Tags are matched to an alliance you already have first: one whose saved name equals the tag, else the alliance
+    // that known members with that tag belong to; only then is a tag-only alliance ("tag:XYZ") made.
+    let hsSig = '';
+    function readHighscore() {
+        const tables = Array.from(document.querySelectorAll('#content-wrap highscore table')).filter(t => !t.closest('#' + PANEL_ID));
+        const rows = [];
+        tables.forEach(t => Array.from(t.querySelectorAll('tr')).forEach(tr => {
+            const c = tr.cells; if (!c || c.length < 3 || tr.querySelector('th')) return;
+            const name = (c[1].innerText || c[1].textContent || '').replace(/\s+/g, ' ').trim();
+            const tagEl = c[2].querySelector('alliance-tag div') || c[2].querySelector('alliance-tag') || c[2];
+            const tag = (tagEl.innerText || tagEl.textContent || '').replace(/\s+/g, ' ').trim();
+            if (name) rows.push({ name, tag });
+        }));
+        return rows;
+    }
+    function checkHighscore() {
+        if (sbView || !GM_getValue('sa-admin-copy', false) || !/^\/highscore/.test(location.pathname)) return;
+        const rows = readHighscore();
+        if (!rows.length) return;
+        const sig = rows.map(r => r.name + '|' + r.tag).join(';');
+        if (sig === hsSig) return;
+        hsSig = sig;
+        const d = playersLoad(), now = new Date().toISOString(), names = allianceCfg().allianceNames || {};
+        const low = (x) => String(x || '').trim().toLowerCase();
+        const byName = {}; Object.values(d.players).forEach(p => { byName[low(p.name)] = p; });
+        // Tag → alliance: 1) an alliance whose saved name is the tag, 2) the alliance known members with that tag are in
+        const tagMap = Object.assign({}, GM_getValue('sa-admin-hs-tags', {}) || {});
+        rows.forEach(r => { const p = byName[low(r.name)]; if (r.tag && p && p.alliance && !String(p.alliance).startsWith('tag:') && !tagMap[low(r.tag)]) tagMap[low(r.tag)] = p.alliance; });
+        const allyFor = (tag) => {
+            if (!tag) return '';
+            const byLabel = Object.keys(names).find(id => low(names[id]) === low(tag));
+            return byLabel || tagMap[low(tag)] || 'tag:' + tag;
+        };
+        let added = 0, updated = 0;
+        rows.forEach(r => {
+            const a = allyFor(r.tag);
+            let p = byName[low(r.name)];
+            if (!p) { const id = 'hs:' + low(r.name); p = d.players[id] = { id, name: r.name, first: now, alliance: a }; byName[low(r.name)] = p; added++; }
+            else if (a && p.alliance !== a && !(a.startsWith('tag:') && p.alliance && !String(p.alliance).startsWith('tag:'))) { p.alliance = a; updated++; }
+            else if (!a && p.alliance) { p.alliance = ''; updated++; }
+            p.hsSeen = now;
+        });
+        // Tag-only players move to the real alliance once its tag is matched
+        Object.values(d.players).forEach(p => { if (String(p.alliance).startsWith('tag:')) { const m = allyFor(String(p.alliance).slice(4)); if (!m.startsWith('tag:')) p.alliance = m; } });
+        d.hsCheckedAt = now; d.hsLast = { at: now, rows: rows.length, added, updated };
+        GM_setValue('sa-players', d); GM_setValue('sa-admin-hs-tags', tagMap);
+        try { renderPlayers(); } catch (e) {}
+    }
+    setInterval(() => { try { checkHighscore(); } catch (e) {} }, 3000);
+    setTimeout(() => { try { checkHighscore(); } catch (e) {} }, 1500);
     // Check who's online every 5 minutes while the panel is open (not collapsed)
     // Copies that have never logged in as admin don't keep a player list (moved to Admin in v2.23.4)
     if (!GM_getValue('sa-admin-copy', false)) { ['sa-players', 'sa-players-q', 'sa-players-mine'].forEach(k => { try { GM_deleteValue(k); } catch (e) {} }); }
