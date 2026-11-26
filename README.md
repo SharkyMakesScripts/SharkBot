@@ -2,15 +2,25 @@
 
 A Tampermonkey userscript that adds a helper panel to [Space Alpha](https://spacealpha.net/). It saves your planets' data as you browse the game and uses it to calculate credit generation and upgrade costs.
 
-**Version 2.18.4**
+**Version 3.4.1**
 
 ## Install
 
 1. Install the [Tampermonkey](https://www.tampermonkey.net/) browser extension.
-2. Open the Tampermonkey dashboard, click **+** (Create a new script), delete the template, and paste in the contents of `SharkBot v2.18.4.js` (the file name always carries the version).
+2. Open the Tampermonkey dashboard, click **+** (Create a new script), delete the template, and paste in the contents of `SharkBot v3.4.1.js` (the file name always carries the version).
 3. Save with **Ctrl+S** (**Cmd+S** on Mac) and reload any spacealpha.net page. The panel appears at the top right.
 
-The panel can be dragged by its header and collapsed with **−**. Your data is stored in your browser through Tampermonkey; nothing is sent anywhere.
+The panel can be dragged by its header and collapsed with **−**. Drag its bottom-right corner to resize it (double-click the corner to reset), or click **⤢** to expand it to fill the screen and again to go back. Size, expanded state and UI size are remembered. Your data is stored in your browser through Tampermonkey; nothing is sent anywhere.
+
+## Registration
+
+SharkBot unlocks once Sharky accepts you. Until then the panel shows only a **Welcome** tab (what SharkBot does, how to start, and the **Register** box). Once you're accepted, Welcome disappears, the panel opens on General → Debug and the tour starts for first-time users; if your copy is locked again, Welcome comes back.
+
+1. Open the game so the top bar shows your username; SharkBot reads it from there.
+2. Tick **I agree to share my SharkBot data with Sharky** (required: sharing is part of registering), then click **Register**. This sends your username, your copy's install code (a random code made by each SharkBot copy) and the SharkBot version to Sharky; the date you agreed is recorded on Sharky's server.
+3. Wait for Sharky to accept. SharkBot checks every 15 minutes while you're pending (or click **Check now**); once you're accepted it checks every 5 minutes and when you open a game page.
+
+Each browser registers separately. If the game shows a different account than the one you registered, SharkBot locks again until that account registers. If you're denied, you can register again 24 hours later (unregistering doesn't shorten the wait). If Sharky's server can't be reached, your last status is kept. To stop sharing, **Unregister** in General → Settings → Sharing & registration (click twice to confirm): SharkBot locks again, you can register again any time, and data already sent stays with Sharky.
 
 ## Getting started
 
@@ -20,7 +30,7 @@ The first time the panel opens, a short interactive tour shows auto-scan working
 2. Visit these pages on each planet (they're saved as you go, and again whenever you come back):
    - **Nation:** population, growth, army, sickness, pollution, forest and planet defense
    - **Train Units:** unit counts
-   - **Facilities:** use the old view. Pick **Resources**, **Military** or **Areas** (not **New view**). If switching views doesn't change the page address, click **Scan** after each switch. Saving one view keeps the others.
+   - **Facilities:** use the old view. Pick **Resources**, **Military** or **Areas** (not **New view**). If switching views doesn't change the page address, click **Scan** after each switch. Saving one view keeps the others: each scan updates the facilities and areas it shows and keeps every other saved one (since v2.25.1).
    - **Research:** shared by all planets. Each scan adds or updates the research it sees and keeps the rest, so if the Research page splits research into groups, scan each group once. Your **brains**, **diamonds** and **SSB** counts are saved from this page too
    - **Bank:** scan both tabs. Your own bank tab saves **your bank balance**; the **TRAPs** tab saves your investments (switching to it doesn't change the page address, so click **Scan** there); the **Central bank** tab saves the **galaxy fee** and the Central bank's stats. They're stored separately
    - **Market:** current prices
@@ -31,14 +41,14 @@ Click **Scan** to rescan the current page anytime. Auto-scan can be turned off i
 
 ## Tabs
 
-The panel has five main tabs: General, Data, Calculators, Statements and Admin. Each remembers which subtab you last opened.
+The main tabs are General, Data, Calculators and Statements, plus **Welcome** while your copy isn't registered yet. Each remembers which subtab you last opened. **Every table with column titles can be sorted:** click a title to sort by it, click again to reverse (▲ / ▼ shows which). Numbers and dates sort largest/newest first on the first click, words A→Z; empty cells stay at the end, and totals stay at the bottom. Each table remembers its sort (Reset all saved data keeps it).
 
 **General**
 
 | Subtab | What it shows |
 |---|---|
 | Debug | Status, detected planet, a summary of the last scan, and the raw scan data (with a Copy button) |
-| Settings | **Planets** (rename or remove), **auto-scan** on/off, **Restart tutorial**, color schemes (Navy by default, plus Crimson, Ember, Amber, Tangerine, Sunset, Emerald, Graphite, and a **Custom** scheme with your own colors under **Customize colors**) and **Reset all saved data**, which keeps your color scheme |
+| Settings | **Planets** (rename or remove), **Window & UI size** (UI size slider 70–150% in 5% steps with 90/100/110/125% buttons, which scales text, tables and pop-ups; the current window size; **Reset size & scale**), **auto-scan** on/off, **Sharing & registration** (last send, **Send now**, **Unregister**), **Restart tutorial**, color schemes (Navy by default, plus Crimson, Ember, Amber, Tangerine, Sunset, Emerald, Graphite, and a **Custom** scheme with your own colors under **Customize colors**) and **Reset all saved data**, which keeps your registration, color scheme and panel layout |
 
 **Data** (top row **Empire**: shared by all planets; bottom row **Planet**: saved per planet)
 
@@ -49,14 +59,14 @@ The panel has five main tabs: General, Data, Calculators, Statements and Admin. 
 | Facilities | Facility levels and output, plus Areas and how full they are, for each planet (with the same **Compare with** option) |
 | Market | Buy and sell prices for every resource, and the spread between them |
 | Inventory | Stored resources on every planet side by side, a total, and your bank balance |
-| Bank | **⧉ Open everything in a new window** shows all of this full-width. Three sections: **Your bank** (your balance and the other lines on that tab), **Central bank** (galaxy fee and the Central bank's stats) and **Investments**: all TRAPs in one table (your amount and share, total, 24h/7d/30d change, price, interest per turn, daily interest for the whole TRAP and for you; **Only mine** hides the rest; a **Managed** tick box per investment: managed ones use the amount you type in and earn interest × your share; unmanaged ones use your share value from the TRAPs page and earn the share price change (volatility × equity change), taken as your value × the 24h change; names or descriptions saying "managed" start ticked), every investment from the game's public list (`/openapi/investments`) joined with your TRAPs scan, showing your amount, your share of the total, interest per turn, daily interest for the whole investment and for your portion, and your total daily interest. The list refreshes every 10 minutes (or **↻ Refresh API**); **Turns per day** (default 1,440) sets how many interest turns make a day. Only your own balance counts toward capital |
+| Bank | **⧉ Open everything in a new window** shows all of this full-width. Three sections: **Your bank** (your balance and the other lines on that tab; **Invested** shows SharkBot's total of your invested credits: managed = the amounts you type, unmanaged = your share value, each capped at the investment's equity, with the game's own figure in grey), **Central bank** (galaxy fee and the Central bank's stats) and **Investments**: all TRAPs in one table (your amount and share, total, 24h/7d/30d change, price, interest per turn, daily interest for the whole TRAP and for you; **Only mine** shows the investments you hold plus every managed investment (even with no amount typed yet, so you can fill it in), here and in the pop-out; **managed** investments (those whose name or description says "managed", or that are set to managed for everyone; there's no tick box since v3.3.4): managed ones use **only** the amount you type in (blank counts as 0; your share value isn't used) and earn interest × your share; unmanaged ones use your **share value** and **Stake %** from your **Profile → Investments** window (saved automatically while it's open; ⚠ means the older TRAPs page figure is still used) and earn the share price change (volatility × equity change), taken as your value × the 24h change. Your amount is never more than the investment's total equity (⚠ capped at equity), since equity is all the credits in it. Only your own profile is saved as yours. **Click an investment** (▸) to see **everyone known to hold it**: each holder's share value (never more than the equity) and % of the equity, when they were seen, and a total line ("3 known holders · 99 Sx in total · 45% of the 220 Sx equity"; the rest is held by players whose investments haven't been seen). For managed investments only typed amounts count: each holder's own typed amount, or your override in Calculators → TRAPs; holders who haven't typed one show **not entered** and aren't counted. Holders come from SharkBot players' own data and from the Profile → Investments windows SharkBot players open (a player's own data counts before what others saw), and the list refreshes every 10 minutes and with **↻ Refresh API**. ⚠ more than the equity means some of the values are out of date. **What Profile → Investments showed** lists the raw Shares, Stake and Value; , every investment from the game's public list (`/openapi/investments`) joined with your TRAPs scan, showing your amount, your share of the total, interest per turn, daily interest for the whole investment and for your portion, and your total daily interest. The list refreshes every 10 minutes (or **↻ Refresh API**); **Turns per day** (default 1,440) sets how many interest turns make a day. Only your own balance counts toward capital |
 | Cards | Two compact dropdown lists: **by effect** (best value, how many days that card lasts, and total days across all your cards with the effect; open it to see each card) and **by card type** (card count and total days; open it to see each card's effects). Only one card can be active at a time, and a card's days are how long it lasts once used |
 | Nation | Productivity, happiness (and max), sickness, wealth, work mode, population, growth, army size, sickness, pollution, temperature, forest, reward chest and planet defense, side by side for every planet |
 
 **Calculators**, ranked by complexity in three tiers (Tier I takes two rows):
 - **I** (one formula): Turn Storage, Area Size, Turn Gen, Training, Research, Energy, Productivity
 - **II** (models built from many saved values): Credit Gen, Resource Gen, Unit Value
-- **III** (optimizers that combine the others): Best Spend, Value Optimizer
+- **III** (optimizers that combine the others): Best Spend, Value Optimizer, TRAPs
 
 | Subtab | What it shows |
 |---|---|
@@ -68,8 +78,9 @@ The panel has five main tabs: General, Data, Calculators, Statements and Admin. 
 | Turn Gen | Tick Generator upgrade cost by target level or target turns per minute (TPM), compared with what you have, and converted to credits at market prices |
 | Best Spend | Splits **all your capital** between Area upgrades, the Tick Generator and **income research** (Economy, Industrialism, Commercialism, Digging, Iron and Gold mining; costs as in the Research calculator, gains added up over all planets), a slice at a time, wherever the next slice adds the most credits per day. Shown as tables: your capital, then each upgrade's levels, spend, what it adds, training turns, credits per day gained and payback, with a total row. Also sets the credit value of brains, diamonds and SSB |
 | Value Optimizer | Checks **every planet for every method** (printing credits, making resources at market price, and training and selling **slaves** (your kept share) or **professors** (net of untrained) from Unit Value, within the daily sell limits left after passive training; a **Sell limits** section shows each limit, what passive training fills, and the most turns worth spending on selling) and ranks them by credits per turn. Your turns are pooled and handed to the best method first, so the plan can be e.g. printing on B and resources on A. Printing shares one daily cap (Credit Gen's turns per print day); turns past it go to the best resource planet. Shows the plan for print days and non-print days, the weekly total, and how it compares with only printing or only resources. Turns per day = all planets' Tick Generators, or type your own |
+| TRAPs | Every investment with all known holders (the same holders as Data → Bank), per turn and per day. **Share price** = equity ÷ total shares × multi × (volatility + 1): equity, total shares and multi come from the game's investment list, and volatility from your **Central bank** scan (or, without one, worked out from the game's prices); the game's own price shows in grey under it. **Invested:** unmanaged = shares × share price, managed = the amount typed in (yours in Data → Bank, other players' from their SharkBot, or an **override** you type per holder; **Add a holder** for someone not listed); never more than the equity. **Managed, per turn:** Earnings = equity × the investment's interest per turn; Payment = unpaid tax × 0.05% (tick **Above the volatility limit** for 0.1%); Taxes = how much the unpaid tax rose per turn + Payment (needs two refreshes of the game's list, 75% of Earnings until then, marked estimate; shown for information); **Net = Earnings − Payment**; each holder's profit = Net × invested ÷ equity. **Unmanaged:** profit = shares × share price change (per turn from the latest price step, per day from the price a day ago). Click an investment for its holders and the breakdown. Totals for all known holders and for you, **Only mine**, and **Turns/day** (shared with Data → Bank) |
 | Training | Units trained in one turn for every unit type, broken down as **base** (Barracks, plus professors/tacticians/teachers where they count), **+ research** (Education, and Tactics for Majors and Champions), **+ card** and the **total**, using Barracks level, Education and Tactics research, professors/tacticians/teachers, and the **best saved Hero card for each unit row** (training-speed cards only; no card choice needed). Also the Barracks upgrade cost (credits after the best barracks cost card, iron, gold). Fills in from saved data: Barracks level from **Train Units**, research, units and cards |
-| Turn Storage | Most turns you can hold: Turn Storage level × 10 + Brains × 100 + 200, and how many hours your Tick Generator takes to fill it. Level from Facilities, brains from Research (both editable) |
+| Turn Storage | Most turns you can hold: Turn Storage level × 10 + Brains × 100 + 200, and how many hours your Tick Generator takes to fill it. Level from Facilities on whichever planet has it: the game's **Tick Storage**, or any saved facility whose name has both "turn" and "stor". If none matches, a **Which facility is Turn Storage?** list shows every saved facility; pick it once and it's remembered. The result says where the level came from (facility, planet, scan date). Brains from Research. Both editable; clear a box to go back to the saved value |
 | Research | A table of the next level of every research with **every cost in credits**: credits, iron, gold and tritium (market buy price), energy (when a level needs more than the planet stores, the cost of the extra SSB storage at market buy price, marked ⚡) and the turns it takes (× the average turn value from Value Optimizer), plus the total, cheapest first. Hover a cell for the raw amount. Research without a known formula (or not yet scanned) shows ???. Uses your scientists (pick the planet), Computer Technology, brain boost (read from the Research page: costs ×0.75, research points ×2) and your best research-speed and research-requirement cards. Tick boxes turn brain boost and each card on or off |
 | Energy | Energy storage for a planet: Solar Power (3,000 × level × (1 + 5% × Solar power research)), Coal Power (3,000 × level), Wind Power (5,000 × level), Tritium Power (100,000 × level), Tritium Accumulator (10,000 × level) and SSB (× 100), multiplied by Energy Core (1 + level^1.2 ÷ 5 %), Energy Technology (+1% per level) and your best energy card. Levels fill in from Facilities, research and SSB (editable). The Research calculator flags (⚠) research that needs more energy than the planet can store |
 
@@ -82,20 +93,14 @@ Every calculator ends with an **All capital here** block: what spending all your
 
 | Subtab | What it shows |
 |---|---|
-| Balance | A standard balance sheet, all planets summed: **Assets** (current: cash on planets, bank deposits, inventory at market; non-current: TRAPs, brains/diamonds/SSB) and **Liabilities and stockholders' equity** (liabilities, opening capital, retained earnings), with today next to a snapshot at least a day old |
-| Income | Income statement per day and week: passive credits (Credit Gen), turn spending as **Value Optimizer** plans it (printing, resources and unit sales by planet, print and non-print days averaged), and TRAP interest, minus the galaxy fee |
+| Balance | A standard balance sheet, all planets summed: **Assets** (current: cash on planets, bank deposits, inventory at market; non-current: TRAPs, brains/diamonds/SSB) and **Liabilities and stockholders' equity** (current and long-term debt from the Debt switch, opening capital, retained earnings), with today next to a snapshot at least a day old. Two switches at the top: **Balance Sheet** and **Debt** (it remembers the last one). **Debt:** what you owe, in **credits or resources** (gold, iron, coal, diamonds, brains, SSB, any market resource, or a mixed typed amount). Each debt: lender, currency, interest % per day, start date, **transferred**, **interest so far**, **paid back** and the **update date** those amounts are correct for, plus an optional due date (dates are picked from a popup calendar with Today, and Clear on the due date) and Current / Long-term (Auto = current if due within 7 days or no due date). Current = transferred + interest; owed now = current − paid, compounded daily from the update date to today; **Roll to today** adds that interest into "interest so far". Resources are valued at a price you type (e.g. 8.5e13) or the market buy price. Shows totals **by currency** (owed, interest per day, in its own units and in credits, plus all in credits), each debt, current vs long-term, debt ÷ assets, equity after debt and how long net income takes to pay it off. Debts feed the Balance Sheet liabilities, debt interest on the Income and Cash Flow statements, and equity on the Stockholder statement |
+| Income | Income statement per day and week: passive credits (Credit Gen), turn spending as **Value Optimizer** plans it (printing, resources and unit sales by planet, print and non-print days averaged), and TRAP interest, minus the galaxy fee and debt interest |
 | Cash Flow | Expected cash per day (passive + printing after fee), non-cash income (resources, interest), and the actual change between the last two snapshots |
 | Stockholder | Opening equity + estimated net income vs. actual equity now (the gap is what you spent), plus the equity history |
 
-Each statement has a button to open all four in a new window.
+Each statement has a button to open all of them in a new window.
 
-**Admin**
-
-| Subtab | What it shows |
-|---|---|
-| Shared data | After logging in (user and password checked by Sharky's Google Apps Script), a table of every player who shares data: updated time, version, planets, total assassins, turn value (Value Optimizer average), turns per minute, credits, bank and TRAPs. Click a player for their empire, research and per-planet units, facilities, inventory, nation and colony, or copy the raw data |
-
-**Share data to Sharky** (General → Settings) is off unless a player ticks it. When on, SharkBot sends the player name and saved data to Sharky's Google Sheet at most every 15 minutes after a scan (or with **Send now**). Setup for Sharky: see `SharkBot-share.gs` (the Apps Script), then paste its web-app URL into `SHARE_URL_DEFAULT` in the script before giving it to players.
+**Sharing** is part of registration: there's no separate setting. Once you're accepted, SharkBot sends your player name and saved data (including your investments and the amounts you type for managed investments) to Sharky at most every 15 minutes after a scan, and straight away when Sharky asks everyone for fresh data. Your investments and typed managed amounts are shown to other SharkBot players in the Bank holder lists and Calculators → TRAPs, and when you open any player's **Profile → Investments** window, SharkBot sends the investments it shows (at most once per player every 15 minutes). General → Settings → **Sharing & registration** shows the last send, **Send now** and **Unregister**. Copies accepted before v2.23.3, and copies registered before v3.2.0, show a one-time note there.
 
 ## Notes
 
@@ -109,13 +114,17 @@ Each statement has a button to open all four in a new window.
 - Saved data is only as fresh as your last Scan; each tab shows when its data was saved.
 - The helper holds up to 10 planets. With more, scanning an 11th tells you; remove one in **Settings → Planets** to make room.
 - Wide tables (Inventory, Nation) scroll sideways when you have many planets.
-- **Clear** on a slot erases its data but keeps the planet name. **Settings → Reset all saved data** erases everything except your color scheme.
+- **Clear** on a slot erases its data but keeps the planet name. **Settings → Reset all saved data** erases planets, research, market, bank, debts and calculator inputs; your registration (so you stay accepted on the same device), color scheme and panel layout are kept.
 - If something doesn't save, the Debug tab's Status line says why. Use **⧉ Copy** (General → Debug) to share the scan output when reporting a problem.
 
 ## Updating
 
-Open SharkBot in the Tampermonkey dashboard, replace its code with the new version, and save. Pasting into the existing script keeps all your saved data; installing it as a separate new script starts from empty. Save with **Ctrl+S** and reload the game; the panel header should show the new version. If two copies are installed, SharkBot shows a red warning naming both versions.
+Click **Check for update** in the panel header (SharkBot also checks every 6 hours). When a newer version is out, a bar at the top says so; click **Update** and Tampermonkey opens its own update page: click **Update** there, then reload the game. Your saved data is kept. Tampermonkey also updates SharkBot by itself from time to time.
+
+If the bar says **Update required**, the panel stays locked (except the update bar) until you update.
+
+To update by hand: open SharkBot in the Tampermonkey dashboard, replace its code with the new version, and save. Pasting into the existing script keeps all your saved data; installing it as a separate new script starts from empty. Save with **Ctrl+S** and reload the game; the panel header should show the new version. If two copies are installed, SharkBot shows a red warning naming both versions.
 
 ## Version numbers
 
-**public release . private change . small change**. For example, 2.3.1 is the second public release plus three private changes (daily credit income, Resource Gen, Area Size) and four small changes.
+**public release . private change . small change**. For example, 3.0.0 is the third public release, and 3.1.2 would be the third public release plus one private change and two small changes.
