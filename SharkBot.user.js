@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SharkBot
 // @namespace    https://spacealpha.net/
-// @version      3.8.1
+// @version      3.9.0
 // @description  SharkBot for Space Alpha: saves your planets' units, facilities, inventory, research, bank and market prices, and calculates credit generation and Tick Generator upgrade costs.
 // @author       SharkBot
 // @match        https://spacealpha.net/*
@@ -41,7 +41,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     const PANEL_ID = 'sa-helper-panel';
     const SLOT_IDS = 'ABCDEFGHIJ'.split('');   // up to 10 planets
     // Version comes from the @version header so it's never out of sync
-    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.8.1';
+    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.9.0';
     // Another copy of SharkBot already put its panel on the page: warn and stop,
     // so two installed copies are obvious instead of silently showing the old one.
     const existing = document.getElementById(PANEL_ID);
@@ -136,7 +136,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         #${PANEL_ID} table td .sa-btn { width: auto !important; min-width: 0 !important; max-width: none !important; display: inline-block !important; flex: none !important; white-space: nowrap; }
         #${PANEL_ID} .sa-btn:disabled { opacity: 0.45; cursor: not-allowed; }
         /* Admin → Users and Players only show while logged in as admin (since v3.0.1) */
-        #${PANEL_ID}:not(.sa-admin-in) .sa-tab[data-tab="adminusers"], #${PANEL_ID}:not(.sa-admin-in) .sa-tab[data-tab="players"], #${PANEL_ID}:not(.sa-admin-in) .sa-tab[data-tab="viewer"] { display: none !important; }
+        #${PANEL_ID}:not(.sa-admin-in) .sa-tab[data-tab="adminusers"], #${PANEL_ID}:not(.sa-admin-in) .sa-tab[data-tab="players"], #${PANEL_ID}:not(.sa-admin-in) .sa-tab[data-tab="viewer"], #${PANEL_ID}:not(.sa-admin-in) .sa-tab[data-tab="fleets"] { display: none !important; }
         /* Alliance form and rename box (since v2.25.1): full width, whatever the game page styles inputs as */
         #${PANEL_ID} .sa-ally-form { display: grid; grid-template-columns: auto 1fr; gap: 4px 8px; align-items: center; font-size: 11px; }
         #${PANEL_ID} .sa-ally-form label { color: var(--soft); }
@@ -223,9 +223,9 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         /* Registration lock: only Welcome (with the Register box) and Admin are usable until the copy is accepted.
            Welcome is hidden once the copy is accepted; Admin is always there. */
         #${PANEL_ID}:not(.sa-locked) .sa-mtab[data-group="welcome"] { display: none !important; }
-        #${PANEL_ID}.sa-locked .sa-pane:not([data-pane="welcome"]):not([data-pane="admin"]):not([data-pane="adminusers"]):not([data-pane="players"]):not([data-pane="viewer"]),
+        #${PANEL_ID}.sa-locked .sa-pane:not([data-pane="welcome"]):not([data-pane="admin"]):not([data-pane="adminusers"]):not([data-pane="players"]):not([data-pane="viewer"]):not([data-pane="fleets"]),
         #${PANEL_ID}.sa-locked .sa-mtab:not([data-group="admin"]):not([data-group="welcome"]),
-        #${PANEL_ID}.sa-locked .sa-tab:not([data-tab="admin"]):not([data-tab="adminusers"]):not([data-tab="players"]):not([data-tab="viewer"]),
+        #${PANEL_ID}.sa-locked .sa-tab:not([data-tab="admin"]):not([data-tab="adminusers"]):not([data-tab="players"]):not([data-tab="viewer"]):not([data-tab="fleets"]),
         #${PANEL_ID}.sa-locked .sa-tab-label, #${PANEL_ID}.sa-locked .sa-tab-break,
         #${PANEL_ID}.sa-locked #sa-scan, #${PANEL_ID}.sa-viewing #sa-scan { display: none !important; }
         /* Inside a Viewer box (since v3.5.3): only the panel, filling the box */
@@ -507,6 +507,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             <div class="sa-tab" data-tab="adminusers" id="sa-tab-adminusers">Users</div>
             <div class="sa-tab" data-tab="players">Players</div>
             <div class="sa-tab" data-tab="viewer">Viewer</div>
+            <div class="sa-tab" data-tab="fleets">Fleets</div>
         </div>
         <div class="sa-body">
             <div class="sa-pane" data-pane="welcome">
@@ -930,6 +931,16 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                 </div>
                 <div id="sa-stholder-view"></div>
             </div>
+            <div class="sa-pane" data-pane="fleets">
+                <div class="sa-section">
+                    <div class="sa-label">Fleets</div>
+                    <div style="font-size: 10px; color: var(--muted); margin-bottom: 6px;">
+                        Recently scanned fleets, newest first: every fleet in the game's fleet list with a known sender, and every fleet opened in the selected-target window
+                        (those add ship types, units and resources). Shared by all admins; the latest 500 are kept. Click an owner for their details in Players.
+                    </div>
+                </div>
+                <div id="sa-fleets-view"></div>
+            </div>
             <div class="sa-pane" data-pane="viewer">
                 <div class="sa-section">
                     <div class="sa-label">Viewer</div>
@@ -1246,7 +1257,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         data:        ['research', 'market', 'bank', 'cards', 'units', 'facilities', 'inventory', 'nation'],
         calculators: ['storage', 'area', 'turns', 'training', 'rescalc', 'energy', 'productivity', 'creditgen', 'resgen', 'unitvalue', 'optimizer', 'valueopt', 'trapcalc'],
         statements:  ['stbalance', 'stincome', 'stcash', 'stholder'],
-        admin:       ['admin', 'adminusers', 'players', 'viewer'],
+        admin:       ['admin', 'adminusers', 'players', 'viewer', 'fleets'],
     };
     const groupOf = (tab) => Object.keys(TAB_GROUPS).find(g => TAB_GROUPS[g].includes(tab)) || 'general';
     if (!Object.values(TAB_GROUPS).flat().includes(activeTab)) activeTab = 'debug';
@@ -1280,6 +1291,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         if (group === 'statements' && typeof STMT_TABS !== 'undefined' && STMT_TABS) { try { renderStatements(); } catch (e) {} }
         if (name === 'players' && typeof PLAYERS_READY !== 'undefined' && PLAYERS_READY) { try { renderPlayers(); fetchOnline(false); } catch (e) {} }
         if (name === 'viewer' && typeof PLAYERS_READY !== 'undefined' && PLAYERS_READY) { try { renderViewer(); } catch (e) {} }
+        if (name === 'fleets' && typeof PLAYERS_READY !== 'undefined' && PLAYERS_READY) { try { renderFleets(); } catch (e) {} }
     }
 
     // ---------- generic scanner ----------
@@ -5112,12 +5124,24 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         try {
             const f = fleetsLoad();
             const r = await gmPost(shareUrl(), { action: 'adminsync', user: adminCreds.user, pass: adminCreds.pass,
-                players: playersLoad(), fleets: f.players || {}, tags: GM_getValue('sa-admin-hs-tags', {}) || {}, resets: GM_getValue('sa-admin-resets', {}) || {} });
+                players: playersLoad(), fleets: f.players || {}, log: f.log || [], tags: GM_getValue('sa-admin-hs-tags', {}) || {}, resets: GM_getValue('sa-admin-resets', {}) || {} });
             if (!r || !r.ok) throw new Error((r && r.error) || 'refused');
             const del = r.deleted || {};
             const pl = Object.assign({ players: {}, online: [] }, r.players || {});
+            // Keep anything this browser collected while the sync was on its way (newer than the server's copy), and send it next time
+            const tms = (x) => x ? new Date(x).getTime() || 0 : 0, mine = playersLoad();
+            let newer = false;
+            Object.values(mine.players || {}).forEach(p => {
+                const seen = Math.max(tms(p.last), tms(p.hsSeen), tms(p.first)), k = String(p.name || '').trim().toLowerCase();
+                if (del[k] && seen <= tms(del[k])) return;
+                const sp = pl.players[p.id], spSeen = sp ? Math.max(tms(sp.last), tms(sp.hsSeen)) : -1;
+                if (!sp || Math.max(tms(p.last), tms(p.hsSeen)) > spSeen) { pl.players[p.id] = Object.assign({}, sp || {}, p); newer = true; }
+            });
+            Object.keys(pl.players).forEach(id => { if (id.startsWith('hs:') && Object.values(pl.players).some(q => !q.id.startsWith('hs:') && String(q.name).trim().toLowerCase() === id.slice(3))) delete pl.players[id]; });
+            if (tms(mine.checkedAt) > tms(pl.checkedAt)) { pl.online = mine.online; pl.checkedAt = mine.checkedAt; newer = true; }
             GM_setValue('sa-players', pl);
-            const cur = fleetsLoad(); cur.players = r.fleets || {};
+            if (newer) adminSyncSoon();
+            const cur = fleetsLoad(); cur.players = r.fleets || {}; if (Array.isArray(r.log)) cur.log = r.log;
             if (cur.session) Object.keys(cur.session.players || {}).forEach(k => { if (del[k]) delete cur.session.players[k]; });
             GM_setValue('sa-admin-fleets', cur);
             GM_setValue('sa-admin-hs-tags', r.tags || {});
@@ -5125,7 +5149,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             adminSyncAt = new Date().toISOString(); adminSyncErr = '';
         } catch (e) { adminSyncErr = /unknown action/.test(e.message) ? 'Your Apps Script needs the v3.8.0 update to share admin data.' : 'Shared admin data not synced: ' + e.message; }
         finally { adminSyncing = false; }
-        try { renderPlayers(); renderAdmin(); } catch (e) {}
+        try { renderPlayers(); renderAdmin(); renderFleets(); } catch (e) {}
     }
     // After this browser collects something, send it soon (when logged in as admin)
     function adminSyncSoon() { if (!adminCreds) return; clearTimeout(adminSyncTimer); adminSyncTimer = setTimeout(adminSync, 20000); }
@@ -5494,8 +5518,8 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     function setAdminIn(on) {
         panel.classList.toggle('sa-admin-in', !!on);
         if (!on) {
-            if (['adminusers', 'players', 'viewer'].includes(GM_getValue('sa-last-sub-admin', ''))) GM_setValue('sa-last-sub-admin', 'admin');
-            if (['adminusers', 'players', 'viewer'].includes(GM_getValue('sa-active-tab', ''))) switchTab('admin');
+            if (['adminusers', 'players', 'viewer', 'fleets'].includes(GM_getValue('sa-last-sub-admin', ''))) GM_setValue('sa-last-sub-admin', 'admin');
+            if (['adminusers', 'players', 'viewer', 'fleets'].includes(GM_getValue('sa-active-tab', ''))) switchTab('admin');
         }
     }
     setAdminIn(false);   // never logged in after a page load (the password isn't stored)
@@ -5677,7 +5701,28 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         const dt = (t) => t ? escapeHtml(new Date(t).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })) : '—';
         const ts = (t) => t ? new Date(t).getTime() : '';
         const myLabel = my ? escapeHtml(label(my) || my.slice(0, 8) + '…') : '';
+        // Rename an alliance (since v3.9.0): every alliance known, yours first, then by name
+        const rnList = Object.values(al).filter(a => a.id).sort((a, b) => isMine(b) - isMine(a) || sortKey(a.id).localeCompare(sortKey(b.id)));
+        const rnSel = rnList.some(a => a.id === allyRenamePick) ? allyRenamePick : (rnList[0] ? rnList[0].id : '');
         view.innerHTML = `
+            <div class="sa-section sa-ally-form" style="display:block; margin-bottom:8px; border:1px solid var(--border); border-radius:6px; padding:6px 8px">
+                <div class="sa-label" style="margin:0 0 4px">Rename an alliance</div>
+                <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap">
+                    <select class="sa-select" id="sa-rn-sel" style="flex:1 1 200px; min-width:0">${rnList.map(a => `<option value="${escapeHtml(a.id)}" ${a.id === rnSel ? 'selected' : ''}>${
+                        escapeHtml((a.id === my ? '★ ' : '') + (label(a.id) || a.id.slice(0, 8) + '…') + (a.id.startsWith('tag:') ? ' (tag)' : '') + ` · ${a.seen} player${a.seen === 1 ? '' : 's'}`)}</option>`).join('')}</select>
+                    <input id="sa-rn-name" class="sa-ally-input" value="${escapeHtml(rnSel ? label(rnSel) : '')}" placeholder="name (blank = show the ID)" style="flex:1 1 160px; min-width:0" />
+                    <button class="sa-btn" id="sa-rn-save" style="margin:0">Save</button>
+                </div>
+                <details style="margin-top:4px"${allyAddId ? ' open' : ''}><summary style="cursor:pointer; font-size:10px; color:var(--muted)">Add by ID… (an alliance not seen yet)</summary>
+                    <div class="sa-ally-form" style="margin-top:4px">
+                        <label for="sa-ally-add-id">Alliance ID</label>
+                        <input id="sa-ally-add-id" value="${escapeHtml(allyAddId.trim())}" placeholder="24 characters: click an ID in the table to fill it" />
+                        <label for="sa-ally-add-name">Name</label>
+                        <input id="sa-ally-add-name" placeholder="e.g. Illenium" />
+                    </div>
+                    <button class="sa-btn" id="sa-ally-add" style="margin:6px 0 0">Add / rename</button></details>
+                <div class="sa-slot-meta" style="margin-top:3px">${allyMsg ? escapeHtml(allyMsg) + ' · ' : ''}Names are saved on Sharky's server for every admin and copy. ✏ in the table and ★ (mark yours) work too.</div>
+            </div>
             <div class="sa-recommend" style="margin-bottom:6px">Online now: <b>${onlineSet.size}</b> · players seen: ${all.length}${adminSyncErr ? ` · <span style="color:var(--warn)">${escapeHtml(adminSyncErr)}</span>` : adminSyncAt ? ` · shared with all admins (synced ${escapeHtml(agoText(adminSyncAt))})` : ''}${d.hsLast ? ` · highscore read ${escapeHtml(agoText(d.hsLast.at))} (${d.hsLast.rows} rows, ${d.hsLast.added} new)` : ''}${
                 invKnown.length ? ` · credits invested (known): <b>${escapeHtml(fmt(invAll))}</b> across ${invKnown.length} player${invKnown.length === 1 ? '' : 's'}` : ''}${
                 my ? ` · your alliance (${myLabel}): ${(al[my] || { online: 0 }).online} online of ${(al[my] || { seen: 0 }).seen} seen` : ''}<br><span style="font-size:10px; color:var(--muted)">${playersFetching ? 'Checking…' : d.checkedAt ? 'Checked ' + agoText(d.checkedAt) : 'Not checked yet'}${
@@ -5702,17 +5747,6 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                     <td></td><td style="color:var(--muted)">${allyOpen.__unseen ? '▾' : '▸'} not seen online</td><td class="sa-num">—</td><td class="sa-num">—</td>
                     <td class="sa-num">${escapeHtml(fmt(unseenAss))}</td><td class="sa-num">${unseen.length}</td><td></td></tr>${allyOpen.__unseen
                     ? unseen.slice().sort().map(k => memberRow((adminData.find(sp => String(sp.player).trim().toLowerCase() === k) || {}).player || k, false, null, shared[k])).join('') : ''}` : ''}</tbody></table>${detailBox('alliances')}` : '<div class="sa-empty">No alliances seen yet.</div>'}
-            <div class="sa-section" style="margin-top:6px">
-                <div class="sa-label">Name an alliance</div>
-                <div class="sa-ally-form">
-                    <label for="sa-ally-add-id">Alliance ID</label>
-                    <input id="sa-ally-add-id" value="${escapeHtml(allyAddId)}" placeholder="24 characters: click an ID in the table to fill it" />
-                    <label for="sa-ally-add-name">Name</label>
-                    <input id="sa-ally-add-name" placeholder="e.g. Illenium" />
-                </div>
-                <button class="sa-btn" id="sa-ally-add" style="margin:6px 0 0">Add / rename</button>
-            </div>
-            <div class="sa-slot-meta" style="margin-top:2px">${allyMsg ? escapeHtml(allyMsg) + ' · ' : ''}✏ renames an alliance and ★ marks yours. Names are saved on Sharky's server for every copy.</div>
             <div class="sa-label" style="margin-top:8px">Players (${shown.length})</div>
             ${shown.length ? `<div style="overflow-x:auto"><table class="sa-unit-table" data-sort-id="admin-players"><thead><tr><th title="Online">●</th><th>Name</th><th>Alliance</th><th>Last seen</th><th>First seen</th><th style="text-align:right" title="From their shared data (blank if they don't share)">Assassins</th><th style="text-align:right" title="Credits invested, if their investments are known">Invested</th><th style="text-align:right" title="Most ships seen in one scan: all their fleets in the fleet list at that moment, added up">Ships (max)</th></tr></thead><tbody>
                 ${shown.map(p => `<tr data-pname="${escapeHtml(p.name)}" data-pwhere="players" title="Click to ${isOpen('players', p.name) ? 'hide' : 'show'} their shared data"
@@ -5767,12 +5801,36 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         view.querySelectorAll('.sa-ally-star').forEach(el => el.addEventListener('click', () => {
             const id = el.dataset.star; allianceUpdate({ id, mine: id !== my });
         }));
+        wireRenameBar(view);
         view.querySelector('#sa-ally-add').addEventListener('click', () => {
             const id = view.querySelector('#sa-ally-add-id').value.trim().toLowerCase(), name = view.querySelector('#sa-ally-add-name').value;
             if (!/^[0-9a-f]{24}$/.test(id)) { allyMsg = 'An alliance ID is 24 characters, 0-9 and a-f'; allyAddId = id; if (document.activeElement) document.activeElement.blur(); renderPlayers(); return; }
             allyAddId = ''; if (document.activeElement && view.contains(document.activeElement)) document.activeElement.blur();
             allianceUpdate({ id, name });
         });
+    }
+    var allyRenamePick = '';
+    function wireRenameBar(view) {
+        const sel = view.querySelector('#sa-rn-sel'), inp = view.querySelector('#sa-rn-name');
+        if (!sel) return;
+        const names = allianceCfg().allianceNames || {}, labelOf = (id) => names[id] || (id.startsWith('tag:') ? id.slice(4) : '');
+        sel.addEventListener('change', () => { allyRenamePick = sel.value; inp.value = labelOf(sel.value); inp.focus(); });
+        const save = () => {
+            const id = sel.value, name = inp.value.trim(); allyRenamePick = id;
+            if (!id) return;
+            inp.blur();
+            if (id.startsWith('tag:')) {
+                // A highscore tag: link it to the real alliance with that name, if there is one
+                const want = (name || id.slice(4)).toLowerCase(), real = Object.keys(names).find(k => String(names[k]).trim().toLowerCase() === want);
+                if (!real) { allyMsg = `"${name || id.slice(4)}" isn't a named alliance yet: add its alliance ID under Add by ID… with this name, then save again`; allyAddId = ' '; renderPlayers(); return; }
+                const d = playersLoad(); Object.values(d.players).forEach(p => { if (p.alliance === id) p.alliance = real; }); GM_setValue('sa-players', d);
+                const tags = GM_getValue('sa-admin-hs-tags', {}) || {}; tags[id.slice(4).toLowerCase()] = real; GM_setValue('sa-admin-hs-tags', tags);
+                allyMsg = `Linked tag ${id.slice(4)} to ${names[real]}`; allyRenamePick = real; adminSyncSoon(); renderPlayers(); return;
+            }
+            allianceUpdate({ id, name });
+        };
+        view.querySelector('#sa-rn-save').addEventListener('click', save);
+        inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') save(); });
     }
     async function allianceUpdate(change) {
         allyMsg = 'Saving…'; renderPlayers();
@@ -5832,6 +5890,19 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         return { owner, target, types, units, unitsCap, res, resCap, mission };
     }
     let fleetSig = '', selSig = '';
+    // Every fleet scanned (since v3.9.0), for Admin → Fleets: one entry per fleet (owner, ships, mission, target), updated
+    // when seen again; fleets you opened add ship types, units and resources. The latest 500 are kept (shared by admins).
+    function logFleet(d, e, now) {
+        d.log = d.log || [];
+        const low = (x) => String(x || '').trim().toLowerCase();
+        const key = e.key || [low(e.owner), e.ships, low(e.mission), low(e.target), e.coords || ''].join('|');
+        let x = d.log.find(y => y.key === key);
+        if (!x && e.types) x = d.log.find(y => low(y.owner) === low(e.owner) && low(y.target) === low(e.target) && y.ships === e.ships);
+        if (!x) { x = { key, first: now }; d.log.unshift(x); }
+        Object.keys(e).forEach(k => { if (e[k] != null && e[k] !== '' && k !== 'key') x[k] = e[k]; });
+        x.at = now;
+        d.log.sort((a, b) => new Date(b.at) - new Date(a.at)); d.log = d.log.slice(0, 500);
+    }
     function checkFleets() {
         if (sbView || !GM_getValue('sa-admin-copy', false)) return;
         const list = readFleetList(), sel = readSelectedFleet();
@@ -5846,6 +5917,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                     d.session = { id: now, at: now, sig, players: {}, opened: {} };
                 fleetSig = sig;
                 list.filter(r => fKnown(r.sender)).forEach(r => {
+                    logFleet(d, { owner: r.sender, ships: r.ships || 0, mission: r.mission, target: fKnown(r.target) ? r.target : '', coords: r.coords, arrival: r.arrival }, now);
                     const k = low(r.sender), sp = d.session.players[k] || (d.session.players[k] = { name: r.sender, fleets: 0, ships: 0, rows: [] });
                     const rk = [r.ships, r.mission, r.target, r.coords].join('|');
                     if (!sp.rows.includes(rk)) { sp.rows.push(rk); sp.fleets++; sp.ships += r.ships || 0; }
@@ -5859,6 +5931,8 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             if (fk !== selSig) {
                 selSig = fk;
                 if (!d.session || Date.now() - new Date(d.session.at) > FLEET_SESSION_MS) d.session = { id: now, at: now, sig: '', players: {}, opened: {} };
+                logFleet(d, { owner: sel.owner, target: fKnown(sel.target) ? sel.target : '', mission: sel.mission, types: sel.types, units: sel.units, unitsCap: sel.unitsCap, res: sel.res, resCap: sel.resCap,
+                    ships: Object.values(sel.types).reduce((a, b) => a + b, 0) }, now); changed = true;
                 if (!d.session.opened[fk]) {
                     d.session.opened[fk] = 1;
                     const k = low(sel.owner), sp = d.session.players[k] || (d.session.players[k] = { name: sel.owner, fleets: 0, ships: 0, rows: [] });
@@ -5893,9 +5967,57 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         Object.values(d.session.players).forEach(sp => { if (!byName.has(low(sp.name))) { const id = 'hs:' + low(sp.name); pd.players[id] = { id, name: sp.name, first: now, alliance: '' }; added = true; } });
         if (added) GM_setValue('sa-players', pd);
         adminSyncSoon();
-        try { renderPlayers(); } catch (e) {}
+        try { renderPlayers(); renderFleets(); } catch (e) {}
     }
     setInterval(() => { try { checkFleets(); } catch (e) {} }, 2000);
+    // Admin → Fleets (since v3.9.0)
+    var flFilter = { q: '', ally: '', mission: '', range: '24h' };
+    function renderFleets() {
+        const view = document.getElementById('sa-fleets-view');
+        if (!view) return;
+        if (!adminCreds) { view.innerHTML = '<div class="sa-empty">Log in on the <b>Dashboard</b> tab first.</div>'; return; }
+        if (view.contains(document.activeElement) && document.activeElement.tagName === 'INPUT') return;
+        const log = fleetsLoad().log || [], pl = playersLoad(), cfg = allianceCfg(), names = cfg.allianceNames || {}, my = cfg.allianceId;
+        const low = (x) => String(x || '').trim().toLowerCase();
+        const allyOf = {}; Object.values(pl.players || {}).forEach(p => { allyOf[low(p.name)] = p.alliance || ''; });
+        const allyLabel = (a) => !a ? '' : names[a] || (a.startsWith('tag:') ? a.slice(4) : a.slice(0, 8) + '…');
+        const span = { '1h': 3600e3, '24h': 86400e3, '7d': 7 * 86400e3, all: Infinity }[flFilter.range] || Infinity;
+        const missions = Array.from(new Set(log.map(x => String(x.mission || '').split(/\s|\(/)[0]).filter(Boolean))).sort();
+        const allies = Array.from(new Set(log.map(x => allyOf[low(x.owner)] || '').filter(Boolean)));
+        const rows = log.filter(x => Date.now() - new Date(x.at) <= span
+            && (!flFilter.q || low(x.owner).includes(low(flFilter.q)) || low(x.target).includes(low(flFilter.q)))
+            && (!flFilter.ally || (flFilter.ally === '__mine' ? allyOf[low(x.owner)] === my : allyOf[low(x.owner)] === flFilter.ally))
+            && (!flFilter.mission || String(x.mission || '').toLowerCase().startsWith(flFilter.mission.toLowerCase())));
+        const f = (v) => v == null ? '' : escapeHtml(fmt(v));
+        const total = rows.reduce((t, x) => t + (x.ships || 0), 0);
+        view.innerHTML = `<div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center; margin-bottom:6px; font-size:11px">
+                <input id="sa-fl-q" placeholder="Owner or target" value="${escapeHtml(flFilter.q)}" style="flex:1 1 140px; min-width:0" />
+                <select class="sa-select" id="sa-fl-ally" style="width:auto"><option value="">All alliances</option>${my ? `<option value="__mine" ${flFilter.ally === '__mine' ? 'selected' : ''}>★ My alliance</option>` : ''}${
+                    allies.map(a => `<option value="${escapeHtml(a)}" ${flFilter.ally === a ? 'selected' : ''}>${escapeHtml(allyLabel(a))}</option>`).join('')}</select>
+                <select class="sa-select" id="sa-fl-mission" style="width:auto"><option value="">All missions</option>${missions.map(m => `<option ${flFilter.mission === m ? 'selected' : ''}>${escapeHtml(m)}</option>`).join('')}</select>
+                <select class="sa-select" id="sa-fl-range" style="width:auto">${[['1h', 'Last hour'], ['24h', 'Last 24 hours'], ['7d', 'Last 7 days'], ['all', 'All']].map(([k, l]) => `<option value="${k}" ${flFilter.range === k ? 'selected' : ''}>${l}</option>`).join('')}</select>
+            </div>
+            <div class="sa-recommend" style="margin-bottom:6px">${rows.length} fleet${rows.length === 1 ? '' : 's'} · ${f(total)} ships${log.length > rows.length ? ` <span style="color:var(--muted)">(${log.length} kept)</span>` : ''}</div>
+            ${rows.length ? `<div style="overflow-x:auto"><table class="sa-unit-table" data-sort-id="admin-fleets">
+                <thead><tr><th>Seen</th><th>Owner</th><th>Alliance</th><th style="text-align:right">Ships</th><th>Mission</th><th>Target</th><th>Arrival</th><th>Ship types</th><th style="text-align:right">Units</th><th style="text-align:right">Resources</th></tr></thead>
+                <tbody>${rows.map(x => `<tr>
+                    <td data-sort="${new Date(x.at).getTime()}" title="${escapeHtml(new Date(x.at).toLocaleString())}">${escapeHtml(agoText(x.at))}</td>
+                    <td><span class="sa-fl-owner" data-owner="${escapeHtml(x.owner)}" style="cursor:pointer; text-decoration:underline dotted">${escapeHtml(x.owner)}</span></td>
+                    <td>${escapeHtml(allyLabel(allyOf[low(x.owner)]))}</td>
+                    <td class="sa-num" data-sort="${x.ships || 0}">${f(x.ships)}</td><td>${escapeHtml(x.mission || '')}</td>
+                    <td>${escapeHtml(x.target || '')}${x.coords ? ` <span style="color:var(--muted)">${escapeHtml(x.coords)}</span>` : ''}</td>
+                    <td style="color:var(--muted)">${escapeHtml(x.arrival || '')}</td>
+                    <td style="font-size:10px">${x.types ? Object.entries(x.types).map(([t, v]) => `${escapeHtml(t)} ${f(v)}`).join(', ') : ''}</td>
+                    <td class="sa-num" data-sort="${x.units ?? ''}">${x.units != null ? f(x.units) + (x.unitsCap ? `<span style="color:var(--muted)"> / ${f(x.unitsCap)}</span>` : '') : ''}</td>
+                    <td class="sa-num" data-sort="${x.res ?? ''}">${x.res != null ? f(x.res) + (x.resCap ? `<span style="color:var(--muted)"> / ${f(x.resCap)}</span>` : '') : ''}</td></tr>`).join('')}</tbody></table></div>`
+                : `<div class="sa-empty">${log.length ? 'No fleets match.' : 'No fleets scanned yet. Open the game\'s fleet list (and a fleet) while this is an admin copy.'}</div>`}`;
+        const q = view.querySelector('#sa-fl-q');
+        q.addEventListener('input', () => { flFilter.q = q.value; const pos = q.selectionStart; q.blur(); renderFleets(); const n = document.getElementById('sa-fl-q'); if (n) { n.focus(); n.setSelectionRange(pos, pos); } });
+        [['#sa-fl-ally', 'ally'], ['#sa-fl-mission', 'mission'], ['#sa-fl-range', 'range']].forEach(([id, k]) => view.querySelector(id).addEventListener('change', (e) => { flFilter[k] = e.target.value; renderFleets(); }));
+        view.querySelectorAll('.sa-fl-owner').forEach(el => el.addEventListener('click', () => {
+            plOpen = { where: 'players', name: el.dataset.owner }; GM_setValue('sa-players-q', el.dataset.owner); switchTab('players'); try { renderPlayers(); } catch (e) {}
+        }));
+    }
     function fleetsHtml(name) {
         const P = fleetsLoad().players[String(name || '').trim().toLowerCase()];
         if (!P) return '';
