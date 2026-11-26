@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SharkBot
 // @namespace    https://spacealpha.net/
-// @version      3.9.0
+// @version      3.9.1
 // @description  SharkBot for Space Alpha: saves your planets' units, facilities, inventory, research, bank and market prices, and calculates credit generation and Tick Generator upgrade costs.
 // @author       SharkBot
 // @match        https://spacealpha.net/*
@@ -41,7 +41,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     const PANEL_ID = 'sa-helper-panel';
     const SLOT_IDS = 'ABCDEFGHIJ'.split('');   // up to 10 planets
     // Version comes from the @version header so it's never out of sync
-    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.9.0';
+    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.9.1';
     // Another copy of SharkBot already put its panel on the page: warn and stop,
     // so two installed copies are obvious instead of silently showing the old one.
     const existing = document.getElementById(PANEL_ID);
@@ -5147,6 +5147,11 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             GM_setValue('sa-admin-hs-tags', r.tags || {});
             const rs = r.resets || {}; Object.keys(rs).forEach(n => { if (del[n.trim().toLowerCase()]) delete rs[n]; }); GM_setValue('sa-admin-resets', rs);
             adminSyncAt = new Date().toISOString(); adminSyncErr = '';
+            // v3.9.0 logged the fleet list's title row as a player "Sender": remove it everywhere (never if a real "Sender" was seen online)
+            const fake = Object.values(pl.players || {}).find(p => /^sender$/i.test(String(p.name)) && String(p.id).startsWith('hs:'));
+            if ((fake || (r.log || []).some(x => /^sender$/i.test(String(x.owner)))) && !Object.values(pl.players || {}).some(p => /^sender$/i.test(String(p.name)) && !String(p.id).startsWith('hs:'))) {
+                gmPost(shareUrl(), { action: 'deleteplayer', user: adminCreds.user, pass: adminCreds.pass, player: 'Sender' }).then(() => setTimeout(adminSync, 1000)).catch(() => {});
+            }
         } catch (e) { adminSyncErr = /unknown action/.test(e.message) ? 'Your Apps Script needs the v3.8.0 update to share admin data.' : 'Shared admin data not synced: ' + e.message; }
         finally { adminSyncing = false; }
         try { renderPlayers(); renderAdmin(); renderFleets(); } catch (e) {}
@@ -5854,20 +5859,40 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     // during that scan add their ship types, units and resources (each fleet once). Each player keeps the latest 50 scan
     // snapshots and the highest per-scan sums ever seen (a floor on what they own). Stored in sa-admin-fleets.
     const FLEET_SESSION_MS = 10 * 60e3;
-    function fleetsLoad() { return GM_getValue('sa-admin-fleets', null) || { players: {}, session: null }; }
+    function fleetsLoad() {
+        const d = GM_getValue('sa-admin-fleets', null) || { players: {}, session: null };
+        // v3.9.0 read the fleet list's title row as a fleet by "Sender"
+        if ((d.log || []).some(x => /^sender$/i.test(String(x.owner))) || (d.players && d.players.sender)) {
+            d.log = (d.log || []).filter(x => !/^sender$/i.test(String(x.owner))); if (d.players) delete d.players.sender; GM_setValue('sa-admin-fleets', d);
+        }
+        return d;
+    }
     function fleetMax(name) { const f = fleetsLoad().players[String(name || '').trim().toLowerCase()]; return f ? f.max : null; }
     const fTxt = (el) => el ? (el.innerText || el.textContent || '').replace(/[ \t]+/g, ' ').trim() : '';
     const fKnown = (n) => !!n && !/^\?+$/.test(n.trim());
+    // The fleet list (since v3.9.1 read by content, not column position): the title row is skipped; in each fleet row the
+    // sender is the first name span, ships are "N ships", the mission follows, arrival is "Stationed" or a time, and the
+    // destination is the name above its "#x-y" coordinates
+    const MISSION_RE = /^(Mining|Attack|Reinforc|Return|Transport|Spy|Colon|Defend|Station|Explor|Patrol|Invad|Harvest|Trad)/i;
     function readFleetList() {
         const t = document.querySelector('#targets_list table'); if (!t) return null;
         const rows = [];
-        Array.from(t.querySelectorAll('tr')).forEach(tr => {
-            const c = tr.cells; if (!c || c.length < 4 || tr.querySelector('th')) return;
-            const sender = fTxt(c[0].querySelector('div span') || c[0].querySelector('span') || c[0]);
-            const info = fTxt(c[1]).split('\n').map(x => x.trim()).filter(Boolean);
-            const ships = parseNumber(String(info[0] || '').replace(/ships?.*$/i, '').trim());
-            const dest = fTxt(c[3]).split('\n').map(x => x.trim()).filter(Boolean);
-            rows.push({ sender, ships, mission: info[1] || '', target: dest[0] || '', coords: dest[1] || '', arrival: fTxt(c[2]).split('\n')[0] || '' });
+        Array.from(t.querySelectorAll(':scope > tr, :scope > tbody > tr')).forEach(tr => {
+            const all = fTxt(tr);
+            if (!/ships?\b/i.test(all) || /fleet\s*info/i.test(all)) return;   // title row or not a fleet
+            const lines = all.split('\n').map(x => x.trim()).filter(Boolean);
+            const senderEl = tr.querySelector('td div span') || tr.querySelector('span');
+            const sender = senderEl ? fTxt(senderEl).split('\n')[0].trim() : '';
+            const shipsLine = lines.find(l => /ships?\b/i.test(l)) || '';
+            const sm = shipsLine.match(/([\d.,]+\s*[kKmMbBtTqQ]?)\s*ships?/i);
+            const ships = sm ? parseNumber(sm[1].replace(/\s+/g, ' ').trim()) : null;
+            const mission = lines.find(l => MISSION_RE.test(l)) || '';
+            const arrival = lines.find(l => /^Stationed$/i.test(l) || /\b(hours?|days?|months?|minutes?|mins?|seconds?|years?)\b/i.test(l) && !/ships?/i.test(l)) || '';
+            const ci = lines.findIndex(l => /^#\d+\s*-\s*\d+/.test(l));
+            const coords = ci >= 0 ? lines[ci] : '';
+            const target = ci > 0 && !/ships?\b|KM$/i.test(lines[ci - 1]) && !MISSION_RE.test(lines[ci - 1]) && lines[ci - 1] !== arrival ? lines[ci - 1] : '';
+            if (!sender || /^sender$/i.test(sender)) return;
+            rows.push({ sender, ships, mission, target, coords, arrival });
         });
         return rows;
     }
