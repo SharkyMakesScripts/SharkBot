@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SharkBot
 // @namespace    https://spacealpha.net/
-// @version      3.9.6
+// @version      3.10.0
 // @description  SharkBot for Space Alpha: saves your planets' units, facilities, inventory, research, bank and market prices, and calculates credit generation and Tick Generator upgrade costs.
 // @author       SharkBot
 // @match        https://spacealpha.net/*
@@ -41,7 +41,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     const PANEL_ID = 'sa-helper-panel';
     const SLOT_IDS = 'ABCDEFGHIJ'.split('');   // up to 10 planets
     // Version comes from the @version header so it's never out of sync
-    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.9.6';
+    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.10.0';
     // Another copy of SharkBot already put its panel on the page: warn and stop,
     // so two installed copies are obvious instead of silently showing the old one.
     const existing = document.getElementById(PANEL_ID);
@@ -5124,7 +5124,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         try {
             const f = fleetsLoad();
             const r = await gmPost(shareUrl(), { action: 'adminsync', user: adminCreds.user, pass: adminCreds.pass,
-                players: playersLoad(), fleets: f.players || {}, log: f.log || [], tags: GM_getValue('sa-admin-hs-tags', {}) || {}, resets: GM_getValue('sa-admin-resets', {}) || {} });
+                players: playersLoad(), fleets: f.players || {}, log: f.log || [], links: planetLinks(), tags: GM_getValue('sa-admin-hs-tags', {}) || {}, resets: GM_getValue('sa-admin-resets', {}) || {} });
             if (!r || !r.ok) throw new Error((r && r.error) || 'refused');
             const del = r.deleted || {};
             const pl = Object.assign({ players: {}, online: [] }, r.players || {});
@@ -5141,8 +5141,12 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             if (tms(mine.checkedAt) > tms(pl.checkedAt)) { pl.online = mine.online; pl.checkedAt = mine.checkedAt; newer = true; }
             GM_setValue('sa-players', pl);
             if (newer) adminSyncSoon();
+            if (r.links) GM_setValue('sa-admin-planet-links', r.links);
+            // Remember SharkBot users' planet names, so planets stay linked when logged out
+            try { const pm = {}; (adminData || []).forEach(sp => (sp.data && sp.data.planets || []).forEach(p => { if (p.name) pm[String(p.name).trim().toLowerCase()] = sp.player; })); if (Object.keys(pm).length) GM_setValue('sa-admin-planetmap', pm); } catch (e) {}
             let cur = fleetsLoad(); cur.players = r.fleets || {}; if (Array.isArray(r.log)) cur.log = r.log;
             GM_setValue('sa-admin-fleets', cur); cur = fleetsLoad();   // tidies older duplicate fleets the server still has
+            if (r.fleetResetAt && (!cur.resetAt || new Date(r.fleetResetAt) > new Date(cur.resetAt))) clearLocalFleets(r.fleetResetAt);
             if (cur.session) Object.keys(cur.session.players || {}).forEach(k => { if (del[k]) delete cur.session.players[k]; });
             GM_setValue('sa-admin-fleets', cur);
             GM_setValue('sa-admin-hs-tags', r.tags || {});
@@ -5754,7 +5758,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                     <td class="sa-num">${escapeHtml(fmt(unseenAss))}</td><td class="sa-num">${unseen.length}</td><td></td></tr>${allyOpen.__unseen
                     ? unseen.slice().sort().map(k => memberRow((adminData.find(sp => String(sp.player).trim().toLowerCase() === k) || {}).player || k, false, null, shared[k])).join('') : ''}` : ''}</tbody></table>${detailBox('alliances')}` : '<div class="sa-empty">No alliances seen yet.</div>'}
             <div class="sa-label" style="margin-top:8px">Players (${shown.length})</div>
-            ${shown.length ? `<div style="overflow-x:auto"><table class="sa-unit-table" data-sort-id="admin-players"><thead><tr><th title="Online">●</th><th>Name</th><th>Alliance</th><th>Last seen</th><th>First seen</th><th style="text-align:right" title="From their shared data (blank if they don't share)">Assassins</th><th style="text-align:right" title="Credits invested, if their investments are known">Invested</th><th style="text-align:right" title="Most ships seen in one scan: all their fleets in the fleet list at that moment, added up">Ships (max)</th></tr></thead><tbody>
+            ${shown.length ? `<div style="overflow-x:auto"><table class="sa-unit-table" data-sort-id="admin-players"><thead><tr><th title="Online">●</th><th>Name</th><th>Alliance</th><th>Last seen</th><th>First seen</th><th style="text-align:right" title="From their shared data (blank if they don't share)">Assassins</th><th style="text-align:right" title="Credits invested, if their investments are known">Invested</th><th style="text-align:right" title="Most ships seen in one scan: all their planets' fleets in the fleet list at that moment, added up">Ships (max)</th><th style="text-align:right" title="Most assassins seen carried by their fleets in one scan (from fleets hovered or opened)">Assassins (fleets)</th></tr></thead><tbody>
                 ${shown.map(p => `<tr data-pname="${escapeHtml(p.name)}" data-pwhere="players" title="Click to ${isOpen('players', p.name) ? 'hide' : 'show'} their shared data"
                     style="cursor:pointer${isOpen('players', p.name) ? '; background:var(--hover)' : ''}"><td data-sort="${onlineSet.has(p.id) ? 1 : 0}" style="color:${onlineSet.has(p.id) ? 'var(--pos)' : 'var(--dim)'}" title="${onlineSet.has(p.id) ? 'Online now' : 'Offline'}">●</td>
                     <td title="User ID ${escapeHtml(p.id)}" data-sort="${escapeHtml((p.name || '').toLowerCase())}" style="white-space:nowrap">${escapeHtml(p.name)}${coin(p.name)}</td>
@@ -5763,7 +5767,8 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                     <td data-sort="${ts(p.first)}">${dt(p.first)}</td>
                     <td class="sa-num" data-sort="${assOf(p) != null ? assOf(p) : ''}">${assOf(p) != null ? escapeHtml(fmt(assOf(p))) : ''}</td>
                     <td class="sa-num" data-sort="${invOf(p) > 0 ? invOf(p) : ''}">${invOf(p) > 0 ? escapeHtml(fmt(invOf(p))) : ''}</td>
-                    <td class="sa-num" data-sort="${fleetMax(p.name)?.ships?.v ?? ''}">${fleetMax(p.name)?.ships ? escapeHtml(fmt(fleetMax(p.name).ships.v)) : ''}</td></tr>`).join('')}</tbody></table></div>${detailBox('players')}`
+                    ${(() => { const fm = fleetMax(p.name), sh = fm?.ships?.v, as = fm?.unitTypes?.Assassins?.v;
+                        return `<td class="sa-num" data-sort="${sh ?? ''}">${sh ? escapeHtml(fmt(sh)) : ''}</td><td class="sa-num" data-sort="${as ?? ''}">${as ? escapeHtml(fmt(as)) : ''}</td>`; })()}</tr>`).join('')}</tbody></table></div>${detailBox('players')}`
                 : `<div class="sa-empty">${all.length ? 'No players match.' : 'No players seen yet.'}</div>`}
             <div class="sa-slot-meta" style="margin-top:4px">Click a shortened alliance ID to copy it and fill the form above.${my ? '' : ' Mark your alliance with ☆ in the Alliances table.'}</div>`;
         view.querySelector('#sa-players-refresh').addEventListener('click', () => fetchOnline(true));
@@ -5889,7 +5894,49 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         }
         return d;
     }
-    function fleetMax(name) { const f = fleetsLoad().players[String(name || '').trim().toLowerCase()]; return f ? f.max : null; }
+    // ---------- Planets → players (since v3.10.0) ----------
+    // The fleet list's Sender is the sending planet. A planet's player comes from an admin's link (Admin → Fleets), else from
+    // the planet names SharkBot users share (their planet slots). Fleet records stay per planet; a player's totals add up
+    // all their planets in the same scan.
+    function planetLinks() { return GM_getValue('sa-admin-planet-links', {}) || {}; }
+    function planetAuto() {
+        const m = Object.assign({}, GM_getValue('sa-admin-planetmap', {}) || {});
+        (adminData || []).forEach(sp => (sp.data && sp.data.planets || []).forEach(pl => { if (pl.name && !/^Planet [A-J]$/.test(pl.name)) m[String(pl.name).trim().toLowerCase()] = sp.player; }));
+        return m;
+    }
+    function planetOwner(planet) {
+        const k = String(planet || '').trim().toLowerCase(), l = planetLinks()[k];
+        if (l) return l.player || null;
+        return planetAuto()[k] || null;
+    }
+    function planetsOf(player) {
+        const p = String(player || '').trim().toLowerCase(), f = fleetsLoad().players || {};
+        return Object.keys(f).filter(k => String(planetOwner(f[k].name || k) || '').trim().toLowerCase() === p);
+    }
+    // A player's fleet record: snapshots of the same scan across their planets added up, and the highest per-scan sums
+    function playerFleets(player) {
+        const f = fleetsLoad().players || {}, keys = planetsOf(player);
+        if (!keys.length) return null;
+        const by = {};
+        keys.forEach(k => (f[k].snaps || []).forEach(sn => {
+            const o = by[sn.id] || (by[sn.id] = { id: sn.id, at: sn.at, fleets: 0, ships: 0, units: 0, res: 0, opened: 0, types: {}, unitTypes: {}, resTypes: {} });
+            if (new Date(sn.at) > new Date(o.at)) o.at = sn.at;
+            ['fleets', 'ships', 'units', 'res', 'opened'].forEach(x => { o[x] += sn[x] || 0; });
+            ['types', 'unitTypes', 'resTypes'].forEach(x => Object.entries(sn[x] || {}).forEach(([t, v]) => { o[x][t] = (o[x][t] || 0) + v; }));
+        }));
+        const snaps = Object.values(by).sort((a, b) => new Date(b.at) - new Date(a.at)).slice(0, 50);
+        const max = { types: {} };
+        snaps.forEach(sn => {
+            ['ships', 'fleets', 'units', 'res'].forEach(x => { if (sn[x] > 0 && (!max[x] || sn[x] > max[x].v)) max[x] = { v: sn[x], at: sn.at }; });
+            Object.entries(sn.types).forEach(([t, v]) => { if (!max.types[t] || v > max.types[t].v) max.types[t] = { v, at: sn.at }; });
+            max.unitTypes = max.unitTypes || {}; Object.entries(sn.unitTypes).forEach(([t, v]) => { if (!max.unitTypes[t] || v > max.unitTypes[t].v) max.unitTypes[t] = { v, at: sn.at }; });
+        });
+        // Keep any single planet's maximums that are higher (from scans older than the 50 kept)
+        keys.forEach(k => { const m = f[k].max || {}; ['ships', 'fleets', 'units', 'res'].forEach(x => { if (m[x] && (!max[x] || m[x].v > max[x].v)) max[x] = m[x]; });
+            Object.entries(m.types || {}).forEach(([t, x]) => { if (!max.types[t] || x.v > max.types[t].v) max.types[t] = x; }); });
+        return { name: player, planets: keys.map(k => f[k].name || k), snaps, max };
+    }
+    function fleetMax(name) { const r = playerFleets(name); return r ? r.max : null; }
     const fTxt = (el) => el ? (el.innerText || el.textContent || '').replace(/[ \t]+/g, ' ').trim() : '';
     const fKnown = (n) => !!n && !/^\?+$/.test(n.trim());
     // The fleet list (since v3.9.1 read by content, not column position): the title row is skipped; in each fleet row the
@@ -6090,11 +6137,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         });
         d.session.at = now;
         GM_setValue('sa-admin-fleets', d);
-        // Players not in your list yet are added (by name, like the highscore)
-        const pd = playersLoad(), byName = new Set(Object.values(pd.players).map(p => low(p.name)));
-        let added = false;
-        Object.values(d.session.players).forEach(sp => { if (!byName.has(low(sp.name))) { const id = 'hs:' + low(sp.name); pd.players[id] = { id, name: sp.name, first: now, alliance: '' }; added = true; } });
-        if (added) GM_setValue('sa-players', pd);
+        // Fleet senders are planets (since v3.10.0), so they're no longer added to Players
         fleetSyncSoon();
         try { renderPlayers(); renderFleets(); } catch (e) {}
     }
@@ -6113,6 +6156,59 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         return `Scan started ${agoText(s0.start || s0.id)} · next scan in ${m}:${String(sec).padStart(2, '0')}`;
     }
     setInterval(() => { const el = document.getElementById('sa-fl-next'); if (el) el.textContent = fleetNextText(); }, 1000);
+    var flResetArmed = false, flLinkPick = '', flMsg = '';
+    function alert0(m) { flMsg = m; }
+    // Delete local fleet history older than a reset (and Players entries that only came from fleet scans)
+    function clearLocalFleets(resetAt) {
+        const t = new Date(resetAt || Date.now()).getTime(), d = fleetsLoad();
+        d.log = (d.log || []).filter(x => new Date(x.at).getTime() > t);
+        Object.keys(d.players || {}).forEach(k => { const P = d.players[k]; P.snaps = (P.snaps || []).filter(sn => new Date(sn.at).getTime() > t);
+            if (!P.snaps.length) delete d.players[k]; else { const m = {}; ['ships', 'fleets', 'units', 'res'].forEach(x => { if (P.max[x] && new Date(P.max[x].at).getTime() > t) m[x] = P.max[x]; });
+                m.types = {}; Object.entries(P.max.types || {}).forEach(([ty, x]) => { if (new Date(x.at).getTime() > t) m.types[ty] = x; }); P.max = m; } });
+        // A fresh empty scan starts now, so the fleet list on screen isn't recorded again until it changes or 15 minutes pass
+        if (!d.session || new Date(d.session.start || d.session.id).getTime() <= t) { const n = new Date().toISOString(); d.session = { id: n, start: n, at: n, sig: fleetSig, players: {}, opened: {}, logged: [] }; }
+        d.resetAt = resetAt;
+        GM_setValue('sa-admin-fleets', d);
+        const pl = playersLoad(); let ch = false;
+        Object.keys(pl.players || {}).forEach(id => { const p = pl.players[id]; if (id.startsWith('hs:') && !p.hsSeen && !p.last && new Date(p.first).getTime() <= t) { delete pl.players[id]; ch = true; } });
+        if (ch) GM_setValue('sa-players', pl);
+        // The fleet list on screen now isn't recorded again until it changes
+    }
+    // Link a planet to a player (since v3.10.0), shared by all admins
+    function planetLinkHtml(log) {
+        const low = (x) => String(x || '').trim().toLowerCase(), links = planetLinks(), auto = planetAuto();
+        const planets = Array.from(new Set([...(log || []).map(x => x.owner), ...Object.values(fleetsLoad().players || {}).map(p => p.name)].filter(Boolean)));
+        planets.sort((a, b) => (planetOwner(a) ? 1 : 0) - (planetOwner(b) ? 1 : 0) || a.localeCompare(b));
+        const pick = planets.includes(flLinkPick) ? flLinkPick : (planets[0] || '');
+        const players = Object.values(playersLoad().players || {}).map(p => p.name).filter(Boolean).sort((a, b) => a.localeCompare(b));
+        const linked = Object.values(links).filter(x => x && x.player).sort((a, b) => a.planet.localeCompare(b.planet));
+        const autoN = Object.keys(auto).filter(k => planets.some(p => low(p) === k) && !links[k]).length;
+        return `<div class="sa-section sa-ally-form" style="display:block; margin-top:10px; border:1px solid var(--border); border-radius:6px; padding:6px 8px">
+            <div class="sa-label" style="margin:0 0 4px">Link a planet to a player</div>
+            <div style="font-size:10px; color:var(--muted); margin-bottom:4px">The fleet list shows planets, not players. Planets of SharkBot users link by themselves from their shared planet names (${autoN} here);
+                link the others by hand. Click a planet in the table to pick it. Links are shared by all admins.</div>
+            <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center">
+                <select class="sa-select" id="sa-fl-link-planet" style="flex:1 1 160px; min-width:0">${planets.map(p => `<option value="${escapeHtml(p)}" ${p === pick ? 'selected' : ''}>${escapeHtml(p)}${planetOwner(p) ? ' → ' + escapeHtml(planetOwner(p)) : ''}</option>`).join('')}</select>
+                <input id="sa-fl-link-player" list="sa-fl-players" placeholder="player (blank = unlink)" value="${escapeHtml(pick && links[low(pick)] ? links[low(pick)].player : '')}" style="flex:1 1 140px; min-width:0" />
+                <datalist id="sa-fl-players">${players.map(n => `<option value="${escapeHtml(n)}">`).join('')}</datalist>
+                <button class="sa-btn" id="sa-fl-link" style="margin:0">Link</button></div>
+            ${flMsg ? `<div class="sa-slot-meta" style="margin-top:3px">${escapeHtml(flMsg)}</div>` : ''}
+            ${linked.length ? `<details style="margin-top:4px"><summary style="cursor:pointer; font-size:10px; color:var(--muted)">Linked by hand (${linked.length})</summary>
+                <div style="font-size:10px; margin-top:3px">${linked.map(x => `${escapeHtml(x.planet)} → <b>${escapeHtml(x.player)}</b> <span class="sa-fl-unlink" data-planet="${escapeHtml(x.planet)}" style="cursor:pointer; color:var(--muted)" title="Unlink">✕</span>`).join(' · ')}</div></details>` : ''}
+        </div>`;
+    }
+    function wirePlanetLinks(view) {
+        const set = (planet, player) => {
+            const l = planetLinks(); l[String(planet).trim().toLowerCase()] = { planet, player: String(player || '').trim(), at: new Date().toISOString() };
+            GM_setValue('sa-admin-planet-links', l); flLinkPick = planet; flMsg = player ? `Linked ${planet} to ${player}` : `Unlinked ${planet}`; adminSyncSoon();
+            renderFleets(); try { renderPlayers(); } catch (e) {}
+        };
+        const go = () => { const pl = view.querySelector('#sa-fl-link-planet')?.value; if (pl) set(pl, view.querySelector('#sa-fl-link-player').value); };
+        view.querySelector('#sa-fl-link')?.addEventListener('click', go);
+        view.querySelector('#sa-fl-link-player')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
+        view.querySelector('#sa-fl-link-planet')?.addEventListener('change', (e) => { flLinkPick = e.target.value; const l = planetLinks()[e.target.value.trim().toLowerCase()]; view.querySelector('#sa-fl-link-player').value = l ? l.player : ''; });
+        view.querySelectorAll('.sa-fl-unlink').forEach(el => el.addEventListener('click', () => set(el.dataset.planet, '')));
+    }
     // Admin → Fleets (since v3.9.0)
     var flFilter = { q: '', ally: '', mission: '', range: '24h' };
     function renderFleets() {
@@ -6122,13 +6218,15 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         if (view.contains(document.activeElement) && document.activeElement.tagName === 'INPUT') return;
         const log = fleetsLoad().log || [], pl = playersLoad(), cfg = allianceCfg(), names = cfg.allianceNames || {}, my = cfg.allianceId;
         const low = (x) => String(x || '').trim().toLowerCase();
-        const allyOf = {}; Object.values(pl.players || {}).forEach(p => { allyOf[low(p.name)] = p.alliance || ''; });
+        const allyOf0 = {}; Object.values(pl.players || {}).forEach(p => { allyOf0[low(p.name)] = p.alliance || ''; });
+        // Rows are planets; their player (and so alliance) comes from planet links
+        const allyOf = new Proxy({}, { get: (_, k) => allyOf0[low(planetOwner(k) || '')] || '' });
         const allyLabel = (a) => !a ? '' : names[a] || (a.startsWith('tag:') ? a.slice(4) : a.slice(0, 8) + '…');
         const span = { '1h': 3600e3, '24h': 86400e3, '7d': 7 * 86400e3, all: Infinity }[flFilter.range] || Infinity;
         const missions = Array.from(new Set(log.map(x => String(x.mission || '').split(/\s|\(/)[0]).filter(Boolean))).sort();
         const allies = Array.from(new Set(log.map(x => allyOf[low(x.owner)] || '').filter(Boolean)));
         const rows = log.filter(x => Date.now() - new Date(x.at) <= span
-            && (!flFilter.q || low(x.owner).includes(low(flFilter.q)) || low(x.target).includes(low(flFilter.q)))
+            && (!flFilter.q || low(x.owner).includes(low(flFilter.q)) || low(x.target).includes(low(flFilter.q)) || low(planetOwner(x.owner)).includes(low(flFilter.q)))
             && (!flFilter.ally || (flFilter.ally === '__mine' ? allyOf[low(x.owner)] === my : allyOf[low(x.owner)] === flFilter.ally))
             && (!flFilter.mission || String(x.mission || '').toLowerCase().startsWith(flFilter.mission.toLowerCase())));
         const f = (v) => v == null ? '' : escapeHtml(fmt(v));
@@ -6143,10 +6241,11 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             <div class="sa-recommend" style="margin-bottom:6px; display:flex; gap:8px; align-items:center; flex-wrap:wrap"><span style="flex:1">${rows.length} fleet${rows.length === 1 ? '' : 's'} · ${f(total)} ships${log.length > rows.length ? ` <span style="color:var(--muted)">(${log.length} kept)</span>` : ''}</span>
                 <span style="color:var(--muted); font-size:10px" id="sa-fl-next">${fleetNextText()}</span><button class="sa-btn" id="sa-fl-scan" style="margin:0" title="Start a new scan the next time the fleet list is read">Scan now</button></div>
             ${rows.length ? `<div style="overflow-x:auto"><table class="sa-unit-table" data-sort-id="admin-fleets">
-                <thead><tr><th>Seen</th><th>Owner</th><th>Alliance</th><th style="text-align:right">Ships</th><th>Mission</th><th>Target</th><th>Arrival</th><th>Ship types</th><th style="text-align:right">Units</th><th style="text-align:right">Resources</th><th>Units carried</th><th>Resources carried</th></tr></thead>
+                <thead><tr><th>Seen</th><th>Planet</th><th>Player</th><th>Alliance</th><th style="text-align:right">Ships</th><th>Mission</th><th>Target</th><th>Arrival</th><th>Ship types</th><th style="text-align:right">Units</th><th style="text-align:right">Resources</th><th>Units carried</th><th>Resources carried</th></tr></thead>
                 <tbody>${rows.map(x => `<tr>
                     <td data-sort="${new Date(x.at).getTime()}" title="${escapeHtml(new Date(x.at).toLocaleString())}">${escapeHtml(agoText(x.at))}</td>
-                    <td><span class="sa-fl-owner" data-owner="${escapeHtml(x.owner)}" style="cursor:pointer; text-decoration:underline dotted">${escapeHtml(x.owner)}</span></td>
+                    <td><span class="sa-fl-planet" data-planet="${escapeHtml(x.owner)}" style="cursor:pointer; text-decoration:underline dotted" title="Link this planet to a player">${escapeHtml(x.owner)}</span></td>
+                    <td>${planetOwner(x.owner) ? `<span class="sa-fl-owner" data-owner="${escapeHtml(planetOwner(x.owner))}" style="cursor:pointer; text-decoration:underline dotted">${escapeHtml(planetOwner(x.owner))}</span>` : '<span style="color:var(--dim)" title="Not linked to a player yet">?</span>'}</td>
                     <td>${escapeHtml(allyLabel(allyOf[low(x.owner)]))}</td>
                     <td class="sa-num" data-sort="${x.ships || 0}">${f(x.ships)}</td><td>${escapeHtml(x.mission || '')}</td>
                     <td>${escapeHtml(x.target || '')}${x.coords ? ` <span style="color:var(--muted)">${escapeHtml(x.coords)}</span>` : ''}</td>
@@ -6156,7 +6255,22 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                     <td class="sa-num" data-sort="${x.res ?? ''}">${x.res != null ? f(x.res) + (x.resCap ? `<span style="color:var(--muted)"> / ${f(x.resCap)}</span>` : '') : ''}</td>
                     <td style="font-size:10px">${Object.entries(x.unitsCarried || {}).map(([t, v]) => `${escapeHtml(t)} ${f(v)}`).join(', ')}</td>
                     <td style="font-size:10px">${Object.entries(x.resCarried || {}).map(([t, v]) => `${escapeHtml(t)} ${f(v)}`).join(', ')}</td></tr>`).join('')}</tbody></table></div>`
-                : `<div class="sa-empty">${log.length ? 'No fleets match.' : 'No fleets scanned yet. Open the game\'s fleet list (and a fleet) while this is an admin copy.'}</div>`}`;
+                : `<div class="sa-empty">${log.length ? 'No fleets match.' : 'No fleets scanned yet. Open the game\'s fleet list (and a fleet) while this is an admin copy.'}</div>`}
+            ${planetLinkHtml(log)}
+            <div style="margin-top:10px"><button class="sa-btn sa-btn-danger" id="sa-fl-reset" style="margin:0">${flResetArmed ? 'Click again to delete ALL fleet history' : '🗑 Delete all fleet history'}</button>
+                <div class="sa-slot-meta">${flResetArmed ? '<b>This can\'t be undone.</b> ' : ''}Deletes every saved fleet, scan and fleet maximum for all admins (planet links are kept), and removes Players entries that only came from fleet scans.</div></div>`;
+        wirePlanetLinks(view);
+        view.querySelectorAll('.sa-fl-planet').forEach(el => el.addEventListener('click', () => { flLinkPick = el.dataset.planet; renderFleets(); document.getElementById('sa-fl-link-player')?.focus(); }));
+        view.querySelector('#sa-fl-reset').addEventListener('click', async () => {
+            if (!flResetArmed) { flResetArmed = true; renderFleets(); setTimeout(() => { if (flResetArmed) { flResetArmed = false; renderFleets(); } }, 8000); return; }
+            flResetArmed = false;
+            try {
+                const r = await gmPost(shareUrl(), { action: 'fleetreset', user: adminCreds.user, pass: adminCreds.pass });
+                if (!r || !r.ok) throw new Error((r && r.error) || 'refused');
+                clearLocalFleets(r.fleetResetAt); adminSync();
+            } catch (e) { alert0(/unknown action/.test(e.message) ? 'Your Apps Script needs the v3.10.0 update.' : 'Not deleted: ' + e.message); }
+            renderFleets(); try { renderPlayers(); } catch (e) {}
+        });
         view.querySelector('#sa-fl-scan').addEventListener('click', () => { fleetScanNow = true; fleetSig = ''; try { checkFleets(); } catch (e) {} renderFleets(); });
         const q = view.querySelector('#sa-fl-q');
         q.addEventListener('input', () => { flFilter.q = q.value; const pos = q.selectionStart; q.blur(); renderFleets(); const n = document.getElementById('sa-fl-q'); if (n) { n.focus(); n.setSelectionRange(pos, pos); } });
@@ -6166,11 +6280,12 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         }));
     }
     function fleetsHtml(name) {
-        const P = fleetsLoad().players[String(name || '').trim().toLowerCase()];
+        const P = playerFleets(name);
         if (!P) return '';
         const f = (v) => escapeHtml(fmt(v)), when = (x) => x ? escapeHtml(agoText(x.at)) : '';
         const m = P.max || {}, types = Object.entries(m.types || {}).sort((a, b) => b[1].v - a[1].v);
-        return `<div class="sa-label" style="margin:6px 0 3px">Fleets seen (most in one scan)</div>
+        return `<div class="sa-label" style="margin:6px 0 3px">Fleets seen (most in one scan, all their planets)</div>
+            <div class="sa-slot-meta" style="margin-bottom:3px">Planets: ${P.planets.map(escapeHtml).join(', ')}</div>
             <table class="sa-unit-table" style="font-size:10px"><thead><tr><th>What</th><th style="text-align:right">Most</th><th>Seen</th></tr></thead><tbody>
                 ${m.ships ? `<tr><td><b>Ships (all fleets)</b></td><td class="sa-num">${f(m.ships.v)}</td><td style="color:var(--muted)">${when(m.ships)}</td></tr>` : ''}
                 ${m.fleets ? `<tr><td>Fleets</td><td class="sa-num">${f(m.fleets.v)}</td><td style="color:var(--muted)">${when(m.fleets)}</td></tr>` : ''}
