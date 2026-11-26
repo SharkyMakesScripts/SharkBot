@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SharkBot
 // @namespace    https://spacealpha.net/
-// @version      3.10.0
+// @version      3.11.0
 // @description  SharkBot for Space Alpha: saves your planets' units, facilities, inventory, research, bank and market prices, and calculates credit generation and Tick Generator upgrade costs.
 // @author       SharkBot
 // @match        https://spacealpha.net/*
@@ -41,7 +41,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     const PANEL_ID = 'sa-helper-panel';
     const SLOT_IDS = 'ABCDEFGHIJ'.split('');   // up to 10 planets
     // Version comes from the @version header so it's never out of sync
-    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.10.0';
+    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.11.0';
     // Another copy of SharkBot already put its panel on the page: warn and stop,
     // so two installed copies are obvious instead of silently showing the old one.
     const existing = document.getElementById(PANEL_ID);
@@ -74,7 +74,13 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             // Your own bank and the Central bank are two tabs on /bank: only read the one that's open
             const view = bankView();
             let bal = null, fee = null, cb = null, pb = null, traps = null;
-            if (view === 'traps') {
+            let nerds = null;
+            if (view === 'nerds') {
+                nerds = readTraps();
+                if (nerds.items.length) storeNerds(nerds);
+                bal = readBankBalance();
+                if (bal && bal.value != null) storeBank(bal);
+            } else if (view === 'traps') {
                 traps = readTraps();
                 if (traps.items.length) storeTraps(traps);
                 bal = readBankBalance();   // the balance panel beside the list
@@ -90,7 +96,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                 pb = readCentralBank();   // same "label: value" reader, for your own bank's lines
                 if (pb && pb.fields.length) GM_setValue('sa-player-bank', { savedAt: new Date().toISOString(), fields: pb.fields });
             }
-            return Object.assign(scanGeneric(), { bankView: view, bank: bal, playerBank: pb, galaxyFee: fee, centralBank: cb, traps });
+            return Object.assign(scanGeneric(), { bankView: view, bank: bal, playerBank: pb, galaxyFee: fee, centralBank: cb, traps, nerds });
         } },
         'market':         { label: 'Market',        scan: scanMarket },
         'highscore':      { label: 'Highscore',     scan: scanGeneric },
@@ -450,7 +456,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             </span>
             <div>
                 <button class="sa-btn" id="sa-update" title="Check for a new SharkBot version">Check for update</button>
-                <button class="sa-btn" id="sa-scan">Scan</button>
+                <button class="sa-btn" id="sa-scan" title="Reread this page now (SharkBot also scans by itself when you open a page)">Manual Scan</button>
                 <button class="sa-btn" id="sa-expand" title="Expand to fill the screen / back to your size">⤢</button>
                 <button class="sa-btn" id="sa-toggle">−</button>
             </div>
@@ -546,7 +552,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                         <button class="sa-btn" id="sa-copy"
                                 title="Copy last scan to clipboard">⧉ Copy</button>
                     </div>
-                    <pre class="sa-dump" id="sa-dump">(click Scan)</pre>
+                    <pre class="sa-dump" id="sa-dump">(click Manual Scan)</pre>
                 </div>
             </div>
             <div class="sa-pane" data-pane="units">
@@ -705,6 +711,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                         <label>Slaves sold per day max</label><input id="sa-uv-limS" placeholder="blank = no limit" /><span></span>
                         <label>Professors sold per day max</label><input id="sa-uv-limP" placeholder="blank = no limit" /><span></span>
                     </div>
+                    <label class="sa-check" style="margin-top:6px" title="Passive training: every planet trains one turn's worth of slaves and professors each tick for free. Off: none is counted, here, in Value Optimizer or in the Income statement"><input type="checkbox" id="sa-uv-passive" /><span>Passive training (1 turn per tick, free)</span></label>
                 </div>
                 <div class="sa-section"><div class="sa-label">Result</div><div class="sa-recommend" id="sa-uv-result">—</div></div>
             </div>
@@ -807,7 +814,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                 <div class="sa-section">
                     <div class="sa-label">Hero cards (account-wide)</div>
                     <div style="font-size: 10px; color: var(--muted); margin-bottom: 6px;">
-                        Open Cards → All Hero cards (My collection) and click Scan.
+                        Open Cards → All Hero cards (My collection) and click Manual Scan.
                     </div>
                 </div>
                 <div id="sa-cards-view"></div>
@@ -816,7 +823,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                 <div class="sa-section">
                     <div class="sa-label">Nation (per planet)</div>
                     <div style="font-size: 10px; color: var(--muted); margin-bottom: 6px;">
-                        Open the Nation page and click Scan for each planet.
+                        Open the Nation page and click Manual Scan for each planet.
                     </div>
                 </div>
                 <div id="sa-nation-view"></div>
@@ -965,7 +972,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                 <div class="sa-section">
                     <div class="sa-label">Bank (all planets)</div>
                     <div style="font-size: 10px; color: var(--muted); margin-bottom: 6px;">
-                        Go to /bank and Scan your own bank tab (your balance), the TRAPs tab (your investments) and the Central bank tab (galaxy fee). Each tab is saved separately.
+                        Go to /bank and click Manual Scan on your own bank tab (your balance), the TRAPs tab (your investments) and the Central bank tab (galaxy fee). Each tab is saved separately.
                     </div>
                 </div>
                 <div id="sa-bank-view"></div>
@@ -1671,31 +1678,20 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         const base = scanGeneric();
         const items = [];
 
-        // Facility cards
-        const facTitles = findTitleElements(FAC_TITLE_RE);
-        facTitles.forEach(t => {
-            const m = normText(t).match(FAC_TITLE_RE);
-            const name = m[1].trim();
-            if (FAC_BLOCKLIST.test(name)) return;
-            const card = cardFor(t, /maintenance per tick/i);
-            const lines = cardLines(card);
-            const output = lines.find(l => /tick|capacity|storage|production/i.test(l)
-                && !/maintenance/i.test(l) && !FAC_TITLE_RE.test(l)) || '';
-            const mi = lines.findIndex(l => /maintenance per tick/i.test(l));
-            const maintenance = mi >= 0 ? lines.slice(mi + 1).join(' · ') : '';
-            items.push({
-                kind: 'facility', name, section: sectionFor(card, facTitles),
-                value: parseNumber(m[2]), valueDisplay: m[2],
-                output, maintenance,
-            });
-        });
+        // Facility cards: the new view (since v3.11.0). Each card has a "LVL: n" badge, the name, what it gives
+        // ("+2,388.6 Iron/Tick"), "Required: 2.02 B Engineers", "Maintenance\\Tick" amounts and a 0–100% slider.
+        const nv = readNewFacilities();
+        nv.items.forEach(x => items.push(x));
+        base.facilitiesSurplus = nv.surplus;
+        base.facilitiesSample = nv.sample;
 
         // Area cards
         const areaTitles = findTitleElements(AREA_TITLE_RE);
         areaTitles.forEach(t => {
             const m = normText(t).match(AREA_TITLE_RE);
             const card = cardFor(t, /%\s*Full/i);
-            const full = ((card.textContent || '').match(/(\d+(?:\.\d+)?)\s*%\s*Full/i) || [])[1];
+            const fl = cardLines(card).map(l => l.match(/^(\d+(?:\.\d+)?)\s*%\s*Full$/i)).find(Boolean);
+            const full = fl ? fl[1] : ((card.textContent || '').match(/(?:^|[^\d,.])(\d{1,3}(?:\.\d+)?)\s*%\s*Full/i) || [])[1];
             items.push({
                 kind: 'area', name: m[1].trim(), section: 'Areas',
                 value: parseNumber(m[2]), valueDisplay: m[2],
@@ -1722,10 +1718,153 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         return base;
     }
 
+    // ---------- Facilities: new view (since v3.11.0) ----------
+    const NV_LVL_RE = /^LVL:?\s*([\d,.]+)$/i, NV_MAINT_RE = /maintenance\s*[\\/]?\s*(per\s*)?tick/i;
+    const NUM_SUFFIX = '(?:K|M|B|T|Qa|Qi|Sx|Sp|Oc|No|Dc)';
+    const NV_NUM_RE = new RegExp('^([+\\-−]?\\d[\\d,.]*(?:\\s*' + NUM_SUFFIX + '\\b)?)\\s*(.*)$');
+    // Names shown in capitals (CSS) are read from the page text; ones written in capitals get Title Case
+    function nvName(card, line) {
+        let name = line;
+        const el = Array.from(card.querySelectorAll('*')).find(e => !e.children.length && normText(e).toLowerCase() === line.toLowerCase());
+        if (el) name = normText(el);
+        if (name === name.toUpperCase()) name = name.toLowerCase().replace(/\b[a-z]/g, c => c.toUpperCase());
+        return name;
+    }
+    function nvNum(line) {
+        const m = String(line).replace(/[⚡]/g, ' ').trim().match(NV_NUM_RE);
+        if (!m) return null;
+        const v = parseNumber(m[1].replace('−', '-'));
+        return v == null ? null : { value: v, display: m[1].trim(), label: m[2].replace(/^[^A-Za-z%]+/, '').trim() };
+    }
+    // What an unlabelled maintenance amount is: energy or credits, from its icon
+    function nvIconKind(card, text) {
+        const el = Array.from(card.querySelectorAll('*')).find(e => !e.children.length && normText(e) === text) || null;
+        const box = el ? (el.parentElement || el) : null;
+        const hay = box ? Array.from(box.querySelectorAll('img, svg, i, span, mat-icon')).map(e => [e.getAttribute('src'), e.getAttribute('alt'), e.getAttribute('title'), e.getAttribute('class'), e.textContent].join(' ')).join(' ').toLowerCase() + ' ' + (box.textContent || '') : '';
+        if (/energy|power|bolt|lightning|⚡|eu\b/.test(hay)) return 'energy';
+        if (/credit|money|cash|coin|bank|note|dollar/.test(hay)) return 'credits';
+        return '';
+    }
+    function readNewFacilities() {
+        const root = document.querySelector('#content-wrap facilities') || document.querySelector('facilities') || document.querySelector('#content-wrap') || document.body;
+        const all = Array.from(root.querySelectorAll('*')).filter(el => !el.closest('#' + PANEL_ID) && !['SCRIPT', 'STYLE', 'IMG'].includes(el.tagName));
+        const badges = all.filter(el => NV_LVL_RE.test(normText(el)) && !Array.from(el.children).some(c => NV_LVL_RE.test(normText(c))));
+        const cards = [];
+        badges.forEach(b => {
+            let el = b.parentElement;
+            for (let i = 0; el && i < 8; i++, el = el.parentElement) {
+                if (NV_MAINT_RE.test(el.textContent || '')) {
+                    if ((el.textContent.match(/LVL:/gi) || []).length > 1) return;   // went past the card
+                    if (!cards.includes(el)) cards.push(el);
+                    return;
+                }
+            }
+        });
+        const items = [];
+        cards.forEach(card => {
+            const lines = cardLines(card);
+            const lvlLine = lines.find(l => NV_LVL_RE.test(l));
+            const lv = lvlLine ? lvlLine.match(NV_LVL_RE)[1] : null;
+            const mi = lines.findIndex(l => NV_MAINT_RE.test(l));
+            const head = lines.slice(0, mi < 0 ? lines.length : mi);
+            const nameLine = head.find(l => !NV_LVL_RE.test(l) && !/^upgrade$/i.test(l) && /^[A-Za-z][A-Za-z .'&-]*$/.test(l) && l.length < 40);
+            if (!nameLine || lv == null) return;
+            const effects = head.filter(l => /^[+\-−]\s*\d/.test(l)).map(l => { const n = nvNum(l); return { text: l.replace(/\s+/g, ' '), value: n ? n.value : null, unit: n ? n.label : '' }; });
+            const reqL = head.find(l => /^required:/i.test(l));
+            const req = reqL ? nvNum(reqL.replace(/^required:\s*/i, '')) : null;
+            const range = card.querySelector('input[type="range"]');
+            const pctLine = lines.slice(mi + 1).reverse().find(l => /^\d{1,3}\s*%$/.test(l));
+            const slider = range ? Math.round(Number(range.value) / (Number(range.max) || 100) * 100) : pctLine ? parseInt(pctLine, 10) : null;
+            const maint = { energy: null, credits: null, other: {} };
+            const ml = mi < 0 ? [] : lines.slice(mi + 1).filter(l => !/^\d{1,3}\s*%$/.test(l));
+            const unl = [];
+            ml.forEach(l => { const n = nvNum(l); if (!n) return;
+                if (n.label && !/^(eu|energy|credits?)$/i.test(n.label)) maint.other[n.label] = n.value;
+                else unl.push([l, n]); });
+            unl.forEach(([l, n], i) => {
+                let k = /^(eu|energy)$/i.test(n.label) ? 'energy' : /^credits?$/i.test(n.label) ? 'credits' : nvIconKind(card, l.trim());
+                if (!k) k = unl.length >= 2 ? (i === 0 ? 'energy' : 'credits') : 'credits';
+                if (maint[k] == null) maint[k] = n.value; else maint[k === 'energy' ? 'credits' : 'energy'] = n.value;
+            });
+            const mText = [maint.energy != null ? fmt(maint.energy) + ' energy' : '', maint.credits != null ? fmt(maint.credits) + ' credits' : '',
+                ...Object.entries(maint.other).map(([k, v]) => fmt(v) + ' ' + k)].filter(Boolean).join(' · ');
+            items.push({
+                kind: 'facility', name: nvName(card, nameLine), section: '', value: parseNumber(lv), valueDisplay: lv, view: 'new',
+                output: effects.map(e => e.text).join(' · '), effects, engineers: req ? req.value : null, slider,
+                maintenance: mText, maint, _card: card,
+            });
+        });
+        // Section titles: the accordion heading above each group of cards
+        // (the nearest short heading before the card, going up from it)
+        items.forEach(it => {
+            let el = it._card;
+            outer: for (let i = 0; el && i < 7; i++, el = el.parentElement) {
+                for (let sib = el.previousElementSibling; sib; sib = sib.previousElementSibling) {
+                    const t = normText(sib);
+                    if (!t || /LVL:/i.test(t) || cards.some(c => sib.contains(c))) continue;
+                    if (t.length < 40 && !/\d/.test(t)) { it.section = t.toUpperCase() === t ? t.toLowerCase().replace(/\b[a-z]/g, c => c.toUpperCase()) : t; break outer; }
+                }
+            }
+            delete it._card;
+        });
+        // Planet surplus: net per tick
+        let surplus = null;
+        const st = all.find(el => /^planet surplus$/i.test(normText(el)) && !Array.from(el.children).some(c => /^planet surplus$/i.test(normText(c))));
+        if (st) {
+            let box = st.parentElement;
+            for (let i = 0; box && i < 5 && !/engineers|turns/i.test(box.textContent || ''); i++) box = box.parentElement;
+            if (box) {
+                const ls = cardLines(box).filter(l => !/^planet surplus$/i.test(l));
+                const vals = {}, order = [];
+                for (let i = 0; i < ls.length; i++) {
+                    const n = nvNum(ls[i]); if (!n) continue;
+                    let label = n.label;
+                    if (!label && ls[i + 1] && !nvNum(ls[i + 1]) && /^[A-Za-z][A-Za-z ]*$/.test(ls[i + 1])) { label = ls[i + 1]; i++; }
+                    if (!label) label = !('Energy' in vals) ? 'Energy' : 'Credits';
+                    label = label.replace(/^required engineers$/i, 'Required engineers').replace(/^\w/, c => c.toUpperCase());
+                    vals[label] = n.value; order.push(label);
+                }
+                if (order.length) surplus = { savedAt: new Date().toISOString(), values: vals, order };
+            }
+        }
+        const sample = cards[0] ? String(cards[0].outerHTML || '').slice(0, 4000) : '';
+        return { items, surplus, sample };
+    }
+    // Area free space ("Free space: Room for 994.648 B Units"), read when an area's tooltip shows (since v3.11.0)
+    let areaHover = null;
+    function watchAreaTooltips() {
+        document.addEventListener('mouseover', (e) => {
+            if (pageKey !== 'facilities' || !e.target || e.target.closest?.('#' + PANEL_ID)) return;
+            let el = e.target, name = null;
+            for (let i = 0; el && i < 6; i++, el = el.parentElement) {
+                const m = normText(el).match(/^([A-Za-z][A-Za-z .'+&-]*?)\s*LVL:\s*[\d,.]+.*%\s*Full/i);
+                if (m) { name = m[1].trim(); break; }
+            }
+            if (!name) return;
+            areaHover = name;
+            setTimeout(() => readAreaTooltip(name), 350);
+        }, true);
+    }
+    function readAreaTooltip(name) {
+        if (areaHover !== name) return;
+        const tip = Array.from(document.querySelectorAll('body *')).find(el => !el.closest('#' + PANEL_ID) && !el.children.length && /^free space:\s*room for\s+.+\s+units$/i.test(normText(el)));
+        if (!tip) return;
+        const v = parseNumber(normText(tip).replace(/^free space:\s*room for\s+/i, '').replace(/\s*units$/i, ''));
+        if (v == null) return;
+        const det = detectPlanet(); if (!det || det.assign || !det.slot) return;
+        const f = getFSlot(det.slot); if (!f || !f.items) return;
+        const a = f.items.find(i => i.kind === 'area' && cleanName(i.name).toLowerCase() === name.toLowerCase());
+        if (!a) return;
+        a.freeSpace = v; a.freeAt = new Date().toISOString(); setFSlot(det.slot, f);
+        try { renderFacilitiesSlots(); } catch (err) {}
+    }
+
+    watchAreaTooltips();
+
     function summarizeFacilities(info) {
         const f = info.facilities;
         if (!f || !f.items || f.items.length === 0)
-            return 'No facilities found. Switch to the old view (Resources, Military or Areas, not New view) and Scan again.';
+            return 'No facilities found. Use the new view of the Facilities page (if a section is collapsed, click Expand) and Manual Scan again.';
         const lines = [`${f.facilityCount} facilities · ${f.areaCount} areas`];
         const inc = f.items.find(i => /income/i.test(i.name));
         if (inc) lines.push(`Income Facility: LVL ${inc.valueDisplay}`);
@@ -1919,7 +2058,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
 
     async function copyScan() {
         const status = document.getElementById('sa-status');
-        if (!lastScan) { status.textContent = 'nothing to copy — click Scan first'; return; }
+        if (!lastScan) { status.textContent = 'nothing to copy — click Manual Scan first'; return; }
         const json = JSON.stringify(lastScan, null, 2);
         try {
             await navigator.clipboard.writeText(json);
@@ -2317,7 +2456,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         renderCompareSelect('sa-units-compare');
         const ids = planetIds();
         if (!ids.length) {
-            wrap.innerHTML = `<div class="sa-empty">No planets yet. Click Scan on any game page.</div>`;
+            wrap.innerHTML = `<div class="sa-empty">No planets yet. Click Manual Scan on any game page.</div>`;
             return;
         }
         wrap.innerHTML = ids.map(id => `<div id="sa-slot-${id}"></div>`).join('');
@@ -2538,12 +2677,15 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         const fkey = (i) => i.kind + '|' + cleanName(i.name).toLowerCase();
         const scannedKeys = new Set(scanned.map(fkey));
         const kept = (existing?.items || []).filter(i => i.kind && !scannedKeys.has(fkey(i)));
+        // Area free space read from tooltips is kept until the area is hovered again
+        scanned.forEach(i => { if (i.kind === 'area') { const o = (existing?.items || []).find(x => fkey(x) === fkey(i)); if (o && o.freeSpace != null && i.freeSpace == null) { i.freeSpace = o.freeSpace; i.freeAt = o.freeAt; } } });
         const items = [...kept, ...scanned];
         setFSlot(id, {
             planetName,
             savedAt: new Date().toISOString(),
             items,
             itemCount: items.length,
+            surplus: lastScan.facilitiesSurplus || existing?.surplus || null,   // Planet surplus (since v3.11.0)
         });
         renderFacilitiesSlots();
         status.textContent = `Saved ${scanned.length} ${[...kinds].join(' + ')} item(s) to Slot ${id}`;
@@ -2596,7 +2738,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                         ${slot.itemCount != null ? ` · ${slot.itemCount} items` : ''}
                     </div>
                     ${hasData
-                        ? renderFacilityTable(slot.items, diffMap, other ? shortName(other) : '')
+                        ? renderFacilityTable(slot.items, diffMap, other ? shortName(other) : '', slot.surplus)
                         : `<div class="sa-empty">No data. Scan Facilities then click Save.</div>`}
                 </div>
             </div>
@@ -2623,9 +2765,9 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         });
     }
 
-    function renderFacilityTable(items, diffMap, otherId) {
+    function renderFacilityTable(items, diffMap, otherId, surplus) {
         const showDiff = Object.keys(diffMap).length > 0;
-        const cols = showDiff ? 4 : 3;
+        const cols = showDiff ? 7 : 6;
         // Group by section, preserving page order
         const groups = [];
         items.forEach(i => {
@@ -2645,10 +2787,15 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                     else if (d > 0) diffCell = `<td class="sa-num sa-diff-pos">+${fmt(d)}</td>`;
                     else            diffCell = `<td class="sa-num sa-diff-neg">${fmt(d)}</td>`;
                 }
-                return `<tr title="${escapeHtml(i.maintenance ? 'Maintenance: ' + i.maintenance : '')}">
-                    <td>${escapeHtml(i.name)}</td>
+                const off = i.kind !== 'area' && i.slider === 0;
+                const old = i.kind !== 'area' && i.view !== 'new';
+                return `<tr title="${escapeHtml(old ? 'Saved from the old view: scan the new view to update' : '')}" style="${off ? 'opacity:.55' : ''}">
+                    <td>${escapeHtml(i.name)}${old ? ' <span style="color:var(--dim); font-size:9px">old</span>' : ''}</td>
                     <td class="sa-num">${escapeHtml(i.valueDisplay || '')}</td>
                     <td class="sa-num" style="color:var(--soft); font-size:10px">${escapeHtml(i.output || '')}</td>
+                    <td class="sa-num" style="font-size:10px">${i.engineers != null ? escapeHtml(fmt(i.engineers)) : ''}</td>
+                    <td class="sa-num" style="font-size:10px">${i.kind === 'area' ? (i.freeSpace != null ? 'room for ' + escapeHtml(fmt(i.freeSpace)) : '<span style="color:var(--dim)" title="Hover the area in the game to read its free space">hover</span>') : escapeHtml(i.maintenance || '')}</td>
+                    <td class="sa-num" style="font-size:10px">${i.kind === 'area' || i.slider == null ? '' : (off ? '<b>0% (off)</b>' : i.slider + '%')}</td>
                     ${diffCell}
                 </tr>`;
             }).join('')}`).join('');
@@ -2656,11 +2803,17 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             <table class="sa-unit-table">
                 <thead><tr>
                     <th>Facility</th><th style="text-align:right">Level</th>
-                    <th style="text-align:right">Output</th>
+                    <th style="text-align:right">Gives</th>
+                    <th style="text-align:right" title="Engineers required">Engineers</th>
+                    <th style="text-align:right" title="Maintenance per tick (areas: free space, read when you hover the area in the game)">Maintenance / tick</th>
+                    <th style="text-align:right" title="The facility's slider in the game">On</th>
                     ${showDiff ? `<th style="text-align:right">vs ${otherId}</th>` : ''}
                 </tr></thead>
                 <tbody>${body}</tbody>
             </table>
+            ${surplus && surplus.order ? `<div class="sa-label" style="margin:8px 0 3px">Planet surplus (per tick)</div>
+                <div style="display:flex; flex-wrap:wrap; gap:4px 12px; font-size:11px">${surplus.order.map(k => { const v = surplus.values[k];
+                    return `<span>${escapeHtml(k)} <b style="color:${v < 0 ? 'var(--neg, #e66)' : 'inherit'}">${escapeHtml(fmt(v))}</b></span>`; }).join('')}</div>` : ''}
         `;
     }
 
@@ -2670,7 +2823,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         renderCompareSelect('sa-fac-compare');
         const ids = planetIds();
         if (!ids.length) {
-            wrap.innerHTML = `<div class="sa-empty">No planets yet. Click Scan on any game page.</div>`;
+            wrap.innerHTML = `<div class="sa-empty">No planets yet. Click Manual Scan on any game page.</div>`;
             return;
         }
         wrap.innerHTML = ids.map(id => `<div id="sa-fslot-${id}"></div>`).join('');
@@ -2700,7 +2853,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         if (!el) return;
         const data = getMarket();
         if (!data || !data.resources || data.resources.length === 0) {
-            el.innerHTML = `<div class="sa-empty">No market data yet. Visit /market and click Scan.</div>`;
+            el.innerHTML = `<div class="sa-empty">No market data yet. Visit /market and click Manual Scan.</div>`;
             return;
         }
 
@@ -2935,7 +3088,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             }
             filled.push(`Galaxy Fee (${gf.display})`);
         } else {
-            missing.push('Galaxy Fee (open /bank → Central bank, then Scan)');
+            missing.push('Galaxy Fee (open /bank → Central bank, then click Manual Scan)');
         }
         return { filled, missing };
     }
@@ -3312,7 +3465,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         const hit = items.find(i => /tick\s*generator/i.test(i.name) && i.value != null);
         const out = document.getElementById('sa-tn-result');
         if (!hit) {
-            out.textContent = `No Tick Generator saved for ${slotLabel(slot)}. Scan Facilities → Resources and Save first.`;
+            out.textContent = `No Tick Generator saved for ${slotLabel(slot)}. Scan Facilities (new view) and Save first.`;
             out.classList.add('sa-warn');
             return;
         }
@@ -3391,8 +3544,12 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     // Turns per day from this planet's Tick Generator (TPM × 1,440)
     // Turns are one empire-wide pool, made by the Tick Generator (only one planet has one).
     // A planet without its own Tick Generator uses the empire's.
+    // Facilities whose slider is at 0% in the game count as off (since v3.11.0; tick box at the top of every calculator)
+    function facZeroOff() { return GM_getValue('sa-fac-zero-off', true) !== false; }
+    function facIsOff(i) { return !!(i && i.kind !== 'area' && i.slider === 0 && facZeroOff()); }
     function ownTpd(slot) {
         const tg = (getFSlot(slot)?.items || []).find(i => /tick\s*generator/i.test(i.name) && i.value != null);
+        if (tg && facIsOff(tg)) return 0;
         return tg ? Math.round(tpm(tg.value) * 1440) : null;
     }
     function empireTpd() {
@@ -3998,7 +4155,10 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                 <div style="display:flex; gap:12px; flex-wrap:wrap">
                     ${bdKinds().map(([k, l]) => `<label class="sa-check"><input type="checkbox" data-use="${k}" ${s.useKinds[k] ? 'checked' : ''} />
                         <span>${l} <span style="color:var(--muted)">${c0 && c0[k] ? fmt(c0[k].value) : '?'}</span></span></label>`).join('')}
+                    <label class="sa-check" title="A facility whose slider is at 0% in the game (Facilities, new view) gives nothing: no turns, untrained, energy storage or turn storage"><input type="checkbox" class="sa-fac-zero" ${facZeroOff() ? 'checked' : ''} />
+                        <span>Facilities at 0% count as off</span></label>
                 </div>`;
+            el.querySelector('.sa-fac-zero').addEventListener('change', (e) => { GM_setValue('sa-fac-zero-off', e.target.checked); renderBdBars(); refreshCalcs(); });
             const amtIn = el.querySelector('.sa-amt'), amtOut = el.querySelector('.sa-amt-out');
             const showAmt = () => {
                 const a = amtIn.value.trim() ? parseAmount(amtIn.value) : null;
@@ -4553,8 +4713,8 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             let passS = 0, passP = 0;
             planetIds().forEach(id => {
                 const pn = shortName(id), sp = slavesPerTurn(id), pp = profsPerTurn(id);
-                if (sp) passS += sp.n * A.ticksPerDay;
-                if (pp) passP += pp.n * A.ticksPerDay;
+                if (sp && uvPassiveOn()) passS += sp.n * A.ticksPerDay;
+                if (pp && uvPassiveOn()) passP += pp.n * A.ticksPerDay;
                 if (sp && pS != null && sp.n * pS * keepS > 0)
                     methods.push({ planet: pn, kind: 'units', group: 'slaves', units: sp.n, label: `Sell slaves from ${pn}`, perTurn: sp.n * pS * keepS });
                 if (pp && pP != null && pp.n * (pP - uSell) > 0)
@@ -4654,6 +4814,8 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             // What this player sees (since v3.5.0): Bank → Your bank → Invested, the game's figure, and their daily earnings (TRAPs → Your /day)
             // Per investment, as the You column shows it (since v3.5.2): [name, amount, managed, typed]
             investedItems: (() => { try { return investRows().filter(r => r.mine > 0 || (r.managed && r.typedAmt != null)).map(r => [r.name, r.mine || 0, !!r.managed, r.managed ? r.typedAmt ?? null : null]); } catch (e) { return null; } })(),
+            nerds: (nerdsLoad()?.items || []).filter(x => x.invested > 0).map(x => [x.name, x.invested]),   // since v3.11.0
+            nerdsTotal: nerdsTotal(),
             investedTotal: (() => { try { return investRows().reduce((t, r) => t + (r.mine > 0 ? r.mine : 0), 0); } catch (e) { return null; } })(),
             investedGame: (() => { const f = (GM_getValue('sa-player-bank', null)?.fields || []).find(x => /^\s*invested\s*$/i.test(x.label)); return f ? f.value : null; })(),
             investedDaily: (() => { try { return trapCalcRows().reduce((t, x) => t + (x.you && x.you.pDay ? x.you.pDay : 0), 0); } catch (e) { return null; } })(),
@@ -4851,7 +5013,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             ${adminDeletedNote ? `<div class="sa-recommend" style="margin-bottom:6px">${escapeHtml(adminDeletedNote)}</div>` : ''}
             ${pullLine()}
             <div style="overflow-x:auto"><table class="sa-unit-table sa-traps-table">
-                <thead><tr><th>Player</th><th>Updated</th><th>Version</th><th>Planets</th><th>Assassins</th><th>Turn value</th><th>Turns/min</th><th>Credits</th><th>Bank</th><th title="What the player sees in Bank → Your bank → Invested (managed: typed amounts; unmanaged: share value); the game's figure in grey">Invested</th><th title="Their daily earnings from investments (TRAPs calculator: managed (Earnings − Payment) × invested ÷ equity, unmanaged shares × price change)">Daily interest</th></tr></thead>
+                <thead><tr><th>Player</th><th>Updated</th><th>Version</th><th>Planets</th><th>Assassins</th><th>Turn value</th><th>Turns/min</th><th>Credits</th><th>Bank</th><th title="What the player sees in Bank → Your bank → Invested (managed: typed amounts; unmanaged: share value); the game's figure in grey">Invested</th><th title="Their daily earnings from investments (TRAPs calculator: managed (Earnings − Payment) × invested ÷ equity, unmanaged shares × price change)">Daily interest</th><th title="Credits the player has in NERDs (Bank → NERDs)">NERDs</th></tr></thead>
                 <tbody>${adminData.map(p => { const d = p.data || {}; return `<tr data-player="${escapeHtml(p.player)}" style="cursor:pointer${p.player === pick ? '; background:var(--hover)' : ''}">
                     <td class="sa-trap-name">${escapeHtml(p.player)}</td><td class="sa-num" data-sort="${new Date(p.updated).getTime() || ''}">${escapeHtml(new Date(p.updated).toLocaleString())}${
                         adminPullAt && new Date(p.updated) >= new Date(adminPullAt) ? ' <span class="sa-diff-pos" title="Sent since the pull">✓</span>' : ''}</td>
@@ -4864,7 +5026,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                         .map(t => `<tr data-temp-player="${escapeHtml(t.player)}" style="cursor:pointer${tempPick && tempPick.name.toLowerCase() === String(t.player).toLowerCase() ? '; background:var(--hover)' : ''}" title="Temp profile: click to edit">
                         <td class="sa-trap-name">${escapeHtml(t.player)} <span style="color:var(--muted); font-size:9px">temp</span></td><td class="sa-num" data-sort="${new Date(t.updated).getTime() || ''}">${escapeHtml(new Date(t.updated).toLocaleString())}</td>
                         <td colspan="6" style="color:var(--muted)">noted by you (doesn't use SharkBot)</td>${dashInvCells(t.player, null)}</tr>`).join('')}${
-                    waiting.map(n => `<tr data-reset-player="${escapeHtml(n)}" style="cursor:pointer${n === resetPick ? '; background:var(--hover)' : ''}" title="Click for details"><td class="sa-trap-name">${escapeHtml(n)}</td><td colspan="11" style="color:var(--muted)">reset · waiting for new data (reset ${escapeHtml(new Date(resets[n]).toLocaleString())})</td></tr>`).join('')}</tbody></table></div>
+                    waiting.map(n => `<tr data-reset-player="${escapeHtml(n)}" style="cursor:pointer${n === resetPick ? '; background:var(--hover)' : ''}" title="Click for details"><td class="sa-trap-name">${escapeHtml(n)}</td><td colspan="12" style="color:var(--muted)">reset · waiting for new data (reset ${escapeHtml(new Date(resets[n]).toLocaleString())})</td></tr>`).join('')}</tbody></table></div>
             <div class="sa-slot-meta" style="margin-top:4px">${adminData.length} players${waiting.length ? ` · ${waiting.length} reset` : ''} · click a row for details</div>
             ${sel ? adminDetail(sel) : ''}
             ${tempAdminHtml()}
@@ -4962,7 +5124,8 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         if (daily == null && tp) daily = tempDaily(tp);
         const own = d && d.investedTotal != null;
         return `<td class="sa-num" data-sort="${inv ?? ''}" title="${own ? 'As the player sees it' : 'Worked out here from known investments'}">${f(inv)}${game ? `<div style="font-size:9px; color:var(--dim)">game: ${f(game)}</div>` : ''}</td>
-            <td class="sa-num" data-sort="${daily ?? ''}">${sg(daily)}${daily != null ? '<span style="color:var(--muted); font-size:9px">/day</span>' : ''}</td>`;
+            <td class="sa-num" data-sort="${daily ?? ''}">${sg(daily)}${daily != null ? '<span style="color:var(--muted); font-size:9px">/day</span>' : ''}</td>
+            <td class="sa-num" data-sort="${d && d.nerdsTotal != null ? d.nerdsTotal : ''}" title="Credits in NERDs (since v3.11.0; players on older versions show —)">${d && d.nerdsTotal != null ? f(d.nerdsTotal) : '—'}</td>`;
     }
     // Temp profiles (since v3.5.0): players who don't use SharkBot, with invested amounts you note per investment
     function tempAdminHtml() {
@@ -5124,7 +5287,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         try {
             const f = fleetsLoad();
             const r = await gmPost(shareUrl(), { action: 'adminsync', user: adminCreds.user, pass: adminCreds.pass,
-                players: playersLoad(), fleets: f.players || {}, log: f.log || [], links: planetLinks(), tags: GM_getValue('sa-admin-hs-tags', {}) || {}, resets: GM_getValue('sa-admin-resets', {}) || {} });
+                players: playersLoad(), fleets: {}, log: f.log || [], links: planetLinks(), tags: GM_getValue('sa-admin-hs-tags', {}) || {}, resets: GM_getValue('sa-admin-resets', {}) || {} });
             if (!r || !r.ok) throw new Error((r && r.error) || 'refused');
             const del = r.deleted || {};
             const pl = Object.assign({ players: {}, online: [] }, r.players || {});
@@ -5144,7 +5307,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             if (r.links) GM_setValue('sa-admin-planet-links', r.links);
             // Remember SharkBot users' planet names, so planets stay linked when logged out
             try { const pm = {}; (adminData || []).forEach(sp => (sp.data && sp.data.planets || []).forEach(p => { if (p.name) pm[String(p.name).trim().toLowerCase()] = sp.player; })); if (Object.keys(pm).length) GM_setValue('sa-admin-planetmap', pm); } catch (e) {}
-            let cur = fleetsLoad(); cur.players = r.fleets || {}; if (Array.isArray(r.log)) cur.log = r.log;
+            let cur = fleetsLoad(); cur.players = {}; if (Array.isArray(r.log)) cur.log = r.log;   // fleet stats per player aren't kept since v3.11.0
             GM_setValue('sa-admin-fleets', cur); cur = fleetsLoad();   // tidies older duplicate fleets the server still has
             if (r.fleetResetAt && (!cur.resetAt || new Date(r.fleetResetAt) > new Date(cur.resetAt))) clearLocalFleets(r.fleetResetAt);
             if (cur.session) Object.keys(cur.session.players || {}).forEach(k => { if (del[k]) delete cur.session.players[k]; });
@@ -5679,7 +5842,8 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                     <td class="sa-num">${ass != null ? escapeHtml(fmt(ass)) : ''}</td>
                     <td class="sa-num" style="color:var(--muted)">${sharesSet.has(lowK(name)) ? '<span class="sa-diff-pos" title="Shares SharkBot data">✓</span>' : tempSet.has(lowK(name)) ? '<span title="Temp profile noted by an admin">temp</span>' : ''}</td>
                     <td class="sa-num" data-sort="${invName(name) > 0 ? invName(name) : ''}">${invName(name) > 0 ? escapeHtml(fmt(invName(name))) : ''}</td></tr>`;
-        const membersOf = (id) => all.filter(p => (p.alliance || '') === id)
+        const hasData = (n) => sharesSet.has(lowK(n)) || tempSet.has(lowK(n)) || !!invBy[lowK(n)];
+        const membersOf = (id) => all.filter(p => (p.alliance || '') === id && (!GM_getValue('sa-players-hide-empty', false) || hasData(p.name)))
             .sort((a, b) => onlineSet.has(b.id) - onlineSet.has(a.id) || String(a.name).localeCompare(String(b.name), undefined, { sensitivity: 'base' }))
             .map(p => memberRow(p.name, onlineSet.has(p.id), p.last, assOf(p))).join('');
         const openKey = (id) => id === '' ? '__none' : id;
@@ -5692,7 +5856,6 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                 ${(() => { const iv = invBy[plOpen.name.trim().toLowerCase()]; return iv && iv.items && iv.items.length ? `<div class="sa-label" style="margin:6px 0 3px">Investments (${escapeHtml(fmt(iv.total))}, seen ${escapeHtml(agoText(iv.seen))})</div>
                     <table class="sa-unit-table" style="font-size:10px"><thead><tr><th>Name</th><th style="text-align:right">Shares</th><th style="text-align:right">Stake</th><th style="text-align:right">Value</th></tr></thead><tbody>${
                     iv.items.map(x => `<tr><td>${escapeHtml(x.name)}</td><td class="sa-num">${x.shares != null ? escapeHtml(fmt(x.shares)) : '—'}</td><td class="sa-num">${x.stake != null ? x.stake + '%' : '—'}</td><td class="sa-num">${x.value == null ? '<span style="color:var(--muted)" title="Managed: only typed amounts count">not entered</span>' : escapeHtml(fmt(x.value)) + (x.managed ? ' <span style="color:var(--muted)" title="Managed: typed amount">(typed)</span>' : '')}</td></tr>`).join('')}</tbody></table>` : ''; })()}
-                ${fleetsHtml(plOpen.name)}
                 ${sp ? adminDetail(sp) : Object.keys(GM_getValue('sa-admin-resets', {}) || {}).some(n => n.toLowerCase() === plOpen.name.trim().toLowerCase())
                     ? `<div class="sa-empty"><b>${escapeHtml(plOpen.name)}</b>'s shared data was reset; waiting for their next share (within 15 minutes of their next scan).</div>`
                     : `<div class="sa-empty"><b>${escapeHtml(plOpen.name)}</b> doesn't share data with SharkBot (not registered, or not accepted yet).</div>${deleteBtn(plOpen.name)}`}</div>`;
@@ -5706,7 +5869,9 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         const q = (GM_getValue('sa-players-q', '') || '').toLowerCase();
         const onlyMine = !!my && GM_getValue('sa-players-mine', false);
         const onlyInv = GM_getValue('sa-players-inv', false);
-        const shown = all.filter(p => (!q || (p.name || '').toLowerCase().includes(q)) && (!onlyMine || p.alliance === my) && (!onlyInv || invOf(p) > 0))
+        // Hide players with no data (since v3.11.0): no shared SharkBot data, no temp profile and no known investments
+        const hideEmpty = GM_getValue('sa-players-hide-empty', false);
+        const shown = all.filter(p => (!q || (p.name || '').toLowerCase().includes(q)) && (!onlyMine || p.alliance === my) && (!onlyInv || invOf(p) > 0) && (!hideEmpty || hasData(p.name)))
             .sort((a, b) => onlineSet.has(b.id) - onlineSet.has(a.id) || new Date(b.last) - new Date(a.last));
         const dt = (t) => t ? escapeHtml(new Date(t).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })) : '—';
         const ts = (t) => t ? new Date(t).getTime() : '';
@@ -5742,6 +5907,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                 <input id="sa-players-q" class="sa-amt" value="${escapeHtml(GM_getValue('sa-players-q', '') || '')}" placeholder="Search name" style="flex:1; min-width:90px" />
                 ${my ? `<label class="sa-check" style="margin:0"><input type="checkbox" id="sa-players-mine" ${onlyMine ? 'checked' : ''} /><span>Only my alliance</span></label>` : ''}
                 <label class="sa-check" style="margin:0"><input type="checkbox" id="sa-players-inv" ${onlyInv ? 'checked' : ''} /><span>Has investments</span></label>
+                <label class="sa-check" style="margin:0" title="Hide players we have nothing on: they don't share SharkBot data, have no temp profile and no known investments. Alliance totals still count everyone"><input type="checkbox" id="sa-players-hide-empty" ${hideEmpty ? 'checked' : ''} /><span>Hide players with no data</span></label>
             </div>
             <div class="sa-label">Alliances</div>
             ${alRows.length ? `<table class="sa-unit-table" data-sort-id="admin-alliances"><thead><tr><th title="Your alliance">★</th><th>Alliance</th><th style="text-align:right">Online</th><th style="text-align:right">Seen</th>
@@ -5758,7 +5924,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                     <td class="sa-num">${escapeHtml(fmt(unseenAss))}</td><td class="sa-num">${unseen.length}</td><td></td></tr>${allyOpen.__unseen
                     ? unseen.slice().sort().map(k => memberRow((adminData.find(sp => String(sp.player).trim().toLowerCase() === k) || {}).player || k, false, null, shared[k])).join('') : ''}` : ''}</tbody></table>${detailBox('alliances')}` : '<div class="sa-empty">No alliances seen yet.</div>'}
             <div class="sa-label" style="margin-top:8px">Players (${shown.length})</div>
-            ${shown.length ? `<div style="overflow-x:auto"><table class="sa-unit-table" data-sort-id="admin-players"><thead><tr><th title="Online">●</th><th>Name</th><th>Alliance</th><th>Last seen</th><th>First seen</th><th style="text-align:right" title="From their shared data (blank if they don't share)">Assassins</th><th style="text-align:right" title="Credits invested, if their investments are known">Invested</th><th style="text-align:right" title="Most ships seen in one scan: all their planets' fleets in the fleet list at that moment, added up">Ships (max)</th><th style="text-align:right" title="Most assassins seen carried by their fleets in one scan (from fleets hovered or opened)">Assassins (fleets)</th></tr></thead><tbody>
+            ${shown.length ? `<div style="overflow-x:auto"><table class="sa-unit-table" data-sort-id="admin-players"><thead><tr><th title="Online">●</th><th>Name</th><th>Alliance</th><th>Last seen</th><th>First seen</th><th style="text-align:right" title="From their shared data (blank if they don't share)">Assassins</th><th style="text-align:right" title="Credits invested, if their investments are known">Invested</th></tr></thead><tbody>
                 ${shown.map(p => `<tr data-pname="${escapeHtml(p.name)}" data-pwhere="players" title="Click to ${isOpen('players', p.name) ? 'hide' : 'show'} their shared data"
                     style="cursor:pointer${isOpen('players', p.name) ? '; background:var(--hover)' : ''}"><td data-sort="${onlineSet.has(p.id) ? 1 : 0}" style="color:${onlineSet.has(p.id) ? 'var(--pos)' : 'var(--dim)'}" title="${onlineSet.has(p.id) ? 'Online now' : 'Offline'}">●</td>
                     <td title="User ID ${escapeHtml(p.id)}" data-sort="${escapeHtml((p.name || '').toLowerCase())}" style="white-space:nowrap">${escapeHtml(p.name)}${coin(p.name)}</td>
@@ -5767,8 +5933,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                     <td data-sort="${ts(p.first)}">${dt(p.first)}</td>
                     <td class="sa-num" data-sort="${assOf(p) != null ? assOf(p) : ''}">${assOf(p) != null ? escapeHtml(fmt(assOf(p))) : ''}</td>
                     <td class="sa-num" data-sort="${invOf(p) > 0 ? invOf(p) : ''}">${invOf(p) > 0 ? escapeHtml(fmt(invOf(p))) : ''}</td>
-                    ${(() => { const fm = fleetMax(p.name), sh = fm?.ships?.v, as = fm?.unitTypes?.Assassins?.v;
-                        return `<td class="sa-num" data-sort="${sh ?? ''}">${sh ? escapeHtml(fmt(sh)) : ''}</td><td class="sa-num" data-sort="${as ?? ''}">${as ? escapeHtml(fmt(as)) : ''}</td>`; })()}</tr>`).join('')}</tbody></table></div>${detailBox('players')}`
+</tr>`).join('')}</tbody></table></div>${detailBox('players')}`
                 : `<div class="sa-empty">${all.length ? 'No players match.' : 'No players seen yet.'}</div>`}
             <div class="sa-slot-meta" style="margin-top:4px">Click a shortened alliance ID to copy it and fill the form above.${my ? '' : ' Mark your alliance with ☆ in the Alliances table.'}</div>`;
         view.querySelector('#sa-players-refresh').addEventListener('click', () => fetchOnline(true));
@@ -5777,6 +5942,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             const n = document.getElementById('sa-players-q'); if (n) { n.focus(); n.setSelectionRange(n.value.length, n.value.length); } });
         view.querySelector('#sa-players-mine')?.addEventListener('change', (e) => { GM_setValue('sa-players-mine', e.target.checked); renderPlayers(); });
         view.querySelector('#sa-players-inv')?.addEventListener('change', (e) => { GM_setValue('sa-players-inv', e.target.checked); renderPlayers(); });
+        view.querySelector('#sa-players-hide-empty')?.addEventListener('change', (e) => { GM_setValue('sa-players-hide-empty', e.target.checked); renderPlayers(); });
         // Click a player (under an alliance, or in Players) to show / hide their shared data
         view.querySelectorAll('tr[data-pname]').forEach(tr => tr.addEventListener('click', (e) => {
             if (e.target.closest('.sa-ally-id, input, button')) return;
@@ -6121,20 +6287,8 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         }
         });
         if (!changed || !d.session) return;
-        // Save this scan's sums as each player's snapshot, and update their maximums
-        Object.entries(d.session.players).forEach(([k, sp]) => {
-            const P = d.players[k] || (d.players[k] = { name: sp.name, snaps: [], max: {} });
-            P.name = sp.name;
-            const snap = { id: d.session.id, at: now, fleets: Math.max(sp.fleets || 0, sp.opened || 0), ships: Math.max(sp.ships || 0, sp.openedShips || 0), types: Object.assign({}, sp.types || {}), units: sp.units || 0, res: sp.res || 0, opened: sp.opened || 0,
-                unitTypes: Object.assign({}, sp.unitTypes || {}), resTypes: Object.assign({}, sp.resTypes || {}) };
-            const i = P.snaps.findIndex(x => x.id === snap.id);
-            if (i >= 0) P.snaps[i] = snap; else P.snaps.unshift(snap);
-            P.snaps = P.snaps.slice(0, 50);
-            const up = (key, v) => { if (v > 0 && (!P.max[key] || v > P.max[key].v)) P.max[key] = { v, at: now }; };
-            up('ships', snap.ships); up('fleets', snap.fleets); up('units', snap.units); up('res', snap.res);
-            P.max.types = P.max.types || {};
-            Object.entries(snap.types).forEach(([t, v]) => { if (!P.max.types[t] || v > P.max.types[t].v) P.max.types[t] = { v, at: now }; });
-        });
+        // Fleet scans no longer save player data (since v3.11.0): only the fleet log is kept
+        d.players = {};
         d.session.at = now;
         GM_setValue('sa-admin-fleets', d);
         // Fleet senders are planets (since v3.10.0), so they're no longer added to Players
@@ -6412,6 +6566,9 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         let card = 0; trCards().forEach(g => { if (g.effects.workers != null && g.effects.workers > card) card = g.effects.workers; });
         return (50 + 10 * Math.pow(L, 3)) * (1 + edu) * (1 + card / 100);
     }
+    // Passive training on or off (since v3.11.0): Unit Value, Value Optimizer and the Income statement
+    function uvPassiveOn() { return GM_getValue('sa-uv-passive', true) !== false; }
+    function uvTicks() { return uvPassiveOn() ? cgAssumptions().ticksPerDay : 0; }
     // Slaves per turn = 50% of the planet's untrained per tick (all bonuses)
     function slavesPerTurn(slot) {
         const um = untrainedModel(slot);
@@ -6431,7 +6588,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     function untrainedModel(slot) {
         const farmers = (getSlot(slot)?.units || []).filter(u => /farmer/i.test(u.name)).reduce((s, u) => s + (u.count || 0), 0);
         const ff = (getFSlot(slot)?.items || []).find(i => /food\s*factor/i.test(cleanName(i.name)));
-        const food = ff ? levelFrom(ff).value || 0 : 0;
+        const food = ff && !facIsOff(ff) ? levelFrom(ff).value || 0 : 0;
         const card = bestCardPct(st => /untrained/.test(st));
         const prod = (GM_getValue('sa-colony-' + slot, null) || {}).productivity;
         const base = Math.sqrt(farmers / 3) + 10;
@@ -6496,9 +6653,10 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         // Slaves
         const sRows = priceRows(/slave|untrained/i, 'sa-uv-price');
         const sp = slavesPerTurn(slot);
-        const sPassive = sp ? sp.n * ticks : 0, ss = split(sPassive, sp ? sp.n : 0, limS);
+        const pOn = uvPassiveOn(), offTxt = '<span style="color:var(--dim)">off</span>';
+        const sPassive = sp && pOn ? sp.n * ticks : 0, ss = split(sPassive, sp ? sp.n : 0, limS);
         head('Slaves');
-        kv([['Passive (1 turn / tick)', `${f(sPassive)} /day → sold ${f(ss.pSold)}`],
+        kv([['Passive (1 turn / tick)', pOn ? `${f(sPassive)} /day → sold ${f(ss.pSold)}` : offTxt],
             ['Trained per turn', sp ? f(sp.n) + ' <span style="color:var(--muted)">(50% of untrained per tick)</span>' : 'Farmers not saved (scan Train Units)'],
             ['From turns', `${f(ss.turnUnits)} /day → sold ${f(ss.tSold)}`],
             ['Daily sell limit', lim(limS) + (ss.turnsToLimit != null ? ` · reached after ${f(ss.turnsToLimit)} turns` : '')],
@@ -6509,9 +6667,9 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         // Professors
         const pp = profsPerTurn(slot);
         const uSell = (marketRes(/untrained/i) || {}).sellPrice ?? null;
-        const pPassive = pp ? pp.n * ticks : 0, ps = split(pPassive, pp ? pp.n : 0, limP);
+        const pPassive = pp && pOn ? pp.n * ticks : 0, ps = split(pPassive, pp ? pp.n : 0, limP);
         head('Professors');
-        kv([['Passive (1 turn / tick)', `${f(pPassive)} /day → sold ${f(ps.pSold)}`],
+        kv([['Passive (1 turn / tick)', pOn ? `${f(pPassive)} /day → sold ${f(ps.pSold)}` : offTxt],
             ['Trained per turn', pp ? `${f(pp.n)} <span style="color:var(--muted)">(Barracks ${pp.L}, Education +${(pp.edu * 100).toFixed(0)}%${pp.card ? `, card +${pp.card}%` : ''})</span>` : 'Barracks level not saved'],
             ['From turns', `${f(ps.turnUnits)} /day → sold ${f(ps.tSold)}`],
             ['Daily sell limit', lim(limP) + (ps.turnsToLimit != null ? ` · reached after ${f(ps.turnsToLimit)} turns` : '')]]);
@@ -6532,7 +6690,8 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         }
 
         // All planets
-        if (planetIds().length > 1) {
+        if (planetIds().length > 1 && !pOn) note('Passive training is off: nothing is trained for free.');
+        else if (planetIds().length > 1) {
             head('All planets · passive training per day');
             const sP = sRows[0], pP = pRows[0];
             let tS = 0, tP = 0;
@@ -6657,7 +6816,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         const out = {};
         const facs = (getFSlot(slot)?.items || []).filter(i => i.kind !== 'area');
         EN_FIELDS.forEach(([k, , re, src]) => {
-            if (src === 'fac') { const f = facs.find(i => re.test(cleanName(i.name)) || re.test(String(i.name).trim())); out[k] = f ? levelFrom(f).value : null; }
+            if (src === 'fac') { const f = facs.find(i => re.test(cleanName(i.name)) || re.test(String(i.name).trim())); out[k] = f ? (facIsOff(f) ? 0 : levelFrom(f).value) : null; }
             else if (src === 'res') out[k] = researchLevel(re);
             else { const c = bdCounts(); out[k] = c && c.ssb ? c.ssb.value : null; }
         });
@@ -6733,7 +6892,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         let fac = find(slot), on = fac ? slot : null;
         if (!fac) planetIds().some(id => (fac = find(id)) && (on = id));
         const c = bdCounts();
-        return { level: fac ? levelFrom(fac).value : null, brains: c && c.brains ? c.brains.value : null,
+        return { level: fac ? (facIsOff(fac) ? 0 : levelFrom(fac).value) : null, brains: c && c.brains ? c.brains.value : null,
                  source: fac ? { name: cleanName(fac.name), planet: on, savedAt: getFSlot(on)?.savedAt || null } : null };
     }
     // Every saved facility on every planet, for the "Which facility is Turn Storage?" list
@@ -6800,7 +6959,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         else if (auto.source) lines.push('', `Level ${auto.level.toLocaleString()} from ${auto.source.name} on ${shortName(auto.source.planet)}${
             auto.source.savedAt ? ', Facilities scan ' + new Date(auto.source.savedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : ''}.`);
         else if (!tsFacilityChoices().length) lines.push('', 'No Facilities scans saved yet: open Facilities on the planet with Turn Storage',
-            'in the old view (Resources, Military and Areas), click Scan on each, or type the level.');
+            'in the new view (click Expand if a section is collapsed), or type the level.');
         else lines.push('', 'Turn Storage wasn\'t found in your saved facilities: pick it in the list above, or type the level.');
         if (v.brains == null) lines.push('Brains not saved: open the Research page, or type them.');
         out.textContent = lines.join('\n');
@@ -7253,6 +7412,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         if (pageKey !== 'bank') return null;
         const root = document.querySelector('main') || document.body;
         const t = (root.innerText || root.textContent || '');
+        if (isNerdsView()) return 'nerds';   // same table as TRAPs (since v3.11.0)
         if (findTrapsTable()) return 'traps';
         return /galaxy\s*fee|volatility|income\s*ratio|player\s*investments/i.test(t) ? 'central' : 'player';
     }
@@ -7276,7 +7436,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                 }
             }
         }
-        return { value: null, error: 'galaxy fee not found: open the Central bank tab, then Scan' };
+        return { value: null, error: 'galaxy fee not found: open the Central bank tab, then click Manual Scan' };
     }
     function readCentralBank() {
         if (pageKey !== 'bank') return null;
@@ -7310,14 +7470,20 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         view.innerHTML = `<button class="sa-btn sa-popout-btn" style="width:100%; margin:0 0 8px">⧉ Open everything in a new window</button>` + bankHtml(false);
         const tw = view.querySelector('.sa-traps-table')?.parentElement; if (tw) tw.scrollLeft = sx;
         bindInvest(view);
+        view.querySelector('#sa-nerds-mine')?.addEventListener('change', (e) => { GM_setValue('sa-nerds-mine', e.target.checked); renderBank(); });
         fetchInvestments(false);   // refreshes in the background when older than 10 minutes
     }
     // "Invested" on your bank tab (since v3.3.0): SharkBot's total of your invested credits replaces the game's figure:
     // managed = the amounts you type, unmanaged = your share value; each capped at the investment's equity (the You column)
     function yourBankFields(fields) {
-        const total = investRows().reduce((t, r) => t + (r.mine > 0 ? r.mine : 0), 0);
-        return fields.map(f => /^\s*invested\s*$/i.test(f.label)
-            ? { label: f.label, value: total, isPct: false, display: fmt(total), game: f.isPct || f.value == null ? f.display : fmt(f.value) } : f);
+        const total = investRows().reduce((t, r) => t + (r.mine > 0 ? r.mine : 0), 0), nt = nerdsTotal();
+        const out = [];
+        fields.forEach(f => {
+            if (!/^\s*invested\s*$/i.test(f.label)) { out.push(f); return; }
+            out.push({ label: f.label + ' (TRAPs)', value: total, isPct: false, display: fmt(total), game: f.isPct || f.value == null ? f.display : fmt(f.value) });
+            if (nt != null) { out.push({ label: 'NERDs', value: nt, isPct: false, display: fmt(nt) }); out.push({ label: 'TRAPs + NERDs', value: total + nt, isPct: false, display: fmt(total + nt) }); }
+        });
+        return out;
     }
     function bankHtml(popout) {
         const cb = centralBankLoad(), pb = GM_getValue('sa-player-bank', null);
@@ -7333,15 +7499,16 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             <div class="sa-label">Your bank</div>
             <div class="sa-recommend" style="margin-bottom:6px">${bal ? `Balance: ${escapeHtml(fmt(bal.value))}`
                 : bankStale() ? 'Balance: please re-scan your own bank tab (the old reading may have come from the Central bank)'
-                : 'Balance: not read yet. Open /bank (your bank tab) and Scan.'}</div>
+                : 'Balance: not read yet. Open /bank (your bank tab) and click Manual Scan.'}</div>
             ${pb && pb.fields.length ? table('Your bank', yourBankFields(pb.fields)) : ''}
             ${meta(bal || pb)}
             <div class="sa-label">Central bank</div>
             <div class="sa-recommend" style="margin-bottom:6px">${gf ? `Galaxy fee (spend turns): ${escapeHtml(gf.display)}`
-                : 'Galaxy fee: not read yet. Open /bank → Central bank and Scan.'}</div>
+                : 'Galaxy fee: not read yet. Open /bank → Central bank and click Manual Scan.'}</div>
             ${cb && cb.fields.length ? table('Central bank', cb.fields) : '<div class="sa-empty">No Central bank fields read yet.</div>'}
             ${meta(cb)}
             ${investSection(popout)}
+            ${nerdsSection()}
             <div class="sa-slot-meta">Only your bank's balance counts toward your capital.</div>`;
     }
 
@@ -7906,7 +8073,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                 escapeHtml(new Date(bank.savedAt).toLocaleString())}</span></div>`
             : `<div class="sa-slot-meta" style="margin-bottom:8px">Bank balance: ${bankStale()
                 ? 're-scan your own bank tab on /bank (the old reading may have come from the Central bank).'
-                : 'visit /bank (your bank tab) and Scan once.'}</div>`;
+                : 'visit /bank (your bank tab) and click Manual Scan once.'}</div>`;
         view.innerHTML = `${bankLine}
             <div class="sa-scroll"><table class="sa-unit-table">
                 <thead><tr><th>Resource</th>${slots.map(x =>
@@ -7925,7 +8092,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
 
     // ---------- TRAPs (/bank → TRAPs tab) ----------
     // The game's investment list: Name | Invested | 24h | 7d | 30d | Price. The tab doesn't
-    // change the page address, so open it and click Scan.
+    // change the page address, so open it and click Manual Scan.
     // ---------- Profile → Investments (since v3.0.5): your Shares, Stake % and Value per investment ----------
     function findProfileInvestTable() {
         const isHead = (cells) => {
@@ -8043,7 +8210,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     }
     function readTraps() {
         const f = findTrapsTable();
-        if (!f) return { items: [], error: 'TRAPs table not found: open the TRAPs tab on /bank, then Scan' };
+        if (!f) return { items: [], error: 'TRAPs table not found: open the TRAPs tab on /bank, then click Manual Scan' };
         const head = Array.from(f.rows[f.hi].children).map(c => (c.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase());
         const col = (re) => head.findIndex(h => re.test(h));
         const ci = { name: col(/^name/), inv: col(/^invested/), d24: col(/^24\s*h/), d7: col(/^7\s*d/), d30: col(/^30\s*d/), price: col(/^price/) };
@@ -8072,6 +8239,37 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         GM_setValue('sa-traps', { savedAt: new Date().toISOString(), hideAbandoned: t.hideAbandoned, items: t.items });
     }
     function trapsLoad() { return GM_getValue('sa-traps', null); }
+    // ---------- NERDs (/bank → NERDs tab, since v3.11.0) ----------
+    // The same table as TRAPs (Name, Invested, 24h, 7d, 30d, Price). NERDs pay no interest: Invested is what yours is worth now,
+    // and it changes with the price (Invested × the 24h change per day).
+    function isNerdsView() {
+        if (pageKey !== 'bank') return false;
+        return Array.from(document.querySelectorAll('body *')).some(el => !el.closest('#' + PANEL_ID) && el.children.length <= 2 && /^\+?\s*create\s+nerd$/i.test(normText(el)));
+    }
+    function storeNerds(t) { GM_setValue('sa-nerds', { savedAt: new Date().toISOString(), items: t.items }); }
+    function nerdsLoad() { return GM_getValue('sa-nerds', null); }
+    function nerdsTotal() { const n = nerdsLoad(); return n ? n.items.reduce((t, x) => t + (x.invested || 0), 0) : null; }
+    function nerdsDaily() { const n = nerdsLoad(); return n ? n.items.reduce((t, x) => t + (x.invested || 0) * (x.d24 || 0) / 100, 0) : null; }
+    function nerdsSection() {
+        const n = nerdsLoad();
+        if (!n || !n.items.length) return `<div class="sa-label" style="margin-top:10px">NERDs</div><div class="sa-empty">Not read yet. Open /bank → <b>NERDs</b> and click <b>Manual Scan</b>.</div>`;
+        const mineOnly = GM_getValue('sa-nerds-mine', false);
+        const items = n.items.filter(x => !mineOnly || x.invested > 0).slice().sort((a, b) => (b.invested || 0) - (a.invested || 0) || (b.d24 ?? -1e9) - (a.d24 ?? -1e9));
+        const pc = (v) => v == null ? '<td class="sa-num">—</td>' : `<td class="sa-num ${v > 0 ? 'sa-diff-pos' : v < 0 ? 'sa-diff-neg' : ''}">${v > 0 ? '+' : ''}${v.toFixed(2)}%</td>`;
+        const sg = (v) => `<span class="${v > 0 ? 'sa-diff-pos' : v < 0 ? 'sa-diff-neg' : ''}">${v > 0 ? '+' : v < 0 ? '−' : ''}${escapeHtml(fmt(Math.abs(v)))}</span>`;
+        const tot = nerdsTotal(), day = nerdsDaily();
+        return `<div class="sa-label" style="margin-top:10px">NERDs</div>
+            <div class="sa-recommend" style="margin-bottom:6px">In NERDs: <b>${escapeHtml(fmt(tot))}</b> · change per day (from the 24h change): ${sg(day)} · no interest</div>
+            <label class="sa-check" style="margin-bottom:4px"><input type="checkbox" id="sa-nerds-mine" ${mineOnly ? 'checked' : ''} /><span>Only mine</span></label>
+            <div style="overflow-x:auto"><table class="sa-unit-table sa-traps-table">
+            <thead><tr><th>Name</th><th style="text-align:right">Invested</th><th style="text-align:right">24h</th><th style="text-align:right">7d</th><th style="text-align:right">30d</th><th style="text-align:right">Price</th><th style="text-align:right" title="Invested × the 24h change">Change /day</th></tr></thead>
+            <tbody>${items.map(x => `<tr><td>${escapeHtml(x.name)}</td>
+                <td class="sa-num">${x.invested ? escapeHtml(fmt(x.invested)) : '<span style="color:var(--dim)">0</span>'}</td>
+                ${pc(x.d24)}${pc(x.d7)}${pc(x.d30)}
+                <td class="sa-num">${x.price != null ? escapeHtml(fmt(x.price)) : '—'}</td>
+                <td class="sa-num">${x.invested ? sg(x.invested * (x.d24 || 0) / 100) : ''}</td></tr>`).join('')}</tbody></table></div>
+            <div class="sa-slot-meta" style="margin:3px 0 12px">Read ${new Date(n.savedAt).toLocaleString()}. The tab doesn't change the page address: click Manual Scan there.</div>`;
+    }
     // Biggest investment first; ties (usually 0) by best 24h change
     function trapsSorted(items) {
         return items.slice().sort((a, b) => (b.invested || 0) - (a.invested || 0) || (b.d24 ?? -1e9) - (a.d24 ?? -1e9));
@@ -8098,7 +8296,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         if (!view) return;
         const d = trapsLoad();
         if (!d || !d.items.length) {
-            view.innerHTML = `<div class="sa-empty">Nothing saved yet. Open /bank → <b>TRAPs</b> and click <b>Scan</b>.</div>`;
+            view.innerHTML = `<div class="sa-empty">Nothing saved yet. Open /bank → <b>TRAPs</b> and click <b>Manual Scan</b>.</div>`;
             return;
         }
         const mineOnly = GM_getValue('sa-traps-mine', false);
@@ -8214,6 +8412,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         });
         const inv = investRows().filter(r => r.mine > 0);
         inv.forEach(r => assets.investments.push([r.name, r.mine]));
+        (nerdsLoad()?.items || []).filter(x => x.invested > 0).forEach(x => assets.investments.push([`NERD · ${x.name}`, x.invested]));   // since v3.11.0
         const c = bdCounts();
         bdKinds().forEach(([k, l]) => {
             const n = c && c[k] ? c[k].value : 0, u = bdUnitValue(k);
@@ -8341,7 +8540,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             ${line('Inventory (resources, at market)', A.inventory, B && B.inventory, '', 2)}
             ${line('Total current assets', A.cur, B && B.cur, 'sa-stmt-sub')}
             ${sub('Non-current assets')}
-            ${line('Long-term investments (TRAPs)', A.investments, B && B.investments, '', 2)}
+            ${line('Long-term investments (TRAPs + NERDs)', A.investments, B && B.investments, '', 2)}
             ${line('Other assets (brains, diamonds, SSB)', A.other, B && B.other, '', 2)}
             ${line('Total non-current assets', A.nonCur, B && B.nonCur, 'sa-stmt-sub')}
             ${line('<b>TOTAL ASSETS</b>', A.assets, B && B.assets, 'sa-stmt-total sa-bs-dbl', 0)}
@@ -8777,7 +8976,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                 c: GM_getValue('sa-colony-' + id, null) }))
             .filter(x => x.d.fields.length || x.c);
         if (!slots.length) {
-            view.innerHTML = `<div class="sa-empty">No nation data yet. Open the Nation page and click Scan.</div>`;
+            view.innerHTML = `<div class="sa-empty">No nation data yet. Open the Nation page and click Manual Scan.</div>`;
             return;
         }
         const head = `<tr><th></th>${slots.map(x =>
@@ -8870,7 +9069,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         if (!view) return;
         const data = GM_getValue('sa-cards', null);
         if (!data || !data.cards || !data.cards.length) {
-            view.innerHTML = `<div class="sa-empty">No cards saved yet. Open your Hero card collection and click Scan.</div>`;
+            view.innerHTML = `<div class="sa-empty">No cards saved yet. Open your Hero card collection and click Manual Scan.</div>`;
             return;
         }
         // Only one card can be active, so each effect shows its strongest card.
@@ -8999,7 +9198,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         if (!el) return;
         const ids = planetIds();
         if (!ids.length) {
-            el.innerHTML = `<div class="sa-empty">No planets yet. Click Scan on any game page.</div>`;
+            el.innerHTML = `<div class="sa-empty">No planets yet. Click Manual Scan on any game page.</div>`;
             return;
         }
         el.innerHTML = ids.map(id => `
@@ -9029,7 +9228,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
 
     // ---------- Settings: reset all saved data ----------
     // Keeps preferences (theme, collapsed state, open tab).
-    const KEEP_KEYS = ['sa-theme', 'sa-collapsed', 'sa-active-tab', 'sa-tip-facilities-oldview',
+    const KEEP_KEYS = ['sa-theme', 'sa-collapsed', 'sa-active-tab', 'sa-tip-facilities-oldview', 'sa-tip-facilities-newview',
                        'sa-last-sub-general', 'sa-last-sub-data', 'sa-last-sub-calculators', 'sa-tutorial-done', 'sa-tutorial-v2-done',
                        'sa-autoscan', 'sa-theme-custom', 'sa-cg-assume', 'sa-bd', 'sa-share-on', 'sa-ui-scale', 'sa-size', 'sa-maxed',
                        // Registration: this copy stays the same registered device (since v2.24.4)
@@ -9051,7 +9250,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                 'sa-inv-' + id, 'sa-turngen-' + id, 'sa-turns-' + id,
                 'sa-slot-collapsed-' + id, 'sa-rslot-collapsed-' + id, 'sa-fslot-collapsed-' + id,
                 'sa-nation-' + id, 'sa-colony-' + id));
-            keys.push('sa-market-latest', 'sa-bank', 'sa-player-bank', 'sa-traps', 'sa-invest-api', 'sa-stmt-history', 'sa-galaxy-fee', 'sa-central-bank',
+            keys.push('sa-market-latest', 'sa-bank', 'sa-player-bank', 'sa-traps', 'sa-nerds', 'sa-invest-api', 'sa-stmt-history', 'sa-galaxy-fee', 'sa-central-bank',
                       'sa-turngen-active', 'sa-turns-active', 'sa-cards');
         }
         const toDelete = keys.filter(k => k.startsWith('sa-') && !KEEP_KEYS.includes(k) && !KEEP_PREFIXES.some(p => k.startsWith(p)));
@@ -9065,7 +9264,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     document.getElementById('sa-reset-all').addEventListener('click', () => {
         if (!confirm('Erase ALL saved SharkBot data?\n\nPlanets, research, market, bank and calculator inputs will be deleted. This cannot be undone.\n\nKept: your registration, admin data, color scheme and panel layout.')) return;
         const n = resetAllData();
-        document.getElementById('sa-dump').textContent = '(click Scan)';
+        document.getElementById('sa-dump').textContent = '(click Manual Scan)';
         document.getElementById('sa-recommend').textContent = '—';
         renderSlots(); renderResearchSlots(); renderFacilitiesSlots(); renderMarket();
         renderInventory(); renderBank(); renderTraps(); renderTurnGen(); renderTurns(); renderNation(); renderCards(); renderPlanetList(); showDetected();
@@ -9190,13 +9389,12 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     }
     function maybeShowTips() {
         if (tutorialActive()) return;
-        if (pageKey === 'facilities' && !GM_getValue('sa-tip-facilities-oldview', false)) {
-            GM_setValue('sa-tip-facilities-oldview', true);   // only ever shown once
-            showPopup('Facilities: use the old view',
-                `The helper reads the <b>old view</b> of the Facilities page.<br><br>
-                 At the top of the page, pick <b>Resources</b>, <b>Military</b> or <b>Areas</b>
-                 (not <b>New view</b>), then click <b>Scan</b>.<br><br>
-                 Scan each view you want saved. Saving one view keeps the others.`);
+        if (pageKey === 'facilities' && !GM_getValue('sa-tip-facilities-newview', false)) {
+            GM_setValue('sa-tip-facilities-newview', true);   // only ever shown once (since v3.11.0)
+            showPopup('Facilities: use the new view',
+                `SharkBot now reads the <b>new view</b> of the Facilities page: every section at once, with each facility's
+                 output, engineers, maintenance and slider, plus the Planet surplus.<br><br>
+                 If a section is collapsed, click <b>Expand</b>, then <b>Manual Scan</b>. Hover an area to save its free space.`);
         }
     }
     // ---------- Interactive tutorial ----------
@@ -9241,9 +9439,9 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                  <span style="font-family:monospace; font-size:11px">${escapeHtml(document.getElementById('sa-status').textContent)}</span>`,
           tip: 'Waiting for you to open a game page…' },
         { target: '#sa-scan', title: 'Scan by hand', tryIt: true,
-          text: `<b>Scan</b> rereads the current page. You only need it when something changes without the page itself changing,
+          text: `<b>Manual Scan</b> rereads the current page. You only need it when something changes without the page itself changing,
                  like switching <b>Facilities</b> views or opening the <b>Central bank</b> tab.`,
-          tip: 'Try it: click Scan.' },
+          tip: 'Try it: click Manual Scan.' },
         { target: '#sa-toggle', title: 'Move and collapse',
           text: `Drag the panel by its header to move it. <b>−</b> folds it down to this bar; <b>+</b> opens it again.` },
         { target: '.sa-maintabs', title: 'Four main tabs',
@@ -9253,9 +9451,9 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
           text: `Top row, <b>Empire</b>: Research, Market, Bank and Cards are shared by all your planets.<br>
                  Bottom row, <b>Planet</b>: Units, Facilities, Inventory and Nation are saved for each planet. Units and Facilities can <b>compare</b> two planets.<br><br>
                  Each fills in on its own when you visit that game page. Three need a little help, shown next.` },
-        { tab: 'facilities', title: 'Facilities: use the old view',
-          text: `On the Facilities page pick <b>Resources</b>, <b>Military</b> or <b>Areas</b>, not <b>New view</b>.<br><br>
-                 Switching views may not count as a new page, so click <b>Scan</b> after each switch. Saving one view keeps the others.` },
+        { tab: 'facilities', title: 'Facilities: use the new view',
+          text: `Open the Facilities page in the <b>new view</b>: every section is read at once.<br><br>
+                 If a section is collapsed, click <b>Expand</b> and then <b>Manual Scan</b>. Hover an area to save its free space.` },
         { tab: 'bank', title: 'Bank: both tabs',
           text: `On the Bank page, your own bank tab saves your <b>bank balance</b>. Then open the <b>Central bank</b> tab: that saves the <b>galaxy fee</b> Credit Gen needs. The two are kept separate.` },
         { tab: 'cards', title: 'Cards: your collection',
@@ -9451,6 +9649,8 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     document.getElementById('sa-uv-slot')?.addEventListener('change', (e) => { GM_setValue('sa-uv-slot', e.target.value); renderUnitValue(); });
     ['sa-uv-price', 'sa-uv-pprice', 'sa-uv-split', 'sa-uv-limS', 'sa-uv-limP'].forEach(id => { const i = document.getElementById(id); if (i) { i.value = GM_getValue(id, '');
         i.addEventListener('input', () => { GM_setValue(id, i.value); renderUnitValue(); }); } });
+    { const pc = document.getElementById('sa-uv-passive'); if (pc) { pc.checked = uvPassiveOn();
+        pc.addEventListener('change', () => { GM_setValue('sa-uv-passive', pc.checked); renderUnitValue(); try { refreshCalcs(); } catch (e) {} }); } }
     renderUnitValue();
     renderShareSettings();
     renderAdmin();
