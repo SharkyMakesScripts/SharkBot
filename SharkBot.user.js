@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SharkBot
 // @namespace    https://spacealpha.net/
-// @version      3.4.1
+// @version      3.5.0
 // @description  SharkBot for Space Alpha: saves your planets' units, facilities, inventory, research, bank and market prices, and calculates credit generation and Tick Generator upgrade costs.
 // @author       SharkBot
 // @match        https://spacealpha.net/*
@@ -18,13 +18,25 @@
 // @run-at       document-idle
 // ==/UserScript==
 
+// Tampermonkey's storage, kept here so Admin → Viewer can show another player's saved data read-only (since v3.5.0)
+const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues === 'function' ? GM_listValues : null, del: typeof GM_deleteValue === 'function' ? GM_deleteValue : null };
 (function () {
     'use strict';
+    // ---------- Viewer (since v3.5.0) ----------
+    // While Sharky views a player (Admin → Viewer), their saved SharkBot data is read instead of this copy's. Writes go to a
+    // throwaway copy in memory, and scanning, sharing and sending are off, so neither player's data can be overwritten.
+    // These keys always use this copy's own storage: registration, admin, layout and shared caches.
+    const VIEW_OWN = /^sa-(admin|adm-|players|alliance-cfg|install|reg|username|share-|hold-note|update|theme|custom-theme|ui|size|pos|collapsed|expanded|active-tab|last-sub|tip|tutorial|sort|invest-api|invest-hist|holders|tc-mine|traps-mine|autoscan|view)/;
+    const sbView = (() => { try { const v = __SB_GM.get('sa-admin-viewing', null); return v && v.store ? { player: v.player, at: v.at, store: JSON.parse(JSON.stringify(v.store)) } : null; } catch (e) { return null; } })();
+    function GM_getValue(k, d) { if (sbView && !VIEW_OWN.test(k)) return k in sbView.store ? sbView.store[k] : d; return __SB_GM.get(k, d); }
+    function GM_setValue(k, v) { if (sbView && !VIEW_OWN.test(k)) { sbView.store[k] = v; return; } return __SB_GM.set(k, v); }
+    function GM_listValues() { const own = __SB_GM.list ? __SB_GM.list() : []; return sbView ? own.filter(k => VIEW_OWN.test(k)).concat(Object.keys(sbView.store)) : own; }
+    function GM_deleteValue(k) { if (sbView && !VIEW_OWN.test(k)) { delete sbView.store[k]; return; } if (__SB_GM.del) __SB_GM.del(k); }
 
     const PANEL_ID = 'sa-helper-panel';
     const SLOT_IDS = 'ABCDEFGHIJ'.split('');   // up to 10 planets
     // Version comes from the @version header so it's never out of sync
-    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.4.1';
+    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.5.0';
     // Another copy of SharkBot already put its panel on the page: warn and stop,
     // so two installed copies are obvious instead of silently showing the old one.
     const existing = document.getElementById(PANEL_ID);
@@ -119,7 +131,7 @@
         #${PANEL_ID} table td .sa-btn { width: auto !important; min-width: 0 !important; max-width: none !important; display: inline-block !important; flex: none !important; white-space: nowrap; }
         #${PANEL_ID} .sa-btn:disabled { opacity: 0.45; cursor: not-allowed; }
         /* Admin → Users and Players only show while logged in as admin (since v3.0.1) */
-        #${PANEL_ID}:not(.sa-admin-in) .sa-tab[data-tab="adminusers"], #${PANEL_ID}:not(.sa-admin-in) .sa-tab[data-tab="players"] { display: none !important; }
+        #${PANEL_ID}:not(.sa-admin-in) .sa-tab[data-tab="adminusers"], #${PANEL_ID}:not(.sa-admin-in) .sa-tab[data-tab="players"], #${PANEL_ID}:not(.sa-admin-in) .sa-tab[data-tab="viewer"] { display: none !important; }
         /* Alliance form and rename box (since v2.25.1): full width, whatever the game page styles inputs as */
         #${PANEL_ID} .sa-ally-form { display: grid; grid-template-columns: auto 1fr; gap: 4px 8px; align-items: center; font-size: 11px; }
         #${PANEL_ID} .sa-ally-form label { color: var(--soft); }
@@ -206,11 +218,11 @@
         /* Registration lock: only Welcome (with the Register box) and Admin are usable until the copy is accepted.
            Welcome is hidden once the copy is accepted; Admin is always there. */
         #${PANEL_ID}:not(.sa-locked) .sa-mtab[data-group="welcome"] { display: none !important; }
-        #${PANEL_ID}.sa-locked .sa-pane:not([data-pane="welcome"]):not([data-pane="admin"]):not([data-pane="adminusers"]):not([data-pane="players"]),
+        #${PANEL_ID}.sa-locked .sa-pane:not([data-pane="welcome"]):not([data-pane="admin"]):not([data-pane="adminusers"]):not([data-pane="players"]):not([data-pane="viewer"]),
         #${PANEL_ID}.sa-locked .sa-mtab:not([data-group="admin"]):not([data-group="welcome"]),
-        #${PANEL_ID}.sa-locked .sa-tab:not([data-tab="admin"]):not([data-tab="adminusers"]):not([data-tab="players"]),
+        #${PANEL_ID}.sa-locked .sa-tab:not([data-tab="admin"]):not([data-tab="adminusers"]):not([data-tab="players"]):not([data-tab="viewer"]),
         #${PANEL_ID}.sa-locked .sa-tab-label, #${PANEL_ID}.sa-locked .sa-tab-break,
-        #${PANEL_ID}.sa-locked #sa-scan { display: none !important; }
+        #${PANEL_ID}.sa-locked #sa-scan, #${PANEL_ID}.sa-viewing #sa-scan { display: none !important; }
         #${PANEL_ID} pre.sa-dump {
             background: var(--inset); border: 1px solid var(--line); border-radius: 4px;
             padding: 6px; font-size: 10px; color: var(--soft); max-height: 200px;
@@ -427,6 +439,7 @@
             </div>
         </div>
         <div id="sa-update-bar" style="display:none"></div>
+        <div id="sa-view-bar" style="display:none"></div>
         <div class="sa-maintabs">
             <div class="sa-mtab" data-group="welcome">Welcome</div>
             <div class="sa-mtab" data-group="general">General</div>
@@ -476,6 +489,7 @@
             <div class="sa-tab" data-tab="admin">Dashboard</div>
             <div class="sa-tab" data-tab="adminusers" id="sa-tab-adminusers">Users</div>
             <div class="sa-tab" data-tab="players">Players</div>
+            <div class="sa-tab" data-tab="viewer">Viewer</div>
         </div>
         <div class="sa-body">
             <div class="sa-pane" data-pane="welcome">
@@ -899,6 +913,16 @@
                 </div>
                 <div id="sa-stholder-view"></div>
             </div>
+            <div class="sa-pane" data-pane="viewer">
+                <div class="sa-section">
+                    <div class="sa-label">Viewer</div>
+                    <div style="font-size: 10px; color: var(--muted); margin-bottom: 6px;">
+                        See SharkBot as a player sees it: their saved data, calculators and statements, read only. Nothing is saved, scanned, shared or sent while you view,
+                        so neither their data nor yours changes. Uses the data they last shared (SharkBot v3.5.0 or newer). The page reloads to start and to exit.
+                    </div>
+                </div>
+                <div id="sa-viewer-view"></div>
+            </div>
             <div class="sa-pane" data-pane="players">
                 <div class="sa-section">
                     <div class="sa-label">Players</div>
@@ -1194,7 +1218,7 @@
         data:        ['research', 'market', 'bank', 'cards', 'units', 'facilities', 'inventory', 'nation'],
         calculators: ['storage', 'area', 'turns', 'training', 'rescalc', 'energy', 'productivity', 'creditgen', 'resgen', 'unitvalue', 'optimizer', 'valueopt', 'trapcalc'],
         statements:  ['stbalance', 'stincome', 'stcash', 'stholder'],
-        admin:       ['admin', 'adminusers', 'players'],
+        admin:       ['admin', 'adminusers', 'players', 'viewer'],
     };
     const groupOf = (tab) => Object.keys(TAB_GROUPS).find(g => TAB_GROUPS[g].includes(tab)) || 'general';
     if (!Object.values(TAB_GROUPS).flat().includes(activeTab)) activeTab = 'debug';
@@ -1227,6 +1251,7 @@
         if (name === 'trapcalc' && typeof sbReady !== 'undefined' && sbReady) { try { renderTrapCalc(); fetchInvestments(false); fetchHolders(false); } catch (e) {} }
         if (group === 'statements' && typeof STMT_TABS !== 'undefined' && STMT_TABS) { try { renderStatements(); } catch (e) {} }
         if (name === 'players' && typeof PLAYERS_READY !== 'undefined' && PLAYERS_READY) { try { renderPlayers(); fetchOnline(false); } catch (e) {} }
+        if (name === 'viewer' && typeof PLAYERS_READY !== 'undefined' && PLAYERS_READY) { try { renderViewer(); } catch (e) {} }
     }
 
     // ---------- generic scanner ----------
@@ -1778,6 +1803,7 @@
     let lastScan = null;
 
     async function runScan() {
+        if (sbView) return;   // view mode: no scanning
         refreshPage();
         const status = document.getElementById('sa-status');
         const dump = document.getElementById('sa-dump');
@@ -1995,7 +2021,7 @@
     // Every Save button: scan the current page, then store all data it holds.
     // slot = 'A' | 'B' for planet data; null = shared data only (research/bank/market).
     async function saveAll(slot, auto, quiet) {
-        if (isLocked()) return null;   // nothing is scanned or saved until this copy is accepted
+        if (isLocked() || sbView) return null;   // nothing is scanned or saved while viewing another player   // nothing is scanned or saved until this copy is accepted
         try { checkProfileInvest(true); } catch (e) {}   // your Profile → Investments, if it's open
         try {
             const r = await saveAllInner(slot, auto);
@@ -4585,6 +4611,12 @@
             // Your Profile → Investments (since v3.1.0): [name, shares, stake %, value]; other players see these in Bank holder lists
             investments: (profileInvestLoad()?.items || []).map(x => [x.name, x.shares, x.stake, x.value]),
             investmentsSeen: profileInvestLoad()?.savedAt || null,
+            // What this player sees (since v3.5.0): Bank → Your bank → Invested, the game's figure, and their daily earnings (TRAPs → Your /day)
+            investedTotal: (() => { try { return investRows().reduce((t, r) => t + (r.mine > 0 ? r.mine : 0), 0); } catch (e) { return null; } })(),
+            investedGame: (() => { const f = (GM_getValue('sa-player-bank', null)?.fields || []).find(x => /^\s*invested\s*$/i.test(x.label)); return f ? f.value : null; })(),
+            investedDaily: (() => { try { return trapCalcRows().reduce((t, x) => t + (x.you && x.you.pDay ? x.you.pDay : 0), 0); } catch (e) { return null; } })(),
+            // Everything else SharkBot has saved (since v3.5.0), for Admin → Viewer; not registration, admin or layout settings
+            store: fullStore(),
             // Amounts typed for managed investments (since v3.2.0): other players see these in Calculators → TRAPs
             investManaged: (() => { const m = GM_getValue('sa-invest-managed', {}) || {}, o = {};
                 Object.keys(m).forEach(k => { const v = parseNumber(m[k] && m[k].amount); if (m[k] && m[k].managed !== false && v > 0) o[k] = v; }); return o; })(),
@@ -4619,7 +4651,7 @@
     }
     async function checkUpdate(manual) {
         if (manual) { updMsg = 'Checking…'; renderUpdateBar(); }
-        try { await checkReg(true); } catch (e) {}
+        try { await checkReg(!!manual, manual ? 0 : 2 * 60e3); } catch (e) {}
         const gv = await fetchGistVersion();
         const cur = updLoad();
         if (gv) updSave({ gistVersion: gv, latest: [gv, cur.latest].filter(Boolean).sort((a, b) => verLess(a, b) ? 1 : -1)[0], checkedAt: new Date().toISOString() });
@@ -4648,10 +4680,18 @@
         });
         if (updMsg && (need || avail)) bar.insertAdjacentHTML('beforeend', `<span style="width:100%; color:var(--muted)">${escapeHtml(updMsg)}</span>`);
     }
+    function fullStore() {
+        if (!__SB_GM.list) return null;
+        const o = {};
+        __SB_GM.list().filter(k => /^sa-/.test(k) && !VIEW_OWN.test(k)).forEach(k => { const v = __SB_GM.get(k, null); if (v != null && v !== '') o[k] = v; });
+        let n = JSON.stringify(o).length;
+        if (n > 1200000 && o['sa-stmt-history']) { delete o['sa-stmt-history']; o.__trimmed = 'sa-stmt-history'; n = JSON.stringify(o).length; }
+        return n > 1200000 ? { __tooBig: n } : o;
+    }
     async function shareNow(force) {
         const url = shareUrl(), st = document.getElementById('sa-share-status');
         // Sharing is part of registration (since v2.23.3): every accepted copy shares
-        if (!url || isLocked()) return;
+        if (!url || isLocked() || sbView) return;
         const last = GM_getValue('sa-share-last', null);
         if (!force && last && Date.now() - new Date(last) < 15 * 60e3) return;   // at most every 15 minutes
         try { profileName(); } catch (e) {}
@@ -4670,19 +4710,20 @@
         // One-time note for copies accepted before sharing became part of registration
         const note = r.status === 'accepted' && !r.agreedAt && !GM_getValue('sa-share-note-seen', false);
         // One-time note about holder lists for copies registered before v3.1.0
-        const holdNote = r.status === 'accepted' && !GM_getValue('sa-hold-note-v320', false) && !(r.agreedAt && r.agreedV320);
+        const holdNote = r.status === 'accepted' && !GM_getValue('sa-hold-note-v350', false) && !(r.agreedAt && r.agreedV350);
         box.innerHTML = `
             ${note ? `<div class="sa-recommend" style="margin-bottom:6px">Since v2.23.3, sharing your data with Sharky is part of registering SharkBot,
                 so it's now on for your copy. If you'd rather not share, use <b>Unregister</b> below.
                 <button class="sa-btn" id="sa-share-note-ok" style="margin:4px 0 0">OK</button></div>` : ''}
             ${holdNote ? `<div class="sa-recommend" style="margin-bottom:6px">New since v3.1.0: your investments, and the amounts you type for managed investments,
                 are now shown to other SharkBot players (Data → Bank holder lists and Calculators → TRAPs), and SharkBot sends the investments shown on any player's Profile → Investments
-                window you open. If you'd rather not share, use <b>Unregister</b> below.
+                window you open. Since v3.5.0, SharkBot also shares everything else it saves (calculator settings, debts and statement history), so Sharky can see SharkBot as you see it.
+                If you'd rather not share, use <b>Unregister</b> below.
                 <button class="sa-btn" id="sa-hold-note-ok" style="margin:4px 0 0">OK</button></div>` : ''}
             <div style="font-size:11px">Your data is shared with Sharky (part of registration).</div>
             <div style="font-size:10px; color:var(--muted); margin:4px 0 6px">
                 SharkBot sends your player name, turn value, turns per minute and the data it has saved (units, facilities, inventory,
-                nation, colony, research, bank, brains/diamonds/SSB, your TRAPs, investments and Hero cards) to Sharky's Google Sheet, at most every
+                nation, colony, research, bank, brains/diamonds/SSB, your TRAPs, investments and Hero cards, plus everything else it saves, such as calculator settings, debts and statement history) to Sharky's Google Sheet, at most every
                 15 minutes after a scan. Your investments and the amounts you type for managed investments are shown to other SharkBot players
                 (Bank holder lists and Calculators → TRAPs), and SharkBot also sends the
                 investments shown on any player's Profile → Investments window you open.${url ? '' : '<br><b>Sharing isn\'t set up in this copy of SharkBot yet.</b>'}</div>
@@ -4693,7 +4734,7 @@
             <button class="sa-btn sa-btn-danger" id="sa-unreg" style="margin:4px 0 0" ${url && r.status === 'accepted' ? '' : 'disabled'}>${unregArmed ? 'Click again to unregister' : 'Unregister'}</button>
             <span id="sa-unreg-msg" class="sa-slot-meta" style="margin-left:6px"></span>`;
         box.querySelector('#sa-share-note-ok')?.addEventListener('click', () => { GM_setValue('sa-share-note-seen', true); renderShareSettings(); });
-        box.querySelector('#sa-hold-note-ok')?.addEventListener('click', () => { GM_setValue('sa-hold-note-v320', true); renderShareSettings(); });
+        box.querySelector('#sa-hold-note-ok')?.addEventListener('click', () => { GM_setValue('sa-hold-note-v350', true); renderShareSettings(); });
         box.querySelector('#sa-share-send').addEventListener('click', () => shareNow(true));
         box.querySelector('#sa-unreg').addEventListener('click', async () => {
             if (!unregArmed) { unregArmed = true; renderShareSettings(); setTimeout(() => { unregArmed = false; renderShareSettings(); }, 5000); return; }
@@ -4717,6 +4758,7 @@
     function renderAdmin() {
         const view = document.getElementById('sa-admin-view');
         if (!view) return;
+        dashDailyCache = null;
         const url = shareUrl();
         if (!adminData) {
             view.innerHTML = `
@@ -4734,7 +4776,7 @@
                 try {
                     const r = await gmPost(u, Object.assign({ action: 'admin', user: adminCreds.user, pass: adminCreds.pass, version: VERSION }, regIdentity()));
                     if (!r || !r.ok) throw new Error((r && r.error) || 'refused');
-                    adminData = r.players || []; adminSelfNote = r.selfNote || ''; adminPullAt = r.pullAt || null;
+                    adminData = r.players || []; adminSelfNote = r.selfNote || ''; adminPullAt = r.pullAt || null; adminTemps = r.temps || [];
                     if (r.config) allianceSave(r.config);
                     // The Apps Script accepts the admin's own copy
                     if (r.self && r.self.status === 'accepted')
@@ -4766,7 +4808,7 @@
             ${adminDeletedNote ? `<div class="sa-recommend" style="margin-bottom:6px">${escapeHtml(adminDeletedNote)}</div>` : ''}
             ${pullLine()}
             <div style="overflow-x:auto"><table class="sa-unit-table sa-traps-table">
-                <thead><tr><th>Player</th><th>Updated</th><th>Version</th><th>Planets</th><th>Assassins</th><th>Turn value</th><th>Turns/min</th><th>Credits</th><th>Bank</th><th>TRAPs</th></tr></thead>
+                <thead><tr><th>Player</th><th>Updated</th><th>Version</th><th>Planets</th><th>Assassins</th><th>Turn value</th><th>Turns/min</th><th>Credits</th><th>Bank</th><th title="What the player sees in Bank → Your bank → Invested (managed: typed amounts; unmanaged: share value); the game's figure in grey">Invested</th><th title="Their daily earnings from investments (TRAPs calculator: managed (Earnings − Payment) × invested ÷ equity, unmanaged shares × price change)">Daily interest</th></tr></thead>
                 <tbody>${adminData.map(p => { const d = p.data || {}; return `<tr data-player="${escapeHtml(p.player)}" style="cursor:pointer${p.player === pick ? '; background:var(--hover)' : ''}">
                     <td class="sa-trap-name">${escapeHtml(p.player)}</td><td class="sa-num" data-sort="${new Date(p.updated).getTime() || ''}">${escapeHtml(new Date(p.updated).toLocaleString())}${
                         adminPullAt && new Date(p.updated) >= new Date(adminPullAt) ? ' <span class="sa-diff-pos" title="Sent since the pull">✓</span>' : ''}</td>
@@ -4774,10 +4816,15 @@
                     <td class="sa-num">${f(d.assassins)}</td><td class="sa-num">${f(d.turnValue)}</td>
                     <td class="sa-num">${d.tpm != null ? escapeHtml(d.tpm.toFixed(2)) : '—'}</td>
                     <td class="sa-num">${f(credits(d))}</td><td class="sa-num">${f(d.bank)}</td>
-                    <td class="sa-num">${f((d.traps || []).reduce((t, x) => t + (x[1] || 0), 0))}</td></tr>`; }).join('')}${
-                    waiting.map(n => `<tr data-reset-player="${escapeHtml(n)}" style="cursor:pointer${n === resetPick ? '; background:var(--hover)' : ''}" title="Click for details"><td class="sa-trap-name">${escapeHtml(n)}</td><td colspan="9" style="color:var(--muted)">reset · waiting for new data (reset ${escapeHtml(new Date(resets[n]).toLocaleString())})</td></tr>`).join('')}</tbody></table></div>
+                    ${dashInvCells(p.player, d)}</tr>`; }).join('')}${
+                    (adminTemps || []).filter(t => !adminData.some(p => String(p.player).trim().toLowerCase() === String(t.player).trim().toLowerCase()))
+                        .map(t => `<tr data-temp-player="${escapeHtml(t.player)}" style="cursor:pointer${tempPick && tempPick.name.toLowerCase() === String(t.player).toLowerCase() ? '; background:var(--hover)' : ''}" title="Temp profile: click to edit">
+                        <td class="sa-trap-name">${escapeHtml(t.player)} <span style="color:var(--muted); font-size:9px">temp</span></td><td class="sa-num" data-sort="${new Date(t.updated).getTime() || ''}">${escapeHtml(new Date(t.updated).toLocaleString())}</td>
+                        <td colspan="6" style="color:var(--muted)">noted by you (doesn't use SharkBot)</td>${dashInvCells(t.player, null)}</tr>`).join('')}${
+                    waiting.map(n => `<tr data-reset-player="${escapeHtml(n)}" style="cursor:pointer${n === resetPick ? '; background:var(--hover)' : ''}" title="Click for details"><td class="sa-trap-name">${escapeHtml(n)}</td><td colspan="11" style="color:var(--muted)">reset · waiting for new data (reset ${escapeHtml(new Date(resets[n]).toLocaleString())})</td></tr>`).join('')}</tbody></table></div>
             <div class="sa-slot-meta" style="margin-top:4px">${adminData.length} players${waiting.length ? ` · ${waiting.length} reset` : ''} · click a row for details</div>
             ${sel ? adminDetail(sel) : ''}
+            ${tempAdminHtml()}
             ${resetPick && waiting.includes(resetPick) ? `<div class="sa-label" style="margin:12px 0 4px; font-size:12px">${escapeHtml(resetPick)}
                     <button class="sa-btn" id="sa-adm-reset-close" style="margin:0 0 0 6px">✕ Close</button></div>
                 <div class="sa-slot-meta">Reset ${escapeHtml(new Date(resets[resetPick]).toLocaleString())}; no new data has arrived since.</div>
@@ -4798,6 +4845,9 @@
         if (sel) wireAdminDetail(view, sel);
         wireManagedAdmin(view);
         view.querySelectorAll('tr[data-player]').forEach(tr => tr.addEventListener('click', () => { GM_setValue('sa-admin-pick', tr.dataset.player); resetPick = null; renderAdmin(); }));
+        view.querySelectorAll('tr[data-temp-player]').forEach(tr => tr.addEventListener('click', () => { const t = (adminTemps || []).find(x => x.player === tr.dataset.tempPlayer);
+            tempPick = tempPick && tempPick.name === tr.dataset.tempPlayer ? null : { name: tr.dataset.tempPlayer, items: Object.assign({}, t ? t.items : {}) }; renderAdmin(); }));
+        wireTempAdmin(view);
         // Reset players (since v3.3.3): click for details and Delete
         view.querySelectorAll('tr[data-reset-player]').forEach(tr => tr.addEventListener('click', () => {
             resetPick = resetPick === tr.dataset.resetPlayer ? null : tr.dataset.resetPlayer; GM_setValue('sa-admin-pick', null); renderAdmin(); }));
@@ -4814,8 +4864,8 @@
             .sort((x, y) => (sm[String(y.id).toLowerCase()] ? 1 : 0) - (sm[String(x.id).toLowerCase()] ? 1 : 0) || y.total - x.total);
         const n = Object.keys(sm).length;
         return `<div class="sa-label" style="margin-top:10px">Managed investments (for everyone)</div>
-            <div style="font-size:10px; color:var(--muted); margin-bottom:4px">Tick an investment to make it <b>Managed</b> for every player: it overrides their own tick box in Data → Bank and
-                Calculators → TRAPs (their box is locked). Untick to let players choose again. ${n} set${mgMsg ? ` · <b>${escapeHtml(mgMsg)}</b>` : ''}</div>
+            <div style="font-size:10px; color:var(--muted); margin-bottom:4px">Tick an investment to make it <b>Managed</b> for every player in Data → Bank and Calculators → TRAPs
+                (only typed amounts count for it). Unticked investments are unmanaged. ${n} set${mgMsg ? ` · <b>${escapeHtml(mgMsg)}</b>` : ''}</div>
             <input id="sa-mg-search" placeholder="Search investments" value="${escapeHtml(mgSearch)}" style="width:100%; margin-bottom:4px" />
             <div style="overflow-x:auto; max-height:260px; overflow-y:auto"><table class="sa-unit-table" data-sort-id="admin-managed">
                 <thead><tr><th>Managed</th><th>Name</th><th style="text-align:right">Equity</th></tr></thead>
@@ -4835,10 +4885,134 @@
             renderAdmin();
         }));
     }
+    var adminTemps = [], tempPick = null, tempSearch = '', tempMsg = '', tempDelArmed = false;
+    // Dashboard Invested and Daily interest cells (since v3.5.0): the player's own figures when their copy shares them,
+    // otherwise worked out here from what's known (temp profiles, older copies)
+    function dashDaily() {
+        const by = {};
+        try { trapCalcRows().forEach(x => x.holders.forEach(h => { if (h.pDay != null) by[h.key] = (by[h.key] || 0) + h.pDay; })); } catch (e) {}
+        return by;
+    }
+    var dashDailyCache = null;
+    // A temp profile's daily earnings, with the TRAPs calculator's formulas
+    function tempDaily(tp) {
+        let t = 0, any = false;
+        try { trapCalcRows().forEach(x => {
+            const n = Object.keys(tp.items).find(k => invMatch(k, x.r.name)); if (!n) return;
+            const inv = Math.min(Number(tp.items[n]) || 0, x.E || Infinity), tpd = investTurnsPerDay();
+            if (x.r.managed) { if (x.net != null && x.E > 0) { t += x.net * inv / x.E * tpd; any = true; } }
+            else if (x.dDay != null) { const px = x.price || x.a.price; if (px) { t += inv / px * x.dDay; any = true; } }
+        }); } catch (e) {}
+        return any ? t : null;
+    }
+    function dashInvCells(name, d) {
+        const f = (v) => v == null ? '—' : escapeHtml(fmt(v)), key = String(name).trim().toLowerCase();
+        const sg = (v) => v == null ? '<span style="color:var(--dim)">—</span>' : `<span class="${v > 0 ? 'sa-diff-pos' : v < 0 ? 'sa-diff-neg' : ''}">${v > 0 ? '+' : v < 0 ? '−' : ''}${escapeHtml(fmt(Math.abs(v)))}</span>`;
+        const tp = (adminTemps || []).find(t => String(t.player).trim().toLowerCase() === key);
+        const hp = (holdersLoad()?.players || []).find(p => String(p.player).trim().toLowerCase() === key)
+            || (tp ? { player: tp.player, temp: true, items: Object.keys(tp.items).map(n => ({ name: n, value: tp.items[n] })), managed: tp.items } : null);
+        const game = d ? (d.investedGame != null ? d.investedGame : (d.traps || []).reduce((t, x) => t + (x[1] || 0), 0)) : null;
+        const inv = d && d.investedTotal != null ? d.investedTotal : hp ? investedOf(hp).total : null;
+        if (!dashDailyCache) dashDailyCache = dashDaily();
+        const me = (pageUsername() || GM_getValue('sa-username', '') || '').trim().toLowerCase();
+        let daily = d && d.investedDaily != null ? d.investedDaily : dashDailyCache[key === me ? '__you' : key] ?? null;
+        if (daily == null && tp) daily = tempDaily(tp);
+        const own = d && d.investedTotal != null;
+        return `<td class="sa-num" data-sort="${inv ?? ''}" title="${own ? 'As the player sees it' : 'Worked out here from known investments'}">${f(inv)}${game ? `<div style="font-size:9px; color:var(--dim)">game: ${f(game)}</div>` : ''}</td>
+            <td class="sa-num" data-sort="${daily ?? ''}">${sg(daily)}${daily != null ? '<span style="color:var(--muted); font-size:9px">/day</span>' : ''}</td>`;
+    }
+    // Temp profiles (since v3.5.0): players who don't use SharkBot, with invested amounts you note per investment
+    function tempAdminHtml() {
+        const api = investApiLoad(), f = (v) => escapeHtml(fmt(v));
+        const head = `<div class="sa-label" style="margin-top:10px">Temp profiles (players without SharkBot)</div>
+            <div style="font-size:10px; color:var(--muted); margin-bottom:4px">Note what a player who doesn't use SharkBot has invested. They show in this table and count as holders in Bank and
+                Calculators → TRAPs ("temp"), until they share their own data. Click a temp row to edit it.</div>
+            <div style="display:flex; gap:6px; margin-bottom:6px"><input id="sa-temp-name" placeholder="Game name" style="flex:1" />
+                <button class="sa-btn" id="sa-temp-new" style="margin:0">+ Add temp profile</button></div>
+            ${tempMsg ? `<div class="sa-slot-meta" style="margin-bottom:4px">${escapeHtml(tempMsg)}</div>` : ''}`;
+        if (!tempPick) return head;
+        if (!api) { fetchInvestments(false); return head + '<div class="sa-empty">Loading the game\'s investment list…</div>'; }
+        const q = tempSearch.trim().toLowerCase();
+        const list = api.items.filter(a => !q || a.name.toLowerCase().includes(q)).sort((x, y) => (tempPick.items[y.name] ? 1 : 0) - (tempPick.items[x.name] ? 1 : 0) || y.total - x.total);
+        const sum = Object.values(tempPick.items).reduce((t, v) => t + (Number(v) || 0), 0);
+        return head + `<div class="sa-recommend" style="margin-bottom:4px"><b>${escapeHtml(tempPick.name)}</b> · ${f(sum)} noted across ${Object.keys(tempPick.items).length} investment${Object.keys(tempPick.items).length === 1 ? '' : 's'}</div>
+            <input id="sa-temp-search" placeholder="Search investments" value="${escapeHtml(tempSearch)}" style="width:100%; margin-bottom:4px" />
+            <div style="overflow-x:auto; max-height:240px; overflow-y:auto"><table class="sa-unit-table" data-sort-id="admin-temp">
+                <thead><tr><th>Name</th><th style="text-align:right">Equity</th><th style="text-align:right">Invested</th></tr></thead>
+                <tbody>${list.map(a => `<tr><td class="sa-trap-name">${escapeHtml(a.name)}${serverManaged()[String(a.id).toLowerCase()] ? ' <span style="color:var(--muted); font-size:9px">managed</span>' : ''}</td>
+                    <td class="sa-num" data-sort="${a.total}">${f(a.total)}</td>
+                    <td class="sa-num"><input class="sa-temp-amt" data-name="${escapeHtml(a.name)}" value="${tempPick.items[a.name] != null ? escapeHtml(fmt(tempPick.items[a.name])) : ''}" placeholder="amount" style="width:90px; text-align:right" /></td></tr>`).join('')}</tbody></table></div>
+            <div style="display:flex; gap:6px; margin-top:6px"><button class="sa-btn" id="sa-temp-save" style="margin:0; flex:1">Save</button>
+                <button class="sa-btn sa-btn-danger" id="sa-temp-del" style="margin:0; flex:1">${tempDelArmed ? 'Click again to delete' : 'Delete temp profile'}</button>
+                <button class="sa-btn" id="sa-temp-close" style="margin:0">✕ Close</button></div>`;
+    }
+    function wireTempAdmin(view) {
+        const go = async (action, extra) => {
+            try {
+                const r = await gmPost(shareUrl(), Object.assign({ action, user: adminCreds.user, pass: adminCreds.pass }, extra));
+                if (!r || !r.ok) throw new Error((r && r.error) || 'refused');
+                adminTemps = r.temps || []; return true;
+            } catch (e) { tempMsg = (/unknown action/.test(e.message) ? 'Your Apps Script needs the v3.5.0 update.' : 'Not saved: ' + e.message); return false; }
+        };
+        view.querySelector('#sa-temp-new')?.addEventListener('click', () => {
+            const n = view.querySelector('#sa-temp-name').value.trim(); if (!n) return;
+            const t = (adminTemps || []).find(x => x.player.toLowerCase() === n.toLowerCase());
+            tempPick = { name: t ? t.player : n, items: Object.assign({}, t ? t.items : {}) }; tempMsg = ''; tempDelArmed = false; renderAdmin();
+        });
+        const s = view.querySelector('#sa-temp-search');
+        s?.addEventListener('input', () => { tempSearch = s.value; const pos = s.selectionStart; renderAdmin(); const n = document.getElementById('sa-temp-search'); if (n) { n.focus(); n.setSelectionRange(pos, pos); } });
+        view.querySelectorAll('.sa-temp-amt').forEach(inp => inp.addEventListener('change', () => {
+            const v = parseNumber(inp.value); if (v > 0) tempPick.items[inp.dataset.name] = v; else delete tempPick.items[inp.dataset.name];
+        }));
+        view.querySelector('#sa-temp-save')?.addEventListener('click', async () => {
+            document.activeElement?.blur();
+            if (await go('tempsave', { player: tempPick.name, items: tempPick.items })) { tempMsg = `Saved ${tempPick.name}.`; fetchHolders(true); }
+            dashDailyCache = null; renderAdmin();
+        });
+        view.querySelector('#sa-temp-del')?.addEventListener('click', async () => {
+            if (!tempDelArmed) { tempDelArmed = true; renderAdmin(); setTimeout(() => { tempDelArmed = false; }, 6000); return; }
+            if (await go('tempdelete', { player: tempPick.name })) { tempMsg = `Deleted ${tempPick.name}'s temp profile.`; tempPick = null; fetchHolders(true); }
+            tempDelArmed = false; dashDailyCache = null; renderAdmin();
+        });
+        view.querySelector('#sa-temp-close')?.addEventListener('click', () => { tempPick = null; tempDelArmed = false; renderAdmin(); });
+    }
+    // ---------- Viewer (since v3.5.0) ----------
+    function renderViewer() {
+        const view = document.getElementById('sa-viewer-view');
+        if (!view) return;
+        if (!adminCreds) { view.innerHTML = '<div class="sa-empty">Log in on the <b>Dashboard</b> tab first.</div>'; return; }
+        const list = (adminData || []).slice().sort((a, b) => String(a.player).localeCompare(String(b.player)));
+        view.innerHTML = `${sbView ? `<div class="sa-recommend" style="margin-bottom:6px">Viewing <b>${escapeHtml(sbView.player)}</b> now. Use <b>Exit</b> in the bar at the top to go back.</div>` : ''}
+            ${list.length ? `<div style="overflow-x:auto"><table class="sa-unit-table" data-sort-id="admin-viewer">
+                <thead><tr><th>Player</th><th>Shared</th><th>Version</th><th style="text-align:right">Saved data</th><th></th></tr></thead>
+                <tbody>${list.map(p => { const sz = p.data && p.data.storeSize; return `<tr><td class="sa-trap-name">${escapeHtml(p.player)}</td>
+                    <td data-sort="${new Date(p.updated).getTime() || ''}">${escapeHtml(agoText(p.updated))}</td><td class="sa-num">${escapeHtml(p.version || '')}</td>
+                    <td class="sa-num" data-sort="${sz || 0}">${sz ? Math.round(sz / 1024) + ' KB' : '<span style="color:var(--muted)" title="Needs SharkBot v3.5.0; they send it with their next share">not shared yet</span>'}</td>
+                    <td>${sz ? `<button class="sa-btn sa-view-go" data-player="${escapeHtml(p.player)}" style="margin:0">👁 View as</button>` : ''}</td></tr>`; }).join('')}</tbody></table></div>`
+                : '<div class="sa-empty">No players share data yet.</div>'}
+            <div class="sa-slot-meta" id="sa-view-msg" style="margin-top:4px"></div>`;
+        view.querySelectorAll('.sa-view-go').forEach(b => b.addEventListener('click', async () => {
+            const msg = view.querySelector('#sa-view-msg'); b.disabled = true; msg.textContent = `Loading ${b.dataset.player}'s data…`;
+            try {
+                const r = await gmPost(shareUrl(), { action: 'playerstore', user: adminCreds.user, pass: adminCreds.pass, player: b.dataset.player });
+                if (!r || !r.ok) throw new Error((r && r.error) || 'refused');
+                __SB_GM.set('sa-admin-viewing', { player: r.player, at: r.updated, version: r.version, store: r.store });
+                msg.textContent = 'Opening…'; location.reload();
+            } catch (e) { b.disabled = false; msg.textContent = (/unknown action/.test(e.message) ? 'Your Apps Script needs the v3.5.0 update.' : 'Couldn\'t open: ' + e.message); }
+        }));
+    }
+    function renderViewBar() {
+        const bar = document.getElementById('sa-view-bar');
+        if (!bar || !sbView) return;
+        bar.style.cssText = 'display:flex; gap:6px; align-items:center; padding:5px 10px; font-size:11px; border-bottom:1px solid var(--border); background:rgba(230,170,40,0.2)';
+        bar.innerHTML = `<span style="flex:1">👁 <b>Viewing as ${escapeHtml(sbView.player)}</b> · read only · their data from ${escapeHtml(sbView.at ? new Date(sbView.at).toLocaleString() : '?')}. Nothing is saved or sent.</span>
+            <button class="sa-btn" id="sa-view-exit" style="margin:0">Exit</button>`;
+        bar.querySelector('#sa-view-exit').addEventListener('click', () => { if (__SB_GM.del) __SB_GM.del('sa-admin-viewing'); else __SB_GM.set('sa-admin-viewing', null); location.reload(); });
+    }
     async function adminRefresh() {
         if (!adminCreds) return;
         try { const r = await gmPost(shareUrl(), { action: 'admin', user: adminCreds.user, pass: adminCreds.pass });
-              if (r && r.ok) { adminData = r.players || []; if (r.pullAt !== undefined) adminPullAt = r.pullAt; if (r.config) allianceSave(r.config); renderAdmin(); renderPlayers(); } } catch (e) {}
+              if (r && r.ok) { adminData = r.players || []; if (r.temps) adminTemps = r.temps; if (r.pullAt !== undefined) adminPullAt = r.pullAt; if (r.config) allianceSave(r.config); renderAdmin(); renderPlayers(); } } catch (e) {}
     }
     // "Pull data from everyone" (since v3.3.1): how many accepted players have sent since; refreshes every minute for an hour
     function pullLine() {
@@ -4955,6 +5129,8 @@
     }
     function regLoad() { return GM_getValue('sa-reg', null) || { status: 'none' }; }
     function regSave(o) { GM_setValue('sa-reg', Object.assign({}, o)); }
+    // Whose numbers the panel shows: the player being viewed (Admin → Viewer), else you
+    function viewMe() { return sbView ? sbView.player : (pageUsername() || GM_getValue('sa-username', '')); }
     function regIdentity() { return { install: installCode(), username: pageUsername() || GM_getValue('sa-username', ''), version: VERSION }; }
     function isLocked() {
         const r = regLoad();
@@ -5007,7 +5183,7 @@
             </div>
             <div style="font-size:10px; color:var(--muted); margin:8px 0 4px">Registering means sharing your data with Sharky: your username, turn value,
                 turns per minute and the data SharkBot saves (units, facilities, inventory, nation, colony, research, bank, brains/diamonds/SSB,
-                your TRAPs, investments and Hero cards), sent at most every 15 minutes after a scan once you're accepted. Your investments (from your Profile → Investments)
+                your TRAPs, investments and Hero cards, plus everything else SharkBot saves, such as calculator settings, debts and statement history), sent at most every 15 minutes after a scan once you're accepted. Your investments (from your Profile → Investments)
                 and the amounts you type for managed investments are shown to other SharkBot players (Bank holder lists and Calculators → TRAPs), and SharkBot also sends the investments shown on any player's Profile → Investments window
                 you open. You can stop any time by unregistering in Settings.</div>
             <label class="sa-check" style="margin:0"><input type="checkbox" id="sa-reg-agree" ${agreed ? 'checked' : ''} />
@@ -5034,7 +5210,7 @@
             updFromServer(r);
             if (!r || !r.ok) throw new Error((r && r.error) || 'refused');
             regSave({ status: r.status, username: r.username || id.username, verified: r.verified, retryAt: r.retryAt || null,
-                      requestedAt: new Date().toISOString(), checkedAt: new Date().toISOString(), agreedAt: new Date().toISOString(), agreedV320: true });
+                      requestedAt: new Date().toISOString(), checkedAt: new Date().toISOString(), agreedAt: new Date().toISOString(), agreedV320: true, agreedV350: true });
             regMsg = r.status === 'pending' ? 'Sent' : '';
         } catch (e) {
             regMsg = /unknown action/.test(e.message) ? 'Sharky\'s server isn\'t updated for registration yet' : 'Couldn\'t register: ' + e.message;
@@ -5197,8 +5373,8 @@
     function setAdminIn(on) {
         panel.classList.toggle('sa-admin-in', !!on);
         if (!on) {
-            if (['adminusers', 'players'].includes(GM_getValue('sa-last-sub-admin', ''))) GM_setValue('sa-last-sub-admin', 'admin');
-            if (['adminusers', 'players'].includes(GM_getValue('sa-active-tab', ''))) switchTab('admin');
+            if (['adminusers', 'players', 'viewer'].includes(GM_getValue('sa-last-sub-admin', ''))) GM_setValue('sa-last-sub-admin', 'admin');
+            if (['adminusers', 'players', 'viewer'].includes(GM_getValue('sa-active-tab', ''))) switchTab('admin');
         }
     }
     setAdminIn(false);   // never logged in after a page load (the password isn't stored)
@@ -5209,8 +5385,9 @@
     if (regLoad().status === 'update' && !(updLoad().min && verLess(VERSION, updLoad().min))) checkReg(true);
     else checkReg(false, 2 * 60e3);   // on every page load, if the last check is over 2 minutes old
     panel.querySelector('#sa-update')?.addEventListener('click', () => checkUpdate(true));
+    if (sbView) { panel.classList.add('sa-viewing'); renderViewBar(); }
     renderUpdateBar();
-    if (!updLoad().checkedAt || Date.now() - new Date(updLoad().checkedAt) > 6 * 3600e3) setTimeout(() => checkUpdate(false), 4000);   // every 6 hours
+    setTimeout(() => checkUpdate(false), 3000);   // on every page load (since v3.5.0)
     // Re-check the lock as the game's top bar loads or changes account, and the status on its schedule
     setInterval(() => { const was = panel.classList.contains('sa-locked'); if (was !== isLocked()) applyLock(); }, 3000);
     // Your Profile → Investments window is a pop-up (no page change), so look for it every few seconds
@@ -5317,6 +5494,8 @@
         // Credits invested (since v3.1.0): from the known holders (players' own data and profiles seen)
         const invBy = {};
         (holdersLoad()?.players || []).forEach(hp => { const o = investedOf(hp); invBy[String(hp.player).trim().toLowerCase()] = { total: o.total, items: o.items, missing: o.missing, seen: hp.seen }; });
+        // A player's own figure (what they see in Bank, since v3.5.0) wins over one worked out here
+        (adminData || []).forEach(sp => { const d = sp.data || {}; if (d.investedTotal != null) { const k = String(sp.player).trim().toLowerCase(); invBy[k] = Object.assign({ items: [], seen: sp.updated }, invBy[k] || {}, { total: d.investedTotal }); } });
         const invOf = (p) => invBy[String(p.name || '').trim().toLowerCase()]?.total;
         const invKnown = Object.values(invBy).filter(x => x.total > 0), invAll = invKnown.reduce((t, x) => t + x.total, 0);
         Object.values(al).forEach(o => { o.ass = 0; o.sharing = 0; o.inv = 0; o.invN = 0; });
@@ -6513,8 +6692,8 @@
         };
         const row = (t, a) => {
             const nm = a ? a.name : t.name, ms = mset[nm] || {};
-            // Managed (since v3.3.4, the tick box is gone): set for everyone in Admin, or "managed" in the name or description
-            const own = /managed/i.test(nm + ' ' + (a ? a.desc : ''));
+            // Managed (since v3.5.0): only investments Sharky sets to managed for everyone in Admin → Dashboard
+            const own = false;
             const locked = !!(a && a.id && serverManaged()[String(a.id).toLowerCase()]);   // set to managed for everyone
             const managed = locked || own;
             const pv = takeProf([a && a.name, t && t.name]);
@@ -6548,7 +6727,7 @@
         const norm = (x) => String(x || '').toLowerCase().replace(/\s+/g, ' ').trim(), stem = (x) => norm(x).replace(/(…|\.\.\.)$/, '').trim();
         const want = norm(r.name);
         const match = (n) => norm(n) === want || (/(…|\.\.\.)$/.test(String(n).trim()) && want.startsWith(stem(n))) || (/(…|\.\.\.)$/.test(r.name.trim()) && norm(n).startsWith(stem(r.name)));
-        const E = r.total, me = (pageUsername() || GM_getValue('sa-username', '') || '').trim().toLowerCase();
+        const E = r.total, me = (viewMe() || '').trim().toLowerCase();
         const list = [];
         (holdersLoad()?.players || []).forEach(p => {
             if (String(p.player).trim().toLowerCase() === me) return;   // you: from your own numbers below
@@ -6562,7 +6741,7 @@
             if (!it || !(it.value > 0)) return;
             list.push({ player: p.player, value: E != null ? Math.min(it.value, E) : it.value, seen: p.seen, own: p.own });
         });
-        if (r.mine > 0) list.push({ player: me ? (pageUsername() || GM_getValue('sa-username', '')) : 'you', value: r.mine, seen: profileInvestLoad()?.savedAt || null, you: true });
+        if (r.mine > 0) list.push({ player: me ? viewMe() : 'you', value: r.mine, seen: profileInvestLoad()?.savedAt || null, you: true });
         return list.sort((a, b) => (b.value ?? -1) - (a.value ?? -1));
     }
     // Managed investments only count amounts typed in (since v3.3.4): the holder's own typed amount (from their
@@ -6633,7 +6812,7 @@
         const tpd = investTurnsPerDay(), tpm = tpd / 1440, vol = trapVolatility();
         const hist = GM_getValue('sa-invest-hist', {}) || {}, over = GM_getValue('sa-tc-override', {}) || {}, hi = GM_getValue('sa-tc-hilimit', {}) || {};
         const norm = (x) => String(x || '').toLowerCase().replace(/\s+/g, ' ').trim(), stem = (x) => norm(x).replace(/(…|\.\.\.)$/, '').trim();
-        const me = (pageUsername() || GM_getValue('sa-username', '') || '').trim();
+        const me = (viewMe() || '').trim();
         const players = holdersLoad()?.players || [];
         return investRows().filter(r => r.api).map(r => {
             const a = r.api, E = a.total, S = a.points, m = a.buyRatio;
@@ -7072,7 +7251,7 @@
     var profileSent = {};
     async function sendProfile(d) {
         const url = shareUrl(), k = d.owner.trim().toLowerCase();
-        if (!url || isLocked() || (profileSent[k] && Date.now() - profileSent[k] < 15 * 60e3)) return;
+        if (!url || isLocked() || sbView || (profileSent[k] && Date.now() - profileSent[k] < 15 * 60e3)) return;
         profileSent[k] = Date.now();
         try {
             refusedCheck(await gmPost(url, Object.assign({ action: 'saveprofile', owner: d.owner,
@@ -7094,11 +7273,12 @@
         } catch (e) {} finally { holdersFetching = false; }
         try { renderBank(); renderPlayers(); } catch (e) {}
         try { renderTrapCalc(); } catch (e) {}
+        try { if (adminData) renderAdmin(); } catch (e) {}
     }
     // Saved whenever the panel is on screen (checked every few seconds) or on Scan
     let profileInvestSig = '';
     function checkProfileInvest(force) {
-        if (isLocked()) return false;
+        if (isLocked() || sbView) return false;
         const d = readProfileInvest();
         if (!d) return false;
         if (d.owner) sendProfile(d);   // any player's profile feeds the Bank holder lists (since v3.1.0)
@@ -8127,13 +8307,14 @@
                        'sa-last-sub-general', 'sa-last-sub-data', 'sa-last-sub-calculators', 'sa-tutorial-done', 'sa-tutorial-v2-done',
                        'sa-autoscan', 'sa-theme-custom', 'sa-cg-assume', 'sa-bd', 'sa-share-on', 'sa-ui-scale', 'sa-size', 'sa-maxed',
                        // Registration: this copy stays the same registered device (since v2.24.4)
-                       'sa-install', 'sa-reg', 'sa-reg-agree', 'sa-username', 'sa-share-note-seen', 'sa-hold-note-seen', 'sa-hold-note-v320', 'sa-share-last', 'sa-update',
+                       'sa-install', 'sa-reg', 'sa-reg-agree', 'sa-username', 'sa-share-note-seen', 'sa-hold-note-seen', 'sa-hold-note-v320', 'sa-hold-note-v350', 'sa-share-last', 'sa-update',
                        // Admin data: kept by name, and anything admin added later by prefix below
                        'sa-admin-copy', 'sa-alliance-cfg',
                        // Column sorts chosen in tables (since v2.25.0)
                        'sa-sort'];
     const KEEP_PREFIXES = ['sa-admin', 'sa-adm-', 'sa-players'];
     function resetAllData() {
+        if (sbView) return;
         let keys = [];
         if (typeof GM_listValues === 'function') {
             keys = GM_listValues();
