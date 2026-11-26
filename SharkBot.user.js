@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SharkBot
 // @namespace    https://spacealpha.net/
-// @version      3.6.0
+// @version      3.8.0
 // @description  SharkBot for Space Alpha: saves your planets' units, facilities, inventory, research, bank and market prices, and calculates credit generation and Tick Generator upgrade costs.
 // @author       SharkBot
 // @match        https://spacealpha.net/*
@@ -41,7 +41,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     const PANEL_ID = 'sa-helper-panel';
     const SLOT_IDS = 'ABCDEFGHIJ'.split('');   // up to 10 planets
     // Version comes from the @version header so it's never out of sync
-    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.6.0';
+    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.8.0';
     // Another copy of SharkBot already put its panel on the page: warn and stop,
     // so two installed copies are obvious instead of silently showing the old one.
     const existing = document.getElementById(PANEL_ID);
@@ -4814,6 +4814,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                     GM_setValue('sa-admin-copy', true);
                     setAdminIn(true);
                     applyLock(); renderAdmin(); renderShareSettings(); loadAdminUsers(); renderPlayers(); fetchOnline(true); fetchHolders(true);
+                    adminSync();   // shared admin data (since v3.8.0)
                 } catch (e) { adminCreds = null; msg.textContent = 'Login failed: ' + e.message; }
             };
             view.querySelector('#sa-adm-login').addEventListener('click', go);
@@ -5101,6 +5102,34 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             <button class="sa-btn" id="sa-view-exit" style="margin:0" title="Close this window">Close</button>`;
         bar.querySelector('#sa-view-exit').addEventListener('click', () => window.close());
     }
+    // ---------- Shared admin data (since v3.8.0) ----------
+    // Players seen, fleet scans, highscore alliance tags and reset markers are merged on Sharky's server, so every admin
+    // login sees the same. This browser sends what it has (and collected while logged out) and takes the combined data back.
+    var adminSyncing = false, adminSyncTimer = null, adminSyncAt = null, adminSyncErr = '';
+    async function adminSync() {
+        if (!adminCreds || adminSyncing || sbView) return;
+        adminSyncing = true;
+        try {
+            const f = fleetsLoad();
+            const r = await gmPost(shareUrl(), { action: 'adminsync', user: adminCreds.user, pass: adminCreds.pass,
+                players: playersLoad(), fleets: f.players || {}, tags: GM_getValue('sa-admin-hs-tags', {}) || {}, resets: GM_getValue('sa-admin-resets', {}) || {} });
+            if (!r || !r.ok) throw new Error((r && r.error) || 'refused');
+            const del = r.deleted || {};
+            const pl = Object.assign({ players: {}, online: [] }, r.players || {});
+            GM_setValue('sa-players', pl);
+            const cur = fleetsLoad(); cur.players = r.fleets || {};
+            if (cur.session) Object.keys(cur.session.players || {}).forEach(k => { if (del[k]) delete cur.session.players[k]; });
+            GM_setValue('sa-admin-fleets', cur);
+            GM_setValue('sa-admin-hs-tags', r.tags || {});
+            const rs = r.resets || {}; Object.keys(rs).forEach(n => { if (del[n.trim().toLowerCase()]) delete rs[n]; }); GM_setValue('sa-admin-resets', rs);
+            adminSyncAt = new Date().toISOString(); adminSyncErr = '';
+        } catch (e) { adminSyncErr = /unknown action/.test(e.message) ? 'Your Apps Script needs the v3.8.0 update to share admin data.' : 'Shared admin data not synced: ' + e.message; }
+        finally { adminSyncing = false; }
+        try { renderPlayers(); renderAdmin(); } catch (e) {}
+    }
+    // After this browser collects something, send it soon (when logged in as admin)
+    function adminSyncSoon() { if (!adminCreds) return; clearTimeout(adminSyncTimer); adminSyncTimer = setTimeout(adminSync, 20000); }
+    setInterval(() => { if (adminCreds) adminSync(); }, 5 * 60e3);
     async function adminRefresh() {
         if (!adminCreds) return;
         try { const r = await gmPost(shareUrl(), { action: 'admin', user: adminCreds.user, pass: adminCreds.pass });
@@ -5141,7 +5170,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             try {
                 const r = await gmPost(shareUrl(), { action: 'resetshared', user: adminCreds.user, pass: adminCreds.pass, player: name });
                 if (!r || !r.ok) throw new Error((r && r.error) || 'refused');
-                const rs = GM_getValue('sa-admin-resets', {}) || {}; rs[name] = new Date().toISOString(); GM_setValue('sa-admin-resets', rs);
+                const rs = GM_getValue('sa-admin-resets', {}) || {}; rs[name] = new Date().toISOString(); GM_setValue('sa-admin-resets', rs); adminSyncSoon();
                 adminData = adminData.filter(p => p.player !== name); GM_setValue('sa-admin-pick', null);
                 renderAdmin(); renderPlayers();
             } catch (e) {
@@ -5530,6 +5559,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             });
             d.online = online; d.checkedAt = now; delete d.error;
             GM_setValue('sa-players', d);
+            adminSyncSoon();
         } catch (e) {
             console.warn('[SharkBot] online users API failed', e);
             const d = playersLoad(); d.error = e.message; GM_setValue('sa-players', d);
@@ -5620,6 +5650,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                 ${(() => { const iv = invBy[plOpen.name.trim().toLowerCase()]; return iv && iv.items && iv.items.length ? `<div class="sa-label" style="margin:6px 0 3px">Investments (${escapeHtml(fmt(iv.total))}, seen ${escapeHtml(agoText(iv.seen))})</div>
                     <table class="sa-unit-table" style="font-size:10px"><thead><tr><th>Name</th><th style="text-align:right">Shares</th><th style="text-align:right">Stake</th><th style="text-align:right">Value</th></tr></thead><tbody>${
                     iv.items.map(x => `<tr><td>${escapeHtml(x.name)}</td><td class="sa-num">${x.shares != null ? escapeHtml(fmt(x.shares)) : '—'}</td><td class="sa-num">${x.stake != null ? x.stake + '%' : '—'}</td><td class="sa-num">${x.value == null ? '<span style="color:var(--muted)" title="Managed: only typed amounts count">not entered</span>' : escapeHtml(fmt(x.value)) + (x.managed ? ' <span style="color:var(--muted)" title="Managed: typed amount">(typed)</span>' : '')}</td></tr>`).join('')}</tbody></table>` : ''; })()}
+                ${fleetsHtml(plOpen.name)}
                 ${sp ? adminDetail(sp) : Object.keys(GM_getValue('sa-admin-resets', {}) || {}).some(n => n.toLowerCase() === plOpen.name.trim().toLowerCase())
                     ? `<div class="sa-empty"><b>${escapeHtml(plOpen.name)}</b>'s shared data was reset; waiting for their next share (within 15 minutes of their next scan).</div>`
                     : `<div class="sa-empty"><b>${escapeHtml(plOpen.name)}</b> doesn't share data with SharkBot (not registered, or not accepted yet).</div>${deleteBtn(plOpen.name)}`}</div>`;
@@ -5638,7 +5669,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         const ts = (t) => t ? new Date(t).getTime() : '';
         const myLabel = my ? escapeHtml(label(my) || my.slice(0, 8) + '…') : '';
         view.innerHTML = `
-            <div class="sa-recommend" style="margin-bottom:6px">Online now: <b>${onlineSet.size}</b> · players seen: ${all.length}${d.hsLast ? ` · highscore read ${escapeHtml(agoText(d.hsLast.at))} (${d.hsLast.rows} rows, ${d.hsLast.added} new)` : ''}${
+            <div class="sa-recommend" style="margin-bottom:6px">Online now: <b>${onlineSet.size}</b> · players seen: ${all.length}${adminSyncErr ? ` · <span style="color:var(--warn)">${escapeHtml(adminSyncErr)}</span>` : adminSyncAt ? ` · shared with all admins (synced ${escapeHtml(agoText(adminSyncAt))})` : ''}${d.hsLast ? ` · highscore read ${escapeHtml(agoText(d.hsLast.at))} (${d.hsLast.rows} rows, ${d.hsLast.added} new)` : ''}${
                 invKnown.length ? ` · credits invested (known): <b>${escapeHtml(fmt(invAll))}</b> across ${invKnown.length} player${invKnown.length === 1 ? '' : 's'}` : ''}${
                 my ? ` · your alliance (${myLabel}): ${(al[my] || { online: 0 }).online} online of ${(al[my] || { seen: 0 }).seen} seen` : ''}<br><span style="font-size:10px; color:var(--muted)">${playersFetching ? 'Checking…' : d.checkedAt ? 'Checked ' + agoText(d.checkedAt) : 'Not checked yet'}${
                 d.error ? ` · <span class="sa-diff-neg">last check failed: ${escapeHtml(d.error)}</span>` : ''}${fresh ? '' : d.checkedAt ? ' · online list is old' : ''}</span></div>
@@ -5673,7 +5704,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             </div>
             <div class="sa-slot-meta" style="margin-top:2px">${allyMsg ? escapeHtml(allyMsg) + ' · ' : ''}✏ renames an alliance and ★ marks yours. Names are saved on Sharky's server for every copy.</div>
             <div class="sa-label" style="margin-top:8px">Players (${shown.length})</div>
-            ${shown.length ? `<div style="overflow-x:auto"><table class="sa-unit-table" data-sort-id="admin-players"><thead><tr><th title="Online">●</th><th>Name</th><th>Alliance</th><th>Last seen</th><th>First seen</th><th style="text-align:right" title="From their shared data (blank if they don't share)">Assassins</th><th style="text-align:right" title="Credits invested, if their investments are known">Invested</th></tr></thead><tbody>
+            ${shown.length ? `<div style="overflow-x:auto"><table class="sa-unit-table" data-sort-id="admin-players"><thead><tr><th title="Online">●</th><th>Name</th><th>Alliance</th><th>Last seen</th><th>First seen</th><th style="text-align:right" title="From their shared data (blank if they don't share)">Assassins</th><th style="text-align:right" title="Credits invested, if their investments are known">Invested</th><th style="text-align:right" title="Most ships seen in one scan: all their fleets in the fleet list at that moment, added up">Ships (max)</th></tr></thead><tbody>
                 ${shown.map(p => `<tr data-pname="${escapeHtml(p.name)}" data-pwhere="players" title="Click to ${isOpen('players', p.name) ? 'hide' : 'show'} their shared data"
                     style="cursor:pointer${isOpen('players', p.name) ? '; background:var(--hover)' : ''}"><td data-sort="${onlineSet.has(p.id) ? 1 : 0}" style="color:${onlineSet.has(p.id) ? 'var(--pos)' : 'var(--dim)'}" title="${onlineSet.has(p.id) ? 'Online now' : 'Offline'}">●</td>
                     <td title="User ID ${escapeHtml(p.id)}" data-sort="${escapeHtml((p.name || '').toLowerCase())}">${escapeHtml(p.name)}</td>
@@ -5681,7 +5712,8 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                     <td data-sort="${onlineSet.has(p.id) ? Date.now() : ts(p.last)}">${onlineSet.has(p.id) ? 'online' : agoText(p.last)}</td>
                     <td data-sort="${ts(p.first)}">${dt(p.first)}</td>
                     <td class="sa-num" data-sort="${assOf(p) != null ? assOf(p) : ''}">${assOf(p) != null ? escapeHtml(fmt(assOf(p))) : ''}</td>
-                    <td class="sa-num" data-sort="${invOf(p) > 0 ? invOf(p) : ''}">${invOf(p) > 0 ? escapeHtml(fmt(invOf(p))) : ''}</td></tr>`).join('')}</tbody></table></div>${detailBox('players')}`
+                    <td class="sa-num" data-sort="${invOf(p) > 0 ? invOf(p) : ''}">${invOf(p) > 0 ? escapeHtml(fmt(invOf(p))) : ''}</td>
+                    <td class="sa-num" data-sort="${fleetMax(p.name)?.ships?.v ?? ''}">${fleetMax(p.name)?.ships ? escapeHtml(fmt(fleetMax(p.name).ships.v)) : ''}</td></tr>`).join('')}</tbody></table></div>${detailBox('players')}`
                 : `<div class="sa-empty">${all.length ? 'No players match.' : 'No players seen yet.'}</div>`}
             <div class="sa-slot-meta" style="margin-top:4px">Click a shortened alliance ID to copy it and fill the form above.${my ? '' : ' Mark your alliance with ☆ in the Alliances table.'}</div>`;
         view.querySelector('#sa-players-refresh').addEventListener('click', () => fetchOnline(true));
@@ -5746,6 +5778,132 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     renderPlayers();
     fetchAllianceCfg(false);
     fetchHolders(false);   // Bank holder lists (since v3.1.0)
+    // ---------- Fleet scans (since v3.7.0) ----------
+    // In your admin browser, SharkBot reads the game's fleet list (#targets_list: sender, ships, mission, destination) and
+    // the selected fleet (#selected_target: "owner > > target", ship types and counts, Units, Resources). One reading of
+    // the fleet list is a scan: for each player, all their fleets in it are added up (total ships), and the fleets you open
+    // during that scan add their ship types, units and resources (each fleet once). Each player keeps the latest 50 scan
+    // snapshots and the highest per-scan sums ever seen (a floor on what they own). Stored in sa-admin-fleets.
+    const FLEET_SESSION_MS = 10 * 60e3;
+    function fleetsLoad() { return GM_getValue('sa-admin-fleets', null) || { players: {}, session: null }; }
+    function fleetMax(name) { const f = fleetsLoad().players[String(name || '').trim().toLowerCase()]; return f ? f.max : null; }
+    const fTxt = (el) => el ? (el.innerText || el.textContent || '').replace(/[ \t]+/g, ' ').trim() : '';
+    const fKnown = (n) => !!n && !/^\?+$/.test(n.trim());
+    function readFleetList() {
+        const t = document.querySelector('#targets_list table'); if (!t) return null;
+        const rows = [];
+        Array.from(t.querySelectorAll('tr')).forEach(tr => {
+            const c = tr.cells; if (!c || c.length < 4 || tr.querySelector('th')) return;
+            const sender = fTxt(c[0].querySelector('div span') || c[0].querySelector('span') || c[0]);
+            const info = fTxt(c[1]).split('\n').map(x => x.trim()).filter(Boolean);
+            const ships = parseNumber(String(info[0] || '').replace(/ships?.*$/i, '').trim());
+            const dest = fTxt(c[3]).split('\n').map(x => x.trim()).filter(Boolean);
+            rows.push({ sender, ships, mission: info[1] || '', target: dest[0] || '', coords: dest[1] || '', arrival: fTxt(c[2]).split('\n')[0] || '' });
+        });
+        return rows;
+    }
+    function readSelectedFleet() {
+        const box = document.getElementById('selected_target'); if (!box) return null;
+        const fs = box.querySelector('fleet-ships'); if (!fs) return null;
+        const lines = (box.innerText || '').split('\n').map(x => x.trim()).filter(Boolean);
+        const ol = lines.find(l => /^.+?>\s*>.+$/.test(l) || /^.+?\s*>>\s*.+$/.test(l));
+        const om = ol ? ol.match(/^(.+?)\s*>\s*>\s*(.+)$/) : null;
+        const owner = om ? om[1].trim() : '', target = om ? om[2].trim() : '';
+        const types = {};
+        Array.from(fs.querySelectorAll('td')).forEach(td => {
+            const amt = td.querySelector('amount span') || td.querySelector('amount'); if (!amt) return;
+            const n = parseNumber(fTxt(amt)); const name = fTxt(td).replace(fTxt(amt), '').replace(/\s+/g, ' ').trim();
+            if (name && n != null) types[name] = (types[name] || 0) + n;
+        });
+        const num = (re) => { const l = lines.find(x => re.test(x)); const m = l && l.match(/:\s*([^/]+?)\s*\/\s*(.+)$/); return m ? [parseNumber(m[1]), parseNumber(m[2])] : [null, null]; };
+        const [units, unitsCap] = num(/^Units\s*:/i), [res, resCap] = num(/^Resources\s*:/i);
+        const mission = lines.find(l => /^(Mining|Attack|Reinforc|Return|Transport|Spy|Colon|Defend|Station)/i.test(l)) || '';
+        return { owner, target, types, units, unitsCap, res, resCap, mission };
+    }
+    let fleetSig = '', selSig = '';
+    function checkFleets() {
+        if (sbView || !GM_getValue('sa-admin-copy', false)) return;
+        const list = readFleetList(), sel = readSelectedFleet();
+        if (!list && !sel) return;
+        const d = fleetsLoad(), now = new Date().toISOString(), low = (x) => String(x || '').trim().toLowerCase();
+        let changed = false;
+        // A new scan when the fleet list changes (ignoring arrival countdowns) or the last scan is over 10 minutes old
+        if (list && list.length) {
+            const sig = list.map(r => [r.sender, r.ships, r.mission, r.target, r.coords].join('|')).join(';');
+            if (sig !== fleetSig || !d.session || Date.now() - new Date(d.session.at) > FLEET_SESSION_MS) {
+                if (sig !== (d.session && d.session.sig) || !d.session || Date.now() - new Date(d.session.at) > FLEET_SESSION_MS)
+                    d.session = { id: now, at: now, sig, players: {}, opened: {} };
+                fleetSig = sig;
+                list.filter(r => fKnown(r.sender)).forEach(r => {
+                    const k = low(r.sender), sp = d.session.players[k] || (d.session.players[k] = { name: r.sender, fleets: 0, ships: 0, rows: [] });
+                    const rk = [r.ships, r.mission, r.target, r.coords].join('|');
+                    if (!sp.rows.includes(rk)) { sp.rows.push(rk); sp.fleets++; sp.ships += r.ships || 0; }
+                });
+                changed = true;
+            }
+        }
+        // The fleet open in the selected-target window: its ship types, units and resources count once in this scan
+        if (sel && fKnown(sel.owner) && Object.keys(sel.types).length) {
+            const fk = [low(sel.owner), sel.target, JSON.stringify(sel.types), sel.mission].join('|');
+            if (fk !== selSig) {
+                selSig = fk;
+                if (!d.session || Date.now() - new Date(d.session.at) > FLEET_SESSION_MS) d.session = { id: now, at: now, sig: '', players: {}, opened: {} };
+                if (!d.session.opened[fk]) {
+                    d.session.opened[fk] = 1;
+                    const k = low(sel.owner), sp = d.session.players[k] || (d.session.players[k] = { name: sel.owner, fleets: 0, ships: 0, rows: [] });
+                    sp.types = sp.types || {}; Object.entries(sel.types).forEach(([t, n]) => { sp.types[t] = (sp.types[t] || 0) + n; });
+                    sp.units = (sp.units || 0) + (sel.units || 0); sp.res = (sp.res || 0) + (sel.res || 0); sp.opened = (sp.opened || 0) + 1;
+                    // Total ships for the scan: the fleet list's sum, or the opened fleets' sum if that's bigger (e.g. the list wasn't open)
+                    sp.openedShips = (sp.openedShips || 0) + Object.values(sel.types).reduce((a, b) => a + b, 0);
+                    if (!sp.fleets) sp.fleets = sp.opened;
+                    changed = true;
+                }
+            }
+        }
+        if (!changed || !d.session) return;
+        // Save this scan's sums as each player's snapshot, and update their maximums
+        Object.entries(d.session.players).forEach(([k, sp]) => {
+            const P = d.players[k] || (d.players[k] = { name: sp.name, snaps: [], max: {} });
+            P.name = sp.name;
+            const snap = { id: d.session.id, at: now, fleets: Math.max(sp.fleets || 0, sp.opened || 0), ships: Math.max(sp.ships || 0, sp.openedShips || 0), types: Object.assign({}, sp.types || {}), units: sp.units || 0, res: sp.res || 0, opened: sp.opened || 0 };
+            const i = P.snaps.findIndex(x => x.id === snap.id);
+            if (i >= 0) P.snaps[i] = snap; else P.snaps.unshift(snap);
+            P.snaps = P.snaps.slice(0, 50);
+            const up = (key, v) => { if (v > 0 && (!P.max[key] || v > P.max[key].v)) P.max[key] = { v, at: now }; };
+            up('ships', snap.ships); up('fleets', snap.fleets); up('units', snap.units); up('res', snap.res);
+            P.max.types = P.max.types || {};
+            Object.entries(snap.types).forEach(([t, v]) => { if (!P.max.types[t] || v > P.max.types[t].v) P.max.types[t] = { v, at: now }; });
+        });
+        d.session.at = now;
+        GM_setValue('sa-admin-fleets', d);
+        // Players not in your list yet are added (by name, like the highscore)
+        const pd = playersLoad(), byName = new Set(Object.values(pd.players).map(p => low(p.name)));
+        let added = false;
+        Object.values(d.session.players).forEach(sp => { if (!byName.has(low(sp.name))) { const id = 'hs:' + low(sp.name); pd.players[id] = { id, name: sp.name, first: now, alliance: '' }; added = true; } });
+        if (added) GM_setValue('sa-players', pd);
+        adminSyncSoon();
+        try { renderPlayers(); } catch (e) {}
+    }
+    setInterval(() => { try { checkFleets(); } catch (e) {} }, 2000);
+    function fleetsHtml(name) {
+        const P = fleetsLoad().players[String(name || '').trim().toLowerCase()];
+        if (!P) return '';
+        const f = (v) => escapeHtml(fmt(v)), when = (x) => x ? escapeHtml(agoText(x.at)) : '';
+        const m = P.max || {}, types = Object.entries(m.types || {}).sort((a, b) => b[1].v - a[1].v);
+        return `<div class="sa-label" style="margin:6px 0 3px">Fleets seen (most in one scan)</div>
+            <table class="sa-unit-table" style="font-size:10px"><thead><tr><th>What</th><th style="text-align:right">Most</th><th>Seen</th></tr></thead><tbody>
+                ${m.ships ? `<tr><td><b>Ships (all fleets)</b></td><td class="sa-num">${f(m.ships.v)}</td><td style="color:var(--muted)">${when(m.ships)}</td></tr>` : ''}
+                ${m.fleets ? `<tr><td>Fleets</td><td class="sa-num">${f(m.fleets.v)}</td><td style="color:var(--muted)">${when(m.fleets)}</td></tr>` : ''}
+                ${types.map(([t, x]) => `<tr><td>${escapeHtml(t)}</td><td class="sa-num">${f(x.v)}</td><td style="color:var(--muted)">${when(x)}</td></tr>`).join('')}
+                ${m.units ? `<tr><td>Units moved</td><td class="sa-num">${f(m.units.v)}</td><td style="color:var(--muted)">${when(m.units)}</td></tr>` : ''}
+                ${m.res ? `<tr><td>Resources carried</td><td class="sa-num">${f(m.res.v)}</td><td style="color:var(--muted)">${when(m.res)}</td></tr>` : ''}
+            </tbody></table>
+            <details class="sa-dd" style="margin-top:3px"><summary style="cursor:pointer; font-size:10px; color:var(--muted)">Scans (${P.snaps.length})</summary>
+                <table class="sa-unit-table" style="font-size:10px"><thead><tr><th>When</th><th style="text-align:right">Fleets</th><th style="text-align:right">Ships</th><th>Ship types (fleets opened)</th><th style="text-align:right">Units</th><th style="text-align:right">Resources</th></tr></thead><tbody>
+                ${P.snaps.map(x => `<tr><td>${escapeHtml(new Date(x.at).toLocaleString())}</td><td class="sa-num">${x.fleets}</td><td class="sa-num">${f(x.ships)}</td>
+                    <td>${Object.entries(x.types || {}).map(([t, v]) => `${escapeHtml(t)} ${f(v)}`).join(', ') || '<span style="color:var(--dim)">none opened</span>'}${x.opened ? ` <span style="color:var(--muted)">(${x.opened})</span>` : ''}</td>
+                    <td class="sa-num">${x.units ? f(x.units) : ''}</td><td class="sa-num">${x.res ? f(x.res) : ''}</td></tr>`).join('')}</tbody></table></details>`;
+    }
     // ---------- Highscore (since v3.6.0) ----------
     // On /highscore, your admin copy reads every player and alliance tag in the table and adds them to Players.
     // Tags are matched to an alliance you already have first: one whose saved name equals the tag, else the alliance
@@ -5794,6 +5952,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         Object.values(d.players).forEach(p => { if (String(p.alliance).startsWith('tag:')) { const m = allyFor(String(p.alliance).slice(4)); if (!m.startsWith('tag:')) p.alliance = m; } });
         d.hsCheckedAt = now; d.hsLast = { at: now, rows: rows.length, added, updated };
         GM_setValue('sa-players', d); GM_setValue('sa-admin-hs-tags', tagMap);
+        adminSyncSoon();
         try { renderPlayers(); } catch (e) {}
     }
     setInterval(() => { try { checkHighscore(); } catch (e) {} }, 3000);
