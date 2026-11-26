@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SharkBot
 // @namespace    https://spacealpha.net/
-// @version      3.5.3
+// @version      3.5.4
 // @description  SharkBot for Space Alpha: saves your planets' units, facilities, inventory, research, bank and market prices, and calculates credit generation and Tick Generator upgrade costs.
 // @author       SharkBot
 // @match        https://spacealpha.net/*
@@ -41,7 +41,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     const PANEL_ID = 'sa-helper-panel';
     const SLOT_IDS = 'ABCDEFGHIJ'.split('');   // up to 10 planets
     // Version comes from the @version header so it's never out of sync
-    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.5.3';
+    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.5.4';
     // Another copy of SharkBot already put its panel on the page: warn and stop,
     // so two installed copies are obvious instead of silently showing the old one.
     const existing = document.getElementById(PANEL_ID);
@@ -230,8 +230,13 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         #${PANEL_ID}.sa-locked #sa-scan, #${PANEL_ID}.sa-viewing #sa-scan { display: none !important; }
         /* Inside a Viewer box (since v3.5.3): only the panel, filling the box */
         html.sa-embed-page body > *:not(#${PANEL_ID}) { display: none !important; }
-        html.sa-embed-page, html.sa-embed-page body { overflow: hidden !important; background: var(--bg, #111827) !important; }
-        #${PANEL_ID}.sa-embedded { border-radius: 0 !important; border: none !important; box-shadow: none !important; }
+        html.sa-embed-page, html.sa-embed-page body { overflow: hidden !important; background: #111827 !important; background-image: none !important; }
+        /* Fill the box whatever this copy's saved position and size say (since v3.5.4) */
+        #${PANEL_ID}.sa-embedded { position: fixed !important; inset: 0 !important; left: 0 !important; top: 0 !important; right: 0 !important; bottom: 0 !important;
+            width: auto !important; height: auto !important; max-height: none !important; max-width: none !important; margin: 0 !important;
+            border-radius: 0 !important; border: none !important; box-shadow: none !important; }
+        /* The box has the title bar: no SharkBot header or "Viewing as" bar inside it */
+        #${PANEL_ID}.sa-embedded .sa-header, #${PANEL_ID}.sa-embedded #sa-view-bar { display: none !important; }
         #${PANEL_ID}.sa-embedded #sa-toggle, #${PANEL_ID}.sa-embedded #sa-expand, #${PANEL_ID}.sa-embedded #sa-update, #${PANEL_ID}.sa-embedded #sa-view-exit,
         #${PANEL_ID}.sa-embedded #sa-update-bar, #${PANEL_ID}.sa-embedded .sa-grip { display: none !important; }
         #${PANEL_ID}.sa-embedded .sa-header { cursor: default !important; }
@@ -1196,12 +1201,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     // ---------- Viewer box (since v3.5.3) ----------
     // Inside a Viewer box the panel fills the box and the game page behind it is hidden
     const sbEmbedded = !!(sbView && window.top !== window);
-    function fitEmbedded() {
-        if (!sbEmbedded) return;
-        const z = uiZoom(), st = panel.style;
-        [['left', '0px'], ['top', '0px'], ['right', 'auto'], ['width', (window.innerWidth / z) + 'px'], ['height', (window.innerHeight / z) + 'px'], ['max-height', 'none']]
-            .forEach(([k, v]) => st.setProperty(k, v, 'important'));
-    }
+    function fitEmbedded() { /* the stylesheet's .sa-embedded rules size the panel to the box (since v3.5.4) */ }
     if (sbEmbedded) {
         document.documentElement.classList.add('sa-embed-page');
         panel.classList.add('sa-embedded');
@@ -5029,7 +5029,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                 const r = await gmPost(shareUrl(), { action: 'playerstore', user: adminCreds.user, pass: adminCreds.pass, player: name });
                 if (!r || !r.ok) throw new Error((r && r.error) || 'refused');
                 __SB_GM.set('sa-admin-viewing:' + key, { player: r.player, at: r.updated, version: r.version, store: r.store, openedAt: new Date().toISOString() });
-                openViewBox(r.player, key);
+                openViewBox(r.player, key, r.updated);
                 msg.textContent = `Opened ${r.player}.`;
             } catch (e) { msg.textContent = (/unknown action/.test(e.message) ? 'Your Apps Script needs the v3.5.0 update.' : 'Couldn\'t open: ' + e.message); }
         }));
@@ -5037,19 +5037,38 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     // A SharkBot window inside the page showing one player (since v3.5.3): a draggable, resizable box holding a
     // frame of the game page with SharkBot in view mode (the frame's name tells it which player)
     var viewBoxes = 0;
-    function openViewBox(player, key) {
+    function viewBoxStyle() {
+        if (document.getElementById('sa-viewbox-style')) return;
+        const st = document.createElement('style'); st.id = 'sa-viewbox-style';
+        st.textContent = `
+            .sa-viewbox { position: fixed !important; z-index: 1000000 !important; display: flex !important; flex-direction: column !important; box-sizing: border-box !important;
+                background: #111827 !important; border: 1px solid #3b4a6b !important; border-radius: 8px !important; box-shadow: 0 10px 30px rgba(0,0,0,0.6) !important;
+                resize: both !important; overflow: hidden !important; min-width: 360px !important; min-height: 260px !important; padding: 0 !important; margin: 0 !important;
+                font: 12px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important; color: #e5e7eb !important; }
+            .sa-viewbox .sa-vb-head { display: flex !important; flex-direction: row !important; flex-wrap: nowrap !important; align-items: center !important; gap: 8px !important;
+                padding: 5px 8px 5px 10px !important; margin: 0 !important; background: #3a2f12 !important; border-bottom: 1px solid #3b4a6b !important;
+                cursor: move !important; user-select: none !important; flex: none !important; height: auto !important; }
+            .sa-viewbox .sa-vb-title { flex: 1 1 auto !important; min-width: 0 !important; white-space: nowrap !important; overflow: hidden !important; text-overflow: ellipsis !important;
+                font: 12px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important; color: #f3e7c4 !important; margin: 0 !important; padding: 0 !important; }
+            .sa-viewbox button { flex: none !important; width: auto !important; min-width: 0 !important; max-width: none !important; height: auto !important; display: inline-block !important;
+                margin: 0 !important; padding: 1px 8px !important; font: 12px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important; line-height: 18px !important;
+                background: #2b3a5a !important; color: #e5e7eb !important; border: 1px solid #3b4a6b !important; border-radius: 4px !important; cursor: pointer !important; box-shadow: none !important; }
+            .sa-viewbox .sa-vb-msg { padding: 6px 10px !important; }
+            .sa-viewbox iframe { flex: 1 1 auto !important; width: 100% !important; height: auto !important; border: 0 !important; margin: 0 !important; background: #111827 !important; display: block !important; }`;
+        document.head.appendChild(st);
+    }
+    function openViewBox(player, key, at) {
+        viewBoxStyle();
         const id = 'sa-viewbox-' + key;
         const old = document.getElementById(id); if (old) old.remove();
         const n = viewBoxes++ % 6, box = document.createElement('div');
-        box.id = id;
-        box.style.cssText = `position:fixed; z-index:1000000; left:${40 + n * 30}px; top:${40 + n * 30}px; width:760px; height:640px; min-width:360px; min-height:260px;
-            display:flex; flex-direction:column; background:#111827; border:1px solid #3b4a6b; border-radius:8px; box-shadow:0 10px 30px rgba(0,0,0,0.6); resize:both; overflow:hidden;
-            font:12px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color:#e5e7eb`;
-        box.innerHTML = `<div class="sa-vb-head" style="display:flex; align-items:center; gap:8px; padding:6px 10px; background:#1f2a44; cursor:move; user-select:none; flex:none">
-                <span style="flex:1">👁 <b>Viewing as ${escapeHtml(player)}</b> · read only</span>
-                <button class="sa-vb-close" title="Close" style="background:#2b3a5a; color:#e5e7eb; border:1px solid #3b4a6b; border-radius:4px; padding:1px 8px; cursor:pointer">✕</button></div>
-            <div class="sa-vb-msg" style="padding:6px 10px; display:none"></div>
-            <iframe name="sbview_${escapeHtml(key)}" src="${escapeHtml(location.origin + '/bank')}" style="flex:1; width:100%; border:0; background:#111827"></iframe>`;
+        box.id = id; box.className = 'sa-viewbox';
+        box.style.left = (40 + n * 30) + 'px'; box.style.top = (40 + n * 30) + 'px'; box.style.width = '780px'; box.style.height = '640px';
+        box.innerHTML = `<div class="sa-vb-head">
+                <span class="sa-vb-title" title="Read only: nothing is saved, scanned, shared or sent">👁 <b>Viewing as ${escapeHtml(player)}</b> · read only${at ? ` · data from ${escapeHtml(new Date(at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }))}` : ''}</span>
+                <button class="sa-vb-close" title="Close">✕</button></div>
+            <div class="sa-vb-msg" style="display:none"></div>
+            <iframe name="sbview_${escapeHtml(key)}" src="${escapeHtml(location.origin + '/bank')}"></iframe>`;
         document.body.appendChild(box);
         box.querySelector('.sa-vb-close').addEventListener('click', () => box.remove());
         // Drag by the title bar
@@ -5066,7 +5085,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         const frame = box.querySelector('iframe');
         const blocked = () => {
             const m = box.querySelector('.sa-vb-msg'); m.style.display = 'block';
-            m.innerHTML = `The game page can't be shown inside this box. <button class="sa-vb-win" style="background:#2b3a5a; color:#e5e7eb; border:1px solid #3b4a6b; border-radius:4px; padding:1px 8px; cursor:pointer">Open in a separate window</button>`;
+            m.innerHTML = `The game page can't be shown inside this box. <button class="sa-vb-win">Open in a separate window</button>`;
             frame.style.display = 'none';
             m.querySelector('.sa-vb-win').addEventListener('click', () => { const w = window.open(location.origin + '/bank', 'sbview_' + key, 'popup,width=960,height=900'); if (w) box.remove(); });
         };
