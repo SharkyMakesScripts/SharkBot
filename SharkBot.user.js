@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SharkBot
 // @namespace    https://spacealpha.net/
-// @version      3.5.0
+// @version      3.5.2
 // @description  SharkBot for Space Alpha: saves your planets' units, facilities, inventory, research, bank and market prices, and calculates credit generation and Tick Generator upgrade costs.
 // @author       SharkBot
 // @match        https://spacealpha.net/*
@@ -27,7 +27,12 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     // throwaway copy in memory, and scanning, sharing and sending are off, so neither player's data can be overwritten.
     // These keys always use this copy's own storage: registration, admin, layout and shared caches.
     const VIEW_OWN = /^sa-(admin|adm-|players|alliance-cfg|install|reg|username|share-|hold-note|update|theme|custom-theme|ui|size|pos|collapsed|expanded|active-tab|last-sub|tip|tutorial|sort|invest-api|invest-hist|holders|tc-mine|traps-mine|autoscan|view)/;
-    const sbView = (() => { try { const v = __SB_GM.get('sa-admin-viewing', null); return v && v.store ? { player: v.player, at: v.at, store: JSON.parse(JSON.stringify(v.store)) } : null; } catch (e) { return null; } })();
+    // Since v3.5.1 a view opens in its own popup window (named "sbview_<player>"), so only that window is in view mode
+    const sbView = (() => { try {
+        const m = String(window.name || '').match(/^sbview_(.+)$/); if (!m) return null;
+        const v = __SB_GM.get('sa-admin-viewing:' + m[1], null);
+        return v && v.store ? { player: v.player, at: v.at, store: JSON.parse(JSON.stringify(v.store)) } : null;
+    } catch (e) { return null; } })();
     function GM_getValue(k, d) { if (sbView && !VIEW_OWN.test(k)) return k in sbView.store ? sbView.store[k] : d; return __SB_GM.get(k, d); }
     function GM_setValue(k, v) { if (sbView && !VIEW_OWN.test(k)) { sbView.store[k] = v; return; } return __SB_GM.set(k, v); }
     function GM_listValues() { const own = __SB_GM.list ? __SB_GM.list() : []; return sbView ? own.filter(k => VIEW_OWN.test(k)).concat(Object.keys(sbView.store)) : own; }
@@ -36,7 +41,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     const PANEL_ID = 'sa-helper-panel';
     const SLOT_IDS = 'ABCDEFGHIJ'.split('');   // up to 10 planets
     // Version comes from the @version header so it's never out of sync
-    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.5.0';
+    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.5.2';
     // Another copy of SharkBot already put its panel on the page: warn and stop,
     // so two installed copies are obvious instead of silently showing the old one.
     const existing = document.getElementById(PANEL_ID);
@@ -4612,6 +4617,8 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             investments: (profileInvestLoad()?.items || []).map(x => [x.name, x.shares, x.stake, x.value]),
             investmentsSeen: profileInvestLoad()?.savedAt || null,
             // What this player sees (since v3.5.0): Bank → Your bank → Invested, the game's figure, and their daily earnings (TRAPs → Your /day)
+            // Per investment, as the You column shows it (since v3.5.2): [name, amount, managed, typed]
+            investedItems: (() => { try { return investRows().filter(r => r.mine > 0 || (r.managed && r.typedAmt != null)).map(r => [r.name, r.mine || 0, !!r.managed, r.managed ? r.typedAmt ?? null : null]); } catch (e) { return null; } })(),
             investedTotal: (() => { try { return investRows().reduce((t, r) => t + (r.mine > 0 ? r.mine : 0), 0); } catch (e) { return null; } })(),
             investedGame: (() => { const f = (GM_getValue('sa-player-bank', null)?.fields || []).find(x => /^\s*invested\s*$/i.test(x.label)); return f ? f.value : null; })(),
             investedDaily: (() => { try { return trapCalcRows().reduce((t, x) => t + (x.you && x.you.pDay ? x.you.pDay : 0), 0); } catch (e) { return null; } })(),
@@ -4982,23 +4989,29 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         if (!view) return;
         if (!adminCreds) { view.innerHTML = '<div class="sa-empty">Log in on the <b>Dashboard</b> tab first.</div>'; return; }
         const list = (adminData || []).slice().sort((a, b) => String(a.player).localeCompare(String(b.player)));
-        view.innerHTML = `${sbView ? `<div class="sa-recommend" style="margin-bottom:6px">Viewing <b>${escapeHtml(sbView.player)}</b> now. Use <b>Exit</b> in the bar at the top to go back.</div>` : ''}
+        view.innerHTML = `${sbView ? `<div class="sa-recommend" style="margin-bottom:6px">This window shows <b>${escapeHtml(sbView.player)}</b>. Close it to stop viewing.</div>` : ''}
             ${list.length ? `<div style="overflow-x:auto"><table class="sa-unit-table" data-sort-id="admin-viewer">
-                <thead><tr><th>Player</th><th>Shared</th><th>Version</th><th style="text-align:right">Saved data</th><th></th></tr></thead>
-                <tbody>${list.map(p => { const sz = p.data && p.data.storeSize; return `<tr><td class="sa-trap-name">${escapeHtml(p.player)}</td>
+                <thead><tr><th>Player</th><th>Shared</th><th>Version</th><th style="text-align:right">Saved data</th></tr></thead>
+                <tbody>${list.map(p => { const sz = p.data && p.data.storeSize; return `<tr ${sz ? `data-view-player="${escapeHtml(p.player)}" style="cursor:pointer" title="Click to open ${escapeHtml(p.player)}'s SharkBot in a popup window"`
+                    : `title="${escapeHtml(p.player)} hasn't shared their full data yet: they need SharkBot v3.5.0 or newer and one share (Send now, or ⇣ Pull data from everyone)"`}><td class="sa-trap-name">${sz ? '👁 ' : ''}${escapeHtml(p.player)}</td>
                     <td data-sort="${new Date(p.updated).getTime() || ''}">${escapeHtml(agoText(p.updated))}</td><td class="sa-num">${escapeHtml(p.version || '')}</td>
-                    <td class="sa-num" data-sort="${sz || 0}">${sz ? Math.round(sz / 1024) + ' KB' : '<span style="color:var(--muted)" title="Needs SharkBot v3.5.0; they send it with their next share">not shared yet</span>'}</td>
-                    <td>${sz ? `<button class="sa-btn sa-view-go" data-player="${escapeHtml(p.player)}" style="margin:0">👁 View as</button>` : ''}</td></tr>`; }).join('')}</tbody></table></div>`
+                    <td class="sa-num" data-sort="${sz || 0}">${sz ? Math.round(sz / 1024) + ' KB' : '<span style="color:var(--muted)">not shared yet</span>'}</td></tr>`; }).join('')}</tbody></table></div>
+                <div class="sa-slot-meta" style="margin-top:4px">Click a player to open their SharkBot in a popup window. Close that window to stop viewing; this tab isn't changed.</div>`
                 : '<div class="sa-empty">No players share data yet.</div>'}
             <div class="sa-slot-meta" id="sa-view-msg" style="margin-top:4px"></div>`;
-        view.querySelectorAll('.sa-view-go').forEach(b => b.addEventListener('click', async () => {
-            const msg = view.querySelector('#sa-view-msg'); b.disabled = true; msg.textContent = `Loading ${b.dataset.player}'s data…`;
+        view.querySelectorAll('tr[data-view-player]').forEach(tr => tr.addEventListener('click', async () => {
+            const msg = view.querySelector('#sa-view-msg'), name = tr.dataset.viewPlayer, key = name.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '_');
+            // Open the window first (straight from the click, so browsers allow it), then load the data into it
+            const w = window.open('about:blank', 'sbview_' + key, 'popup,width=960,height=900');
+            if (!w) { msg.textContent = 'Your browser blocked the popup: allow popups for spacealpha.net and click again.'; return; }
+            msg.textContent = `Loading ${name}'s data…`;
             try {
-                const r = await gmPost(shareUrl(), { action: 'playerstore', user: adminCreds.user, pass: adminCreds.pass, player: b.dataset.player });
+                const r = await gmPost(shareUrl(), { action: 'playerstore', user: adminCreds.user, pass: adminCreds.pass, player: name });
                 if (!r || !r.ok) throw new Error((r && r.error) || 'refused');
-                __SB_GM.set('sa-admin-viewing', { player: r.player, at: r.updated, version: r.version, store: r.store });
-                msg.textContent = 'Opening…'; location.reload();
-            } catch (e) { b.disabled = false; msg.textContent = (/unknown action/.test(e.message) ? 'Your Apps Script needs the v3.5.0 update.' : 'Couldn\'t open: ' + e.message); }
+                __SB_GM.set('sa-admin-viewing:' + key, { player: r.player, at: r.updated, version: r.version, store: r.store, openedAt: new Date().toISOString() });
+                w.location.href = location.origin + '/bank';
+                msg.textContent = `Opened ${name} in a popup window.`;
+            } catch (e) { try { w.close(); } catch (er) {} msg.textContent = (/unknown action/.test(e.message) ? 'Your Apps Script needs the v3.5.0 update.' : 'Couldn\'t open: ' + e.message); }
         }));
     }
     function renderViewBar() {
@@ -5006,8 +5019,8 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         if (!bar || !sbView) return;
         bar.style.cssText = 'display:flex; gap:6px; align-items:center; padding:5px 10px; font-size:11px; border-bottom:1px solid var(--border); background:rgba(230,170,40,0.2)';
         bar.innerHTML = `<span style="flex:1">👁 <b>Viewing as ${escapeHtml(sbView.player)}</b> · read only · their data from ${escapeHtml(sbView.at ? new Date(sbView.at).toLocaleString() : '?')}. Nothing is saved or sent.</span>
-            <button class="sa-btn" id="sa-view-exit" style="margin:0">Exit</button>`;
-        bar.querySelector('#sa-view-exit').addEventListener('click', () => { if (__SB_GM.del) __SB_GM.del('sa-admin-viewing'); else __SB_GM.set('sa-admin-viewing', null); location.reload(); });
+            <button class="sa-btn" id="sa-view-exit" style="margin:0" title="Close this window">Close</button>`;
+        bar.querySelector('#sa-view-exit').addEventListener('click', () => window.close());
     }
     async function adminRefresh() {
         if (!adminCreds) return;
@@ -5386,6 +5399,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     else checkReg(false, 2 * 60e3);   // on every page load, if the last check is over 2 minutes old
     panel.querySelector('#sa-update')?.addEventListener('click', () => checkUpdate(true));
     if (sbView) { panel.classList.add('sa-viewing'); renderViewBar(); }
+    else if (__SB_GM.list && __SB_GM.del) { try { __SB_GM.list().filter(k => k === 'sa-admin-viewing' || (/^sa-admin-viewing:/.test(k) && Date.now() - new Date((__SB_GM.get(k, {}) || {}).openedAt || 0) > 2 * 86400e3)).forEach(k => __SB_GM.del(k)); } catch (e) {} }
     renderUpdateBar();
     setTimeout(() => checkUpdate(false), 3000);   // on every page load (since v3.5.0)
     // Re-check the lock as the game's top bar loads or changes account, and the status on its schedule
@@ -5654,6 +5668,25 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     // Who's online is checked every 5 minutes, only while logged in as admin and the panel is open
     setInterval(() => { if (!GM_getValue('sa-collapsed', false)) { fetchOnline(false); fetchAllianceCfg(false); } }, 5 * 60e3);
 
+    // "Invested (as the player sees it)" in a player's admin details (since v3.5.2, replacing the game's TRAPs held)
+    function investedHeldHtml(p) {
+        const d = p.data || {}, f = (v) => escapeHtml(fmt(v)), game = {};
+        (d.traps || []).forEach(x => { game[String(x[0]).toLowerCase()] = x[1]; });
+        let rows, own = Array.isArray(d.investedItems);
+        if (own) rows = d.investedItems.map(x => ({ name: x[0], value: x[1], managed: x[2], typed: x[3] }));
+        else {
+            const hp = (holdersLoad()?.players || []).find(h => String(h.player).trim().toLowerCase() === String(p.player).trim().toLowerCase());
+            rows = hp ? investedOf(hp).items.map(x => ({ name: x.name, value: x.value, managed: !!x.managed, typed: x.managed ? x.value : null })) : [];
+        }
+        if (!rows.length && !(d.traps || []).length) return '';
+        const total = rows.reduce((t, x) => t + (x.value || 0), 0);
+        const gameOf = (n) => { const k = Object.keys(game).find(g => invMatch(g, n)); return k != null ? game[k] : null; };
+        return `<div class="sa-label" style="margin:8px 0 3px">Invested (as the player sees it)${own ? '' : ' <span style="color:var(--muted); text-transform:none" title="This player\'s SharkBot is older than v3.5.2">· worked out here</span>'}</div>
+            <table class="sa-unit-table sa-stmt"><tbody>${rows.sort((a, b) => (b.value || 0) - (a.value || 0)).map(x => { const g = gameOf(x.name); return `<tr>
+                <td>${escapeHtml(x.name)} <span style="color:var(--muted); font-size:9px">${x.managed ? 'managed' : 'unmanaged'}</span></td>
+                <td class="sa-num">${x.managed && x.typed == null ? '<span style="color:var(--muted)">not entered</span>' : f(x.value || 0)}${g != null ? `<div style="font-size:9px; color:var(--dim)">game: ${f(g)}</div>` : ''}</td></tr>`; }).join('')}
+                <tr style="font-weight:600"><td>Total</td><td class="sa-num">${f(total)}</td></tr></tbody></table>`;
+    }
     function adminDetail(p) {
         const d = p.data || {}, f = (v) => v == null ? '—' : escapeHtml(fmt(v));
         const t = (title, rows) => rows.length ? `<div class="sa-label" style="margin:8px 0 3px">${title}</div><table class="sa-unit-table sa-stmt"><tbody>${
@@ -5670,7 +5703,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                 ${t('Units', pl.units || [])}${t('Facilities', (pl.facilities || []).map(x => [x[0], x[1]]))}
                 ${t('Inventory', pl.inventory || [])}${t('Nation', pl.nation || [])}
                 ${pl.colony ? t('Colony', Object.entries(pl.colony).filter(([k]) => k !== 'savedAt')) : ''}</details>`).join('')}
-            ${t('TRAPs held', d.traps || [])}
+            ${investedHeldHtml(p)}
             <button class="sa-btn" id="sa-adm-copy" style="margin:8px 0 0; width:100%">⧉ Copy raw data</button>`;
     }
     // ---------- Untrained & Professor value ----------
