@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SharkBot
 // @namespace    https://spacealpha.net/
-// @version      3.9.4
+// @version      3.9.5
 // @description  SharkBot for Space Alpha: saves your planets' units, facilities, inventory, research, bank and market prices, and calculates credit generation and Tick Generator upgrade costs.
 // @author       SharkBot
 // @match        https://spacealpha.net/*
@@ -41,7 +41,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     const PANEL_ID = 'sa-helper-panel';
     const SLOT_IDS = 'ABCDEFGHIJ'.split('');   // up to 10 planets
     // Version comes from the @version header so it's never out of sync
-    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.9.4';
+    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.9.5';
     // Another copy of SharkBot already put its panel on the page: warn and stop,
     // so two installed copies are obvious instead of silently showing the old one.
     const existing = document.getElementById(PANEL_ID);
@@ -5902,6 +5902,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         {
             const all = fTxt(tr);
             if (!/ships?\b/i.test(all) || /fleet\s*info/i.test(all)) return null;   // title row or not a fleet
+            if (/(^|\n)\s*Units\s*(\n|$)/i.test(all) && /(^|\n)\s*Resources\s*(\n|$)/i.test(all) && !/\d\s*ships?\b/i.test(all)) return null;   // the hover box
             const lines = all.split('\n').map(x => x.trim()).filter(Boolean);
             const senderEl = tr.querySelector('td div span') || tr.querySelector('span');
             const sender = senderEl ? fTxt(senderEl).split('\n')[0].trim() : '';
@@ -5930,28 +5931,42 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         const r = parseFleetRow(tr);
         if (r) { fleetHover = { row: r, at: Date.now() }; setTimeout(() => { try { checkFleets(); } catch (er) {} }, 400); }
     }, true);
+    // The hover box (since v3.9.5 read by its text, wherever the game puts it, e.g. inside #targets_list): the smallest
+    // visible element with the Ships, Units and Resources headings; ship counts and names come in pairs after "Ships"
     function readHoverFleet() {
         if (!fleetHover || Date.now() - fleetHover.at > 8000) return null;
-        const boxes = Array.from(document.querySelectorAll('fleet-ships')).filter(fs => !fs.closest('#selected_target') && !fs.closest('#' + PANEL_ID) && fs.offsetParent !== null);
-        if (!boxes.length) return null;
-        const fs = boxes[boxes.length - 1], box = fs.closest('table') || fs.parentElement;
-        const lines = (box.innerText || '').split('\n').map(x => x.trim()).filter(Boolean);
-        const si = lines.findIndex(l => /^ships$/i.test(l));
-        const types = {};
-        Array.from(fs.querySelectorAll('td')).forEach(td => {
-            const amt = td.querySelector('amount span') || td.querySelector('amount'); if (!amt) return;
-            const n = parseNumber(fTxt(amt)); const name = fTxt(td).replace(fTxt(amt), '').replace(/\s+/g, ' ').trim();
-            if (name && n != null) types[name] = (types[name] || 0) + n;
+        const isHead = (l, w) => new RegExp('^' + w + '\\s*:?$', 'i').test(l);
+        const cands = Array.from(document.querySelectorAll('#targets_list *, body > div, body > table')).filter(el => {
+            if (el.closest('#' + PANEL_ID) || el.closest('#selected_target') || el.offsetParent === null) return false;
+            const t = el.innerText || ''; return /(^|\n)\s*Ships\s*(\n|$)/i.test(t) && /(^|\n)\s*Units\s*(\n|$)/i.test(t) && /(^|\n)\s*Resources\s*(\n|$)/i.test(t);
         });
+        if (!cands.length) return null;
+        const box = cands.reduce((a, b) => (a.innerText.length <= b.innerText.length ? a : b));
+        const lines = (box.innerText || '').split('\n').map(x => x.trim()).filter(Boolean);
+        const si = lines.findIndex(l => isHead(l, 'Ships')), ui = lines.findIndex(l => isHead(l, 'Units')), ri = lines.findIndex(l => isHead(l, 'Resources'));
+        if (si < 0 || ui < si) return null;
+        const types = {};
+        const NUM = /^[\d.,]+\s*[kKmMbBtTqQ]?$/;
+        // Prefer the ship tiles' own count elements; otherwise pair "18,000" with the name after it
+        const tiles = Array.from(box.querySelectorAll('amount span, amount')).filter(a => !a.closest('#' + PANEL_ID));
+        if (tiles.length) {
+            tiles.forEach(a => { const td = a.closest('td') || a.parentElement?.parentElement; const n = parseNumber(fTxt(a)); const name = td ? fTxt(td).replace(fTxt(a), '').replace(/\s+/g, ' ').trim() : '';
+                if (name && n != null && !/^(units|resources)/i.test(name) && lines.slice(si, ui).some(l => l === name)) types[name] = (types[name] || 0) + n; });
+        }
+        if (!Object.keys(types).length) {
+            const part = lines.slice(si + 1, ui);
+            for (let x = 0; x < part.length; x++) {
+                if (NUM.test(part[x]) && part[x + 1] && !NUM.test(part[x + 1])) { const n = parseNumber(part[x]); if (n != null) types[part[x + 1]] = (types[part[x + 1]] || 0) + n; x++; }
+            }
+        }
         if (!Object.keys(types).length) return null;
-        const after = (label) => { const i = lines.findIndex(l => new RegExp('^' + label + '$', 'i').test(l)); const m = i >= 0 && lines[i + 1] && lines[i + 1].match(/^([^/]+?)\s*\/\s*(.+)$/); return m ? [parseNumber(m[1]), parseNumber(m[2])] : [null, null]; };
-        const [units, unitsCap] = after('Units'), [res, resCap] = after('Resources');
-        const head = si > 0 ? lines.slice(0, si) : [];
-        const ri = lines.findIndex(l => /^resources$/i.test(l));
-        const cargo = ri >= 0 ? lines.slice(ri + 2).filter(l => !/^[\d.,]+\s*[kKmMbBtTqQ]?$/.test(l)).join(', ') : (head[1] || '');
+        const pair = (idx) => { const m = idx >= 0 && lines[idx + 1] && lines[idx + 1].match(/^([^/]+?)\s*\/\s*(.+)$/); return m ? [parseNumber(m[1]), parseNumber(m[2])] : [null, null]; };
+        const [units, unitsCap] = pair(ui), [res, resCap] = pair(ri);
+        const cargoLines = ri >= 0 ? lines.slice(ri + 2).filter(l => !NUM.test(l)) : [];
+        const head = lines.slice(0, si);
         const r = fleetHover.row;
-        return { owner: r.sender, target: fKnown(r.target) ? r.target : '', coords: r.coords, types, units, unitsCap, res, resCap, cargo: cargo || head[1] || '',
-                 mission: r.mission || head[0] || '' };
+        return { owner: r.sender, target: fKnown(r.target) ? r.target : '', coords: r.coords, types, units, unitsCap, res, resCap,
+                 cargo: cargoLines.join(', ') || head[1] || '', mission: r.mission || head[0] || '' };
     }
     function readSelectedFleet() {
         const box = document.getElementById('selected_target'); if (!box) return null;
