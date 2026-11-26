@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SharkBot
 // @namespace    https://spacealpha.net/
-// @version      3.9.3
+// @version      3.9.4
 // @description  SharkBot for Space Alpha: saves your planets' units, facilities, inventory, research, bank and market prices, and calculates credit generation and Tick Generator upgrade costs.
 // @author       SharkBot
 // @match        https://spacealpha.net/*
@@ -41,7 +41,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     const PANEL_ID = 'sa-helper-panel';
     const SLOT_IDS = 'ABCDEFGHIJ'.split('');   // up to 10 planets
     // Version comes from the @version header so it's never out of sync
-    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.9.3';
+    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.9.4';
     // Another copy of SharkBot already put its panel on the page: warn and stop,
     // so two installed copies are obvious instead of silently showing the old one.
     const existing = document.getElementById(PANEL_ID);
@@ -5141,7 +5141,8 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             if (tms(mine.checkedAt) > tms(pl.checkedAt)) { pl.online = mine.online; pl.checkedAt = mine.checkedAt; newer = true; }
             GM_setValue('sa-players', pl);
             if (newer) adminSyncSoon();
-            const cur = fleetsLoad(); cur.players = r.fleets || {}; if (Array.isArray(r.log)) cur.log = r.log;
+            let cur = fleetsLoad(); cur.players = r.fleets || {}; if (Array.isArray(r.log)) cur.log = r.log;
+            GM_setValue('sa-admin-fleets', cur); cur = fleetsLoad();   // tidies older duplicate fleets the server still has
             if (cur.session) Object.keys(cur.session.players || {}).forEach(k => { if (del[k]) delete cur.session.players[k]; });
             GM_setValue('sa-admin-fleets', cur);
             GM_setValue('sa-admin-hs-tags', r.tags || {});
@@ -5862,6 +5863,20 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     var fleetScanNow = false;
     function fleetsLoad() {
         const d = GM_getValue('sa-admin-fleets', null) || { players: {}, session: null };
+        // v3.9.0–v3.9.3 kept the timer in the mission ("Returning home 104:42 minutes"), so one fleet became many: merge them
+        if ((d.log || []).some(x => TIME_RE.test(String(x.mission || '')))) {
+            const low = (x) => String(x || '').trim().toLowerCase(), by = {};
+            d.log.forEach(x => {
+                const m = TIME_RE.test(String(x.mission || '')) ? cleanMission(x.mission) : x.mission;
+                const key = [low(x.owner), x.ships, low(m), low(x.target), x.coords || ''].join('|');
+                const c = by[key], n = Object.assign({}, x, { mission: m, key });
+                if (!c) by[key] = n;
+                else by[key] = Object.assign(new Date(x.at) > new Date(c.at) ? Object.assign({}, c, n) : Object.assign({}, n, c), { first: new Date(x.first) < new Date(c.first) ? x.first : c.first });
+            });
+            d.log = Object.values(by).sort((a, b) => new Date(b.at) - new Date(a.at));
+            if (d.session) d.session.logged = [];
+            GM_setValue('sa-admin-fleets', d);
+        }
         // v3.9.0 read the fleet list's title row as a fleet by "Sender"
         if ((d.log || []).some(x => /^sender$/i.test(String(x.owner))) || (d.players && d.players.sender)) {
             d.log = (d.log || []).filter(x => !/^sender$/i.test(String(x.owner))); if (d.players) delete d.players.sender; GM_setValue('sa-admin-fleets', d);
@@ -5875,6 +5890,8 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     // sender is the first name span, ships are "N ships", the mission follows, arrival is "Stationed" or a time, and the
     // destination is the name above its "#x-y" coordinates
     const MISSION_RE = /^(Mining|Attack|Reinforc|Return|Transport|Spy|Colon|Defend|Station|Explor|Patrol|Invad|Harvest|Trad)/i;
+    const TIME_RE = /\d[\d:.,]*\s*(seconds?|secs?|minutes?|mins?|hours?|days?|weeks?|months?|years?)\b/i;
+    function cleanMission(m) { return String(m || '').replace(/\s*\d[\d:.,]*\s*(seconds?|secs?|minutes?|mins?|hours?|days?|weeks?|months?|years?)\b.*$/i, '').replace(/\s+/g, ' ').trim(); }
     function readFleetList() {
         const t = document.querySelector('#targets_list table'); if (!t) return null;
         const rows = [];
@@ -5891,11 +5908,15 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             const shipsLine = lines.find(l => /ships?\b/i.test(l)) || '';
             const sm = shipsLine.match(/([\d.,]+\s*[kKmMbBtTqQ]?)\s*ships?/i);
             const ships = sm ? parseNumber(sm[1].replace(/\s+/g, ' ').trim()) : null;
-            const mission = lines.find(l => MISSION_RE.test(l)) || '';
-            const arrival = lines.find(l => /^Stationed$/i.test(l) || /\b(hours?|days?|months?|minutes?|mins?|seconds?|years?)\b/i.test(l) && !/ships?/i.test(l)) || '';
+            // The game can put the mission and its timer on one line ("Returning home 104:42 minutes"): split them (since v3.9.4)
+            const mline = lines.find(l => MISSION_RE.test(l)) || '';
+            const mission = cleanMission(mline);
+            const tline = lines.find(l => TIME_RE.test(l) && !/ships?\b/i.test(l)) || lines.find(l => /^Stationed$/i.test(l)) || '';
+            const tm = tline.match(TIME_RE);
+            const arrival = tm ? tm[0].trim() : /stationed/i.test(tline) ? 'Stationed' : '';
             const ci = lines.findIndex(l => /^#\d+\s*-\s*\d+/.test(l));
             const coords = ci >= 0 ? lines[ci] : '';
-            const target = ci > 0 && !/ships?\b|KM$/i.test(lines[ci - 1]) && !MISSION_RE.test(lines[ci - 1]) && lines[ci - 1] !== arrival ? lines[ci - 1] : '';
+            const target = ci > 0 && !/ships?\b|KM$/i.test(lines[ci - 1]) && !MISSION_RE.test(lines[ci - 1]) && !TIME_RE.test(lines[ci - 1]) && !/^stationed$/i.test(lines[ci - 1]) ? lines[ci - 1] : '';
             if (!sender || /^sender$/i.test(sender)) return null;
             return { sender, ships, mission, target, coords, arrival };
         }
