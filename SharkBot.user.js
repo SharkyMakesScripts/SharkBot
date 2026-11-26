@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SharkBot
 // @namespace    https://spacealpha.net/
-// @version      3.11.0
+// @version      3.12.0
 // @description  SharkBot for Space Alpha: saves your planets' units, facilities, inventory, research, bank and market prices, and calculates credit generation and Tick Generator upgrade costs.
 // @author       SharkBot
 // @match        https://spacealpha.net/*
@@ -41,7 +41,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     const PANEL_ID = 'sa-helper-panel';
     const SLOT_IDS = 'ABCDEFGHIJ'.split('');   // up to 10 planets
     // Version comes from the @version header so it's never out of sync
-    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.11.0';
+    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.12.0';
     // Another copy of SharkBot already put its panel on the page: warn and stop,
     // so two installed copies are obvious instead of silently showing the old one.
     const existing = document.getElementById(PANEL_ID);
@@ -7555,6 +7555,12 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     // API joined with your TRAPs scan. Several TRAPs share a name start ("serenity managed …"),
     // so: exact name first; a cut-off name ("…") matches by prefix, and the one whose price is
     // closest to the TRAPs price wins.
+    // Share price change per share over a day (unmanaged investments, since v3.12.0): price now − the price a day ago,
+    // scaled to your turns per day. null until the game's list has a price from a day ago.
+    function unmanagedDayPerShare(a, tpd) {
+        if (!a || a.price == null || a.price1440 == null || !(a.price1440 > a.price * 1e-3)) return null;
+        return (a.price - a.price1440) * (tpd / 1439);
+    }
     function investRows() {
         const api = investApiLoad(), traps = trapsLoad();
         const norm = (s) => String(s).toLowerCase().replace(/\s+/g, ' ').trim();
@@ -7597,12 +7603,15 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             // Your amount: managed = what you typed; unmanaged = share value. Never more than the investment's equity.
             let mine = managed ? (typedAmt ?? 0) : shareVal, capped = false;
             if (total != null && total >= 0 && mine > total) { mine = total; capped = true; }
-            const daily = a ? total * rate * tpd : null;
+            // Interest is earned by managed investments only (since v3.12.0); unmanaged ones only move with the share price
+            const daily = a && managed ? total * rate * tpd : null;
             const share = !managed && pv && pv.stake != null ? pv.stake / 100 : a && total > 0 ? mine / total : null;
-            // Unmanaged: what you earn is the share price moving (volatility × equity change), so use
-            // the price change over a day: the TRAPs 24h %, else the API's price now vs ~a day ago
+            // Unmanaged (since v3.12.0): your gain is only the share price moving: your shares × (price now − price a day ago),
+            // the same day-ago price as Calculators → TRAPs. Unknown until the game's list has a price from a day ago.
             const d24 = t && t.d24 != null ? t.d24 / 100 : (a && a.price && a.price8 ? a.price / a.price8 - 1 : null);
-            const myDaily = managed ? (daily != null && share != null ? daily * share : null) : (d24 != null ? mine * d24 : null);
+            const perShare = a ? unmanagedDayPerShare(a, tpd) : null;
+            const myShares = pv && pv.shares != null ? parseNumber(String(pv.shares)) : (a && a.price > 0 && mine > 0 ? mine / a.price : null);
+            const myDaily = managed ? (daily != null && share != null ? daily * share : null) : (perShare != null && myShares != null ? myShares * perShare : null);
             return { name: nm, managed, typedAmt, shareVal, shareSrc, capped, shares: pv ? pv.shares : null, stake: pv ? pv.stake : null,
                      mine, share, total, rate, daily, myDaily, dayChange: d24,
                      d24: t ? t.d24 : null, d7: t ? t.d7 : null, d30: t ? t.d30 : null,
@@ -7730,8 +7739,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             let dTurn = null, dDay = null;
             if (!r.managed) {
                 if (a.price != null && a.price8 != null) dTurn = (a.price - a.price8) / 7;
-                if (a.price != null && a.price1440 != null && a.price1440 > a.price * 1e-3) dDay = (a.price - a.price1440) * (tpd / 1439);
-                else if (dTurn != null) dDay = dTurn * tpd;
+                dDay = unmanagedDayPerShare(a, tpd);   // same as Data → Bank (since v3.12.0): unknown until a day-ago price exists
             }
             const sharePx = price || a.price || null;
             // Holders: everyone known, plus you
@@ -7898,16 +7906,16 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                     <td class="sa-num">${f(r.total)}</td>
                     ${chg(r.d24)}${chg(r.d7)}${chg(r.d30)}
                     <td class="sa-num">${f(r.price)}</td>
-                    <td class="sa-num">${r.rate == null ? '—' : pc(r.rate, 4)}</td>
-                    <td class="sa-num">${f(r.daily)}</td>
-                    <td class="sa-num ${r.myDaily > 0 ? 'sa-diff-pos' : r.myDaily < 0 ? 'sa-diff-neg' : ''}" title="${r.managed ? 'managed: interest × your share' : 'unmanaged: your share value × 24h price change'}">${r.mine ? (r.myDaily < 0 ? '−' + f(-r.myDaily) : f(r.myDaily)) : ''}</td></tr>${!popout && invOpen[r.name] ? holderRows(r) : ''}`).join('')}</tbody></table></div>`
+                    <td class="sa-num" title="${r.managed ? '' : 'Unmanaged investments pay no interest'}">${r.rate == null || !r.managed ? '—' : pc(r.rate, 4)}</td>
+                    <td class="sa-num" title="${r.managed ? '' : 'Unmanaged: each holder gains only from the share price, so there is no figure for everyone'}">${f(r.daily)}</td>
+                    <td class="sa-num ${r.myDaily > 0 ? 'sa-diff-pos' : r.myDaily < 0 ? 'sa-diff-neg' : ''}" title="${r.managed ? 'managed: interest × your share' : r.myDaily == null && r.mine ? 'unmanaged: waiting for a share price from a day ago' : 'unmanaged: your shares × (share price now − a day ago)'}">${r.mine ? (r.myDaily == null ? '—' : r.myDaily < 0 ? '−' + f(-r.myDaily) : f(r.myDaily)) : ''}</td></tr>${!popout && invOpen[r.name] ? holderRows(r) : ''}`).join('')}</tbody></table></div>`
                 : '<div class="sa-empty">No investment data yet. Scan /bank → TRAPs, and the API list loads by itself.</div>'}
             <div class="sa-slot-meta" style="margin:4px 0 12px">
                 API ${api ? new Date(api.savedAt).toLocaleString() : 'not read yet'} · TRAPs scan ${td ? new Date(td.savedAt).toLocaleString() : 'none yet (open /bank → TRAPs, Scan)'}
                 · Profile → Investments ${pinv ? new Date(pinv.savedAt).toLocaleString() : 'not read yet (open your Profile → Investments)'}<br>
-                Daily = total × interest per turn × ${tpd.toLocaleString()} turns. Yours = that × your share.<br>
+                Managed: Daily = total × interest per turn × ${tpd.toLocaleString()} turns; yours = that × your share. Unmanaged pay no interest (/turn and Daily (all) show —).<br>
                 Managed (a box to type in; investments named "managed" or set for everyone): "You" is the amount you type in (blank = 0); you earn interest × your share.
-                Unmanaged: "You" is your share value (Value in Profile → Investments; ⚠ = still the older TRAPs page figure) and your % is your Stake; you earn the share price change, taken as your value × the 24h change.
+                Unmanaged: "You" is your share value (Value in Profile → Investments; ⚠ = still the older TRAPs page figure) and your % is your Stake; you earn only the share price change: your shares × (share price now − a day ago), the same as Calculators → TRAPs ("—" until the game's list has a price from a day ago).
                 "You" is never more than the investment's total equity (⚠ capped at equity).
             </div>${pinv && pinv.items.length ? `<details class="sa-dd" style="margin-bottom:10px"><summary style="cursor:pointer; font-size:11px; color:var(--muted)">What Profile → Investments showed (${pinv.items.length})</summary>
                 <table class="sa-unit-table sa-traps-table"><thead><tr><th>Name</th><th>Shares</th><th>Stake</th><th>Value (game)</th></tr></thead><tbody>${
@@ -9649,6 +9657,35 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     document.getElementById('sa-uv-slot')?.addEventListener('change', (e) => { GM_setValue('sa-uv-slot', e.target.value); renderUnitValue(); });
     ['sa-uv-price', 'sa-uv-pprice', 'sa-uv-split', 'sa-uv-limS', 'sa-uv-limP'].forEach(id => { const i = document.getElementById(id); if (i) { i.value = GM_getValue(id, '');
         i.addEventListener('input', () => { GM_setValue(id, i.value); renderUnitValue(); }); } });
+    // ---------- Expand all / Collapse all (since v3.12.0) ----------
+    // At the top of every subtab with parts that open and close. Display only: nothing new is loaded.
+    const EA_PANES = ['units', 'research', 'facilities', 'bank', 'trapcalc', 'cards', 'admin', 'adminusers', 'players', 'fleets'];
+    function eaApply(name, open) {
+        const root = document.querySelector(`#${PANEL_ID} .sa-pane[data-pane="${name}"]`);
+        if (!root) return;
+        const rows = (sel, attr, map) => root.querySelectorAll(sel).forEach(tr => { map[tr.dataset[attr]] = open; });
+        try {
+            if (name === 'units') { planetIds().forEach(id => GM_setValue('sa-slot-collapsed-' + id, !open)); renderSlots(); }
+            else if (name === 'research') { planetIds().forEach(id => GM_setValue('sa-rslot-collapsed-' + id, !open)); renderResearchSlots(); }
+            else if (name === 'facilities') { planetIds().forEach(id => GM_setValue('sa-fslot-collapsed-' + id, !open)); renderFacilitiesSlots(); }
+            else if (name === 'bank') { rows('tr[data-inv]', 'inv', invOpen); renderBank(); }
+            else if (name === 'trapcalc') { rows('tr[data-tc]', 'tc', tcOpen); renderTrapCalc(); }
+            else if (name === 'adminusers') { rows('tr[data-ugroup]', 'ugroup', adminUserOpen); renderAdminUsers(); }
+            else if (name === 'players') { rows('tr[data-agroup]', 'agroup', allyOpen); renderPlayers(); }
+        } catch (e) {}
+        root.querySelectorAll('details').forEach(d => { d.open = open; });
+    }
+    EA_PANES.forEach(name => {
+        const pane = document.querySelector(`#${PANEL_ID} .sa-pane[data-pane="${name}"]`);
+        if (!pane || pane.querySelector(':scope > .sa-ea-bar')) return;
+        const bar = document.createElement('div');
+        bar.className = 'sa-ea-bar';
+        bar.style.cssText = 'display:flex; gap:6px; justify-content:flex-end; margin-bottom:6px';
+        bar.innerHTML = `<button class="sa-btn" data-ea="1" style="margin:0" title="Open everything in this tab">⊞ Expand all</button>
+            <button class="sa-btn" data-ea="0" style="margin:0" title="Close everything in this tab">⊟ Collapse all</button>`;
+        bar.querySelectorAll('button').forEach(b => b.addEventListener('click', () => eaApply(name, b.dataset.ea === '1')));
+        pane.insertBefore(bar, pane.firstChild);
+    });
     { const pc = document.getElementById('sa-uv-passive'); if (pc) { pc.checked = uvPassiveOn();
         pc.addEventListener('change', () => { GM_setValue('sa-uv-passive', pc.checked); renderUnitValue(); try { refreshCalcs(); } catch (e) {} }); } }
     renderUnitValue();
