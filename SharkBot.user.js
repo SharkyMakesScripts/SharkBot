@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SharkBot
 // @namespace    https://spacealpha.net/
-// @version      3.21.0
+// @version      3.21.1
 // @description  SharkBot for Space Alpha: saves your planets' units, facilities, inventory, research, bank and market prices, and calculates credit generation and Tick Generator upgrade costs.
 // @author       SharkBot
 // @match        https://spacealpha.net/*
@@ -41,7 +41,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     const PANEL_ID = 'sa-helper-panel';
     const SLOT_IDS = 'ABCDEFGHIJ'.split('');   // up to 10 planets
     // Version comes from the @version header so it's never out of sync
-    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.21.0';
+    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.21.1';
     // Two copies installed (usually an update pasted in as a new script): since v3.17.1 every copy writes its version on the
     // page before doing anything, so the second copy always sees the first, even if the first has no panel yet or crashed.
     // The second copy stops and shows a large banner at the top of the page naming the older copy to delete.
@@ -145,8 +145,11 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             background: var(--bg); color: var(--text);
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
             font-size: 12px; border: 1px solid var(--border); border-radius: 8px;
-            box-shadow: 0 8px 24px rgba(0,0,0,0.5); z-index: 999999; user-select: none;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.5); z-index: 999999;
         }
+        /* All text can be selected and copied (since v3.21.1), even if the game turns selection off; only the header bar (it drags the panel) can't */
+        #${PANEL_ID}, #${PANEL_ID} *, #sa-pull-pop, #sa-pull-pop * { -webkit-user-select: text !important; user-select: text !important; }
+        #${PANEL_ID} .sa-header, #${PANEL_ID} .sa-header * { -webkit-user-select: none !important; user-select: none !important; }
         #${PANEL_ID} .sa-header {
             padding: 8px 12px;
             background: linear-gradient(90deg, var(--head1), var(--head2));
@@ -993,7 +996,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             </div>
             <div class="sa-pane" data-pane="stbalance">
                 <div style="display:flex; gap:4px; margin-bottom:6px" id="sa-bal-switch">
-                    <button class="sa-btn" data-bal="sheet" style="flex:1; margin:0">Net Worth</button>
+                    <button class="sa-btn" data-bal="sheet" style="flex:1; margin:0">Assets</button>
                     <button class="sa-btn" data-bal="debt" style="flex:1; margin:0">Debt</button>
                 </div>
                 <div data-balview="sheet">
@@ -1276,6 +1279,8 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         try { placeTutorial(); } catch (e) {}
         try { renderUiSize(); } catch (e) {}
     }
+    // The game's own handlers can't block selecting or copying in the panel (since v3.21.1)
+    ['selectstart', 'copy', 'contextmenu'].forEach(t => panel.addEventListener(t, (e) => { if (!e.target.closest || !e.target.closest('.sa-header')) e.stopPropagation(); }));
     let resizing = null;
     grip.addEventListener('mousedown', (e) => {
         e.preventDefault(); e.stopPropagation();
@@ -5972,8 +5977,22 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             return t;
         } catch (e) { return ''; }
     }
-    function regLoad() { return GM_getValue('sa-reg', null) || { status: 'none' }; }
-    function regSave(o) { GM_setValue('sa-reg', Object.assign({}, o)); }
+    // Each tab keeps its own registration status (since v3.21.1): read once when the page loads, then changed only by this tab's
+    // own server checks and actions. Storage is shared by every spacealpha.net tab, so a status another tab saves (an older
+    // SharkBot told "update required", or a tab on another game account told "wrong account") never locks this tab: it only
+    // makes this tab ask the server itself, at most once a minute.
+    var myReg, foreignCheckAt = 0;
+    function regLoad() { if (!myReg) myReg = GM_getValue('sa-reg', null) || { status: 'none' }; return myReg; }
+    function regSave(o) { myReg = Object.assign({}, o); GM_setValue('sa-reg', Object.assign({}, o)); }
+    function foreignRegCheck() {
+        if (sbView) return;
+        const stored = GM_getValue('sa-reg', null) || { status: 'none' };
+        const mine = regLoad();
+        if (stored.status === mine.status && String(stored.username || '') === String(mine.username || '')) return;
+        if (Date.now() - foreignCheckAt < 60e3) return;
+        foreignCheckAt = Date.now();
+        try { checkReg(true); } catch (e) {}
+    }
     // Whose numbers the panel shows: the player being viewed (Admin → Viewer), else you
     function viewMe() { return sbView ? sbView.player : (pageUsername() || GM_getValue('sa-username', '')); }
     function regIdentity() { return { install: installCode(), username: pageUsername() || GM_getValue('sa-username', ''), version: VERSION }; }
@@ -6294,7 +6313,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     // Coming back to the game tab counts like a page load
     document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && !sbView) checkUpdate(false, 30 * 60e3); });
     // Re-check the lock as the game's top bar loads or changes account, and the status on its schedule
-    setInterval(() => { const was = panel.classList.contains('sa-locked'); if (was !== isLocked()) applyLock(); }, 3000);
+    setInterval(() => { foreignRegCheck(); const was = panel.classList.contains('sa-locked'); if (was !== isLocked()) applyLock(); }, 3000);
     // Your Profile → Investments window is a pop-up (no page change), so look for it every few seconds
     setInterval(() => { try { checkProfileInvest(false); } catch (e) {} }, 4000);
     setInterval(() => { if (!sbView) checkUpdate(false, 15 * 60e3); }, 15 * 60e3);
