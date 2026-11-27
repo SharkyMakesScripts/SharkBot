@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SharkBot
 // @namespace    https://spacealpha.net/
-// @version      3.25.3
+// @version      3.25.4
 // @description  SharkBot for Space Alpha: saves your planets' units, facilities, inventory, research, bank and market prices, and calculates credit generation and Tick Generator upgrade costs.
 // @author       SharkBot
 // @match        https://spacealpha.net/*
@@ -44,7 +44,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     const PANEL_ID = 'sa-helper-panel';
     const SLOT_IDS = 'ABCDEFGHIJ'.split('');   // up to 10 planets
     // Version comes from the @version header so it's never out of sync
-    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.25.3';
+    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.25.4';
     // Two copies installed (usually an update pasted in as a new script): since v3.17.1 every copy writes its version on the
     // page before doing anything, so the second copy always sees the first, even if the first has no panel yet or crashed.
     // The second copy stops and shows a large banner at the top of the page naming the older copy to delete.
@@ -5901,6 +5901,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             GM_setValue('sa-admin-hs-tags', r.tags || {});
             const rs = r.resets || {}; Object.keys(rs).forEach(n => { if (del[n.trim().toLowerCase()]) delete rs[n]; }); GM_setValue('sa-admin-resets', rs);
             adminSyncAt = new Date().toISOString(); adminSyncErr = '';
+            try { pvpCleanup(); } catch (e) {}
             if (document.querySelector('.sa-pane[data-pane="admin"].active') && !document.querySelector('.sa-confirm') && !(document.activeElement && document.activeElement.tagName === 'INPUT' && document.getElementById('sa-admin-view')?.contains(document.activeElement)) && !clearArmed) { try { renderAdmin(); } catch (e) {} }
             // v3.9.0 logged the fleet list's title row as a player "Sender": remove it everywhere (never if a real "Sender" was seen online)
             const fake = Object.values(pl.players || {}).find(p => /^sender$/i.test(String(p.name)) && String(p.id).startsWith('hs:'));
@@ -5912,6 +5913,30 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         try { renderPlayers(); renderAdmin(); renderFleets(); } catch (e) {}
     }
     // After this browser collects something, send it soon (when logged in as admin)
+    // Before v3.25.4 the highscore's PvP badge was read into names ("PVP Sharky"). Once per admin browser: merge each such entry into
+    // the real player (or rename it if there's none), mark them PvP, and clear the bad names for every admin (server clearplayers).
+    var pvpCleaning = false;
+    async function pvpCleanup() {
+        if (pvpCleaning || !adminCreds || GM_getValue('sa-admin-pvpfix-v3254', false)) return;
+        const d = playersLoad(), low = (x) => String(x || '').trim().toLowerCase(), bad = [];
+        const byName = {}; Object.values(d.players || {}).forEach(p => { if (!/^pvp\s+/i.test(p.name || '')) byName[low(p.name)] = p; });
+        Object.keys(d.players || {}).forEach(id => {
+            const p = d.players[id]; const m = String(p.name || '').match(/^pvp\s+(.+)$/i); if (!m) return;
+            const real = m[1].trim(); bad.push(low(p.name));
+            const t = byName[low(real)];
+            if (t) { if (p.hsSeen && (!t.hsSeen || p.hsSeen > t.hsSeen)) t.hsSeen = p.hsSeen; if (!t.first || (p.first && p.first < t.first)) t.first = p.first; t.pvp = true; if (!t.alliance && p.alliance) t.alliance = p.alliance; }
+            else { const nid = 'hs:' + low(real); d.players[nid] = Object.assign({}, p, { id: nid, name: real, pvp: true }); byName[low(real)] = d.players[nid]; }
+            delete d.players[id];
+        });
+        if (!bad.length) { GM_setValue('sa-admin-pvpfix-v3254', true); return; }
+        pvpCleaning = true;
+        try {
+            GM_setValue('sa-players', d);
+            const r = await gmPost(shareUrl(), { action: 'clearplayers', user: adminCreds.user, pass: adminCreds.pass, names: bad });
+            if (r && r.ok) { GM_setValue('sa-admin-pvpfix-v3254', true); setTimeout(adminSync, 1500); }
+        } catch (e) {} finally { pvpCleaning = false; }
+        try { renderPlayers(); } catch (e) {}
+    }
     function adminSyncSoon() { if (!adminCreds) return; clearTimeout(adminSyncTimer); adminSyncTimer = setTimeout(adminSync, 20000); }
     setInterval(() => { if (adminCreds) adminSync(); }, 5 * 60e3);
     // Players' shared data reloads every 5 minutes while logged in (since v3.14.2), and right after your own copy shares
@@ -6674,7 +6699,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             ${shown.length ? `<div style="overflow-x:auto"><table class="sa-unit-table" data-sort-id="admin-players"><thead><tr><th title="Online">●</th><th>Name</th><th>Last seen</th><th>First seen</th><th style="text-align:right" title="From their shared data (blank if they don't share)">Assassins</th><th style="text-align:right" title="Credits invested, if their investments are known">Invested</th><th style="text-align:right">NERDs</th><th style="text-align:right" title="✓ shares SharkBot data · temp = temp profile">SharkBot</th><th style="text-align:right">Version</th></tr></thead><tbody>
                 ${shown.map(p => `<tr data-pname="${escapeHtml(p.name)}" data-pwhere="players" title="Click to ${isOpen('players', p.name) ? 'hide' : 'show'} their shared data"
                     style="cursor:pointer${isOpen('players', p.name) ? '; background:var(--hover)' : ''}"><td data-sort="${onlineSet.has(p.id) ? 1 : 0}" style="color:${onlineSet.has(p.id) ? 'var(--pos)' : 'var(--dim)'}" title="${onlineSet.has(p.id) ? 'Online now' : 'Offline'}">●</td>
-                    <td title="User ID ${escapeHtml(p.id)}" data-sort="${escapeHtml((p.name || '').toLowerCase())}" style="white-space:nowrap">${escapeHtml(p.name)}${coin(p.name)}</td>
+                    <td title="User ID ${escapeHtml(p.id)}" data-sort="${escapeHtml((p.name || '').toLowerCase())}" style="white-space:nowrap">${escapeHtml(p.name)}${p.pvp ? ' <span title="PvP mode (from the highscore)" style="font-size:9px; padding:0 4px; border:1px solid var(--warn, #e0b050); border-radius:3px; color:var(--warn, #e0b050)">PvP</span>' : ''}${coin(p.name)}</td>
                     <td data-sort="${onlineSet.has(p.id) ? Date.now() : ts(p.last)}">${onlineSet.has(p.id) ? 'online' : p.last ? agoText(p.last) : '<span style="color:var(--dim)">not seen</span>'}</td>
                     <td data-sort="${ts(p.first)}">${dt(p.first)}</td>
                     <td class="sa-num" data-sort="${assOf(p) != null ? assOf(p) : ''}">${assOf(p) != null ? escapeHtml(fmt(assOf(p))) : ''}</td>
@@ -7221,10 +7246,12 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         const rows = [];
         tables.forEach(t => Array.from(t.querySelectorAll('tr')).forEach(tr => {
             const c = tr.cells; if (!c || c.length < 3 || tr.querySelector('th')) return;
-            const name = (c[1].innerText || c[1].textContent || '').replace(/\s+/g, ' ').trim();
+            const raw = (c[1].innerText || c[1].textContent || '').replace(/\s+/g, ' ').trim();
+            // The game's PvP mode badge sits in the name cell: "PVP Sharky" is Sharky in PvP mode (since v3.25.4)
+            const pvp = /^pvp(\s|$)/i.test(raw), name = raw.replace(/^pvp\s*/i, '').trim();
             const tagEl = c[2].querySelector('alliance-tag div') || c[2].querySelector('alliance-tag') || c[2];
             const tag = (tagEl.innerText || tagEl.textContent || '').replace(/\s+/g, ' ').trim();
-            if (name) rows.push({ name, tag });
+            if (name) rows.push({ name, tag, pvp });
         }));
         return rows;
     }
@@ -7253,7 +7280,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             if (!p) { const id = 'hs:' + low(r.name); p = d.players[id] = { id, name: r.name, first: now, alliance: a }; byName[low(r.name)] = p; added++; }
             else if (a && p.alliance !== a && !(a.startsWith('tag:') && p.alliance && !String(p.alliance).startsWith('tag:'))) { p.alliance = a; updated++; }
             else if (!a && p.alliance) { p.alliance = ''; updated++; }
-            p.hsSeen = now;
+            p.hsSeen = now; p.pvp = !!r.pvp;
         });
         // Tag-only players move to the real alliance once its tag is matched
         Object.values(d.players).forEach(p => { if (String(p.alliance).startsWith('tag:')) { const m = allyFor(String(p.alliance).slice(4)); if (!m.startsWith('tag:')) p.alliance = m; } });
