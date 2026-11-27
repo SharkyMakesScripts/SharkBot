@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SharkBot
 // @namespace    https://spacealpha.net/
-// @version      3.25.5
+// @version      3.25.6
 // @description  SharkBot for Space Alpha: saves your planets' units, facilities, inventory, research, bank and market prices, and calculates credit generation and Tick Generator upgrade costs.
 // @author       SharkBot
 // @match        https://spacealpha.net/*
@@ -44,7 +44,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     const PANEL_ID = 'sa-helper-panel';
     const SLOT_IDS = 'ABCDEFGHIJ'.split('');   // up to 10 planets
     // Version comes from the @version header so it's never out of sync
-    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.25.5';
+    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.25.6';
     // Two copies installed (usually an update pasted in as a new script): since v3.17.1 every copy writes its version on the
     // page before doing anything, so the second copy always sees the first, even if the first has no panel yet or crashed.
     // The second copy stops and shows a large banner at the top of the page naming the older copy to delete.
@@ -6729,10 +6729,18 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             // Click a player (under an alliance, or in Players) to show / hide their shared data
             root.querySelectorAll('tr[data-pname]').forEach(tr => tr.addEventListener('click', (e) => {
                 if (e.target.closest('.sa-ally-id, input, button')) return;
-                const where = tr.dataset.pwhere, name = tr.dataset.pname;
+                const where = tr.dataset.pwhere, name = tr.dataset.pname, before = tr.getBoundingClientRect().top;
                 plOpen = isOpen(where, name) ? null : { where, name };
                 renderPlayers();
-                if (plOpen) { const box = root.querySelector('.sa-pl-detail'); if (box) box.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }
+                // Since v3.25.6: the clicked row stays where it was on screen (details closing above it would move it), and only
+                // if it ended up out of view is it scrolled to near the top; the details box itself never pulls the view down
+                const row = Array.from(root.querySelectorAll('tr[data-pname]')).find(r => r.dataset.pwhere === where && r.dataset.pname === name);
+                const sc = row && scrollBox(row);
+                if (sc) {
+                    sc.scrollTop += row.getBoundingClientRect().top - before;
+                    const cr = sc.getBoundingClientRect(), rr = row.getBoundingClientRect();
+                    if (rr.top < cr.top || rr.bottom > cr.bottom) sc.scrollTop += rr.top - cr.top - 40;
+                }
             }));
             root.querySelector('#sa-pl-close')?.addEventListener('click', () => { plOpen = null; renderPlayers(); });
             const plBox = root.querySelector('.sa-pl-detail');
@@ -7323,6 +7331,14 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                 <td>${escapeHtml(x.name)} <span style="color:var(--muted); font-size:9px">${x.managed ? 'managed' : 'unmanaged'}</span></td>
                 <td class="sa-num">${x.managed && x.typed == null ? '<span style="color:var(--muted)">not entered</span>' : f(x.value || 0)}${g != null ? `<div style="font-size:9px; color:var(--dim)">game: ${f(g)}</div>` : ''}</td></tr>`; }).join('')}
                 <tr style="font-weight:600"><td>Total</td><td class="sa-num">${f(total)}</td></tr></tbody></table>`, false);
+    }
+    // The nearest box that scrolls up and down (the panel body), for keeping a clicked row in place (since v3.25.6)
+    function scrollBox(el) {
+        for (let n = el.parentElement; n; n = n.parentElement) {
+            const oy = getComputedStyle(n).overflowY;
+            if ((oy === 'auto' || oy === 'scroll') && n.scrollHeight > n.clientHeight) return n;
+        }
+        return null;
     }
     // Collapsible section in a player's details (since v3.25.5). Open / closed is remembered per section (sa-pl-folds);
     // force opens it without changing what's remembered (an armed delete button stays visible)
