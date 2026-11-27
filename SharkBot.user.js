@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SharkBot
 // @namespace    https://spacealpha.net/
-// @version      3.17.0
+// @version      3.18.0
 // @description  SharkBot for Space Alpha: saves your planets' units, facilities, inventory, research, bank and market prices, and calculates credit generation and Tick Generator upgrade costs.
 // @author       SharkBot
 // @match        https://spacealpha.net/*
@@ -41,22 +41,44 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     const PANEL_ID = 'sa-helper-panel';
     const SLOT_IDS = 'ABCDEFGHIJ'.split('');   // up to 10 planets
     // Version comes from the @version header so it's never out of sync
-    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.17.0';
-    // Another copy of SharkBot already put its panel on the page: warn and stop,
-    // so two installed copies are obvious instead of silently showing the old one.
+    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.18.0';
+    // Two copies installed (usually an update pasted in as a new script): since v3.17.1 every copy writes its version on the
+    // page before doing anything, so the second copy always sees the first, even if the first has no panel yet or crashed.
+    // The second copy stops and shows a large banner at the top of the page naming the older copy to delete.
+    const verNum = v => String(v).split('.').map(n => parseInt(n, 10) || 0);
+    const verCmp = (a, b) => { const x = verNum(a), y = verNum(b); for (let i = 0; i < 3; i++) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) - (y[i] || 0); return 0; };
+    const rootEl = document.documentElement;
+    const running = (rootEl.getAttribute('data-sharkbot') || '').split(',').filter(Boolean);
+    rootEl.setAttribute('data-sharkbot', running.concat(VERSION).join(','));
     const existing = document.getElementById(PANEL_ID);
-    if (existing) {
-        const other = ((existing.querySelector('.sa-ver') || {}).textContent || '').trim() || 'another version';
-        console.warn(`[SharkBot] v${VERSION} found SharkBot ${other} already running; two copies are installed.`);
-        if (!existing.querySelector('.sa-dup-warn')) {
-            const w = document.createElement('div');
-            w.className = 'sa-dup-warn';
-            w.style.cssText = 'background:#7a1f1f;color:#fff;font-size:11px;padding:6px 10px;line-height:1.4';
-            w.textContent = `Two copies of SharkBot are installed: ${other} (showing) and v${VERSION}. ` +
-                'In the Tampermonkey dashboard, delete or disable the one you don\'t want, then reload.';
-            const header = existing.querySelector('.sa-header');
-            if (header) header.insertAdjacentElement('afterend', w); else existing.prepend(w);
+    if (running.length || existing) {
+        const panelVer = ((((existing && existing.querySelector('.sa-ver')) || {}).textContent || '').match(/\d+\.\d+\.\d+/) || [])[0];
+        const others = running.length ? running : [panelVer || 'an older version'];
+        const all = others.concat(VERSION);
+        console.warn(`[SharkBot] v${VERSION} found SharkBot ${others.join(', ')} already running; ${all.length} copies are installed.`);
+        const sorted = all.slice().sort(verCmp), newest = sorted[sorted.length - 1];
+        const older = sorted.slice(0, -1);   // every copy except one newest
+        const olderTxt = older.every(v => v === newest) ? `the extra v${newest} ${older.length > 1 ? 'copies' : 'copy'}`
+            : Array.from(new Set(older)).map(v => /^\d/.test(v) ? 'v' + v : v).join(', ');
+        let bar = document.getElementById('sa-dup-banner');
+        if (!bar) {
+            bar = document.createElement('div');
+            bar.id = 'sa-dup-banner';
+            bar.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:2147483647;background:#b3261e;color:#fff;font:14px/1.5 sans-serif;padding:10px 44px 10px 14px;box-shadow:0 2px 8px rgba(0,0,0,.5)';
+            const close = document.createElement('button');
+            close.textContent = '×'; close.title = 'Hide until next reload';
+            close.style.cssText = 'position:absolute;top:6px;right:10px;background:none;border:0;color:#fff;font-size:22px;cursor:pointer;line-height:1';
+            close.addEventListener('click', () => bar.remove());
+            bar.appendChild(close);
+            bar.appendChild(document.createElement('span'));
+            (document.body || rootEl).appendChild(bar);
         }
+        const msg = bar.querySelector('span');
+        msg.innerHTML = '';
+        const b = document.createElement('b'); b.textContent = `${all.length} copies of SharkBot are installed (` + all.map(v => /^\d/.test(v) ? 'v' + v : v).join(', ') + '). ';
+        msg.appendChild(b);
+        msg.appendChild(document.createTextNode(`Keep v${newest} and delete ${olderTxt || 'the extra copy'}: open Tampermonkey → Dashboard, click the bin icon next to the older SharkBot, then reload this page. ` +
+            'Two copies running at once can stop SharkBot from showing and slow the game down.'));
         return;
     }
 
@@ -5176,6 +5198,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                     if (r.self && r.self.status === 'accepted')
                         regSave({ status: 'accepted', username: r.self.username || '', checkedAt: new Date().toISOString() });
                     GM_setValue('sa-admin-copy', true);
+                    GM_deleteValue('sa-admin-noconfirm');   // every admin login starts with the confirm box on (since v3.18.0)
                     setAdminIn(true);
                     applyLock(); renderAdmin(); renderShareSettings(); loadAdminUsers(); renderPlayers(); fetchOnline(true); fetchHolders(true);
                     adminSync();   // shared admin data (since v3.8.0)
@@ -5206,6 +5229,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             ${adminSelfNote ? `<div class="sa-slot-meta" style="margin-bottom:6px; color:var(--warn)">${escapeHtml(adminSelfNote)}</div>` : ''}
             ${adminDeletedNote ? `<div class="sa-recommend" style="margin-bottom:6px">${escapeHtml(adminDeletedNote)}</div>` : ''}
             ${pullLine()}
+            <label class="sa-slot-meta" style="display:flex; align-items:center; gap:6px; margin:0 0 6px" title="Show the confirm box before every Admin button. Turned back on whenever you log in or out of Admin."><input type="checkbox" id="sa-adm-askconfirm" ${GM_getValue('sa-admin-noconfirm', false) ? '' : 'checked'}> Ask before admin actions</label>
             <div style="overflow-x:auto"><table class="sa-unit-table sa-traps-table">
                 <thead><tr><th>Player</th><th>Updated</th><th>Version</th><th>Planets</th><th>Assassins</th><th>Turn value</th><th>Turns/min</th><th>Credits</th><th>Bank</th><th title="What the player sees in Bank → Your bank → Invested (managed: typed amounts; unmanaged: share value); the game's figure in grey">Invested</th><th title="Their daily earnings from investments (TRAPs calculator: managed (Earnings − Payment) × invested ÷ equity, unmanaged shares × price change)">Daily interest</th><th title="Credits the player has in NERDs (Bank → NERDs)">NERDs</th></tr></thead>
                 <tbody>${adminData.map(p => { const d = p.data || {}; return `<tr data-player="${escapeHtml(p.player)}" style="cursor:pointer${p.player === pick ? '; background:var(--hover)' : ''}">
@@ -5253,7 +5277,8 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             } catch (er) { adminPullMsg = 'Pull not sent: ' + er.message; }
             renderAdmin();
         });
-        view.querySelector('#sa-adm-logout').addEventListener('click', () => { adminCreds = null; adminData = null; adminUsers = null; allyOpen = {}; plOpen = null; setAdminIn(false); renderAdmin(); renderAdminUsers(); renderPlayers(); });
+        view.querySelector('#sa-adm-askconfirm')?.addEventListener('change', (ev) => { if (ev.target.checked) GM_deleteValue('sa-admin-noconfirm'); else GM_setValue('sa-admin-noconfirm', true); });
+        view.querySelector('#sa-adm-logout').addEventListener('click', () => { GM_deleteValue('sa-admin-noconfirm'); adminCreds = null; adminData = null; adminUsers = null; allyOpen = {}; plOpen = null; setAdminIn(false); renderAdmin(); renderAdminUsers(); renderPlayers(); });
         if (sel) wireAdminDetail(view, sel);
         wireManagedAdmin(view);
         view.querySelectorAll('tr[data-player]').forEach(tr => tr.addEventListener('click', () => { GM_setValue('sa-admin-pick', tr.dataset.player); resetPick = null; renderAdmin(); }));
@@ -5995,6 +6020,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         const pane = btn.closest('.sa-pane');
         if (!pane || !ADMIN_PANES.includes(pane.dataset.pane)) return;
         if (btn === sbConfirmOk) { sbConfirmOk = null; return; }
+        if (GM_getValue('sa-admin-noconfirm', false)) return;   // turned off with "Don't ask again" (since v3.18.0)
         e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
         panel.querySelector('.sa-confirm')?.remove();
         const box = document.createElement('div');
@@ -6004,11 +6030,12 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         box.innerHTML = `<div style="max-width:360px; margin:12px; padding:12px 14px; background:var(--bg, #111827); border:1px solid var(--border); border-radius:8px; font-size:12px">
             <div style="margin-bottom:6px"><b>These buttons are meant for Sharky, confirm you understand your action.</b></div>
             <div style="color:var(--muted); margin-bottom:10px">Button: ${escapeHtml(label || 'button')}</div>
+            <label style="display:flex; align-items:center; gap:6px; margin-bottom:10px"><input type="checkbox" class="sa-confirm-skip"> Don't ask again for admin actions</label>
             <div style="display:flex; gap:6px"><button class="sa-btn sa-confirm-ok" style="margin:0; flex:1">Confirm</button><button class="sa-btn sa-confirm-no" style="margin:0; flex:1">Cancel</button></div></div>`;
         panel.appendChild(box);
         box.querySelector('.sa-confirm-no').addEventListener('click', () => box.remove());
         box.addEventListener('click', (ev) => { if (ev.target === box) box.remove(); });
-        box.querySelector('.sa-confirm-ok').addEventListener('click', () => { box.remove(); if (btn.isConnected) { sbConfirmOk = btn; btn.click(); } });
+        box.querySelector('.sa-confirm-ok').addEventListener('click', () => { if (box.querySelector('.sa-confirm-skip').checked) { GM_setValue('sa-admin-noconfirm', true); const a = panel.querySelector('#sa-adm-askconfirm'); if (a) a.checked = false; } box.remove(); if (btn.isConnected) { sbConfirmOk = btn; btn.click(); } });
     }, true);
     if (sbView) { panel.classList.add('sa-viewing'); renderViewBar(); }
     else if (__SB_GM.list && __SB_GM.del) { try { __SB_GM.list().filter(k => k === 'sa-admin-viewing' || (/^sa-admin-viewing:/.test(k) && Date.now() - new Date((__SB_GM.get(k, {}) || {}).openedAt || 0) > 2 * 86400e3)).forEach(k => __SB_GM.del(k)); } catch (e) {} }
