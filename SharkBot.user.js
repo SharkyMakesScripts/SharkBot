@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SharkBot
 // @namespace    https://spacealpha.net/
-// @version      3.15.0
+// @version      3.15.1
 // @description  SharkBot for Space Alpha: saves your planets' units, facilities, inventory, research, bank and market prices, and calculates credit generation and Tick Generator upgrade costs.
 // @author       SharkBot
 // @match        https://spacealpha.net/*
@@ -41,7 +41,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     const PANEL_ID = 'sa-helper-panel';
     const SLOT_IDS = 'ABCDEFGHIJ'.split('');   // up to 10 planets
     // Version comes from the @version header so it's never out of sync
-    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.15.0';
+    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.15.1';
     // Another copy of SharkBot already put its panel on the page: warn and stop,
     // so two installed copies are obvious instead of silently showing the old one.
     const existing = document.getElementById(PANEL_ID);
@@ -5969,6 +5969,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     panel.addEventListener('click', (e) => {
         const btn = e.target && e.target.closest ? e.target.closest('button') : null;
         if (!btn || sbView || btn.closest('.sa-confirm')) return;
+        if (!adminCreds || btn.id === 'sa-adm-login') return;   // logging in doesn't ask; only buttons after login (since v3.15.1)
         const pane = btn.closest('.sa-pane');
         if (!pane || !ADMIN_PANES.includes(pane.dataset.pane)) return;
         if (btn === sbConfirmOk) { sbConfirmOk = null; return; }
