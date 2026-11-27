@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SharkBot
 // @namespace    https://spacealpha.net/
-// @version      3.21.2
+// @version      3.22.0
 // @description  SharkBot for Space Alpha: saves your planets' units, facilities, inventory, research, bank and market prices, and calculates credit generation and Tick Generator upgrade costs.
 // @author       SharkBot
 // @match        https://spacealpha.net/*
@@ -41,7 +41,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     const PANEL_ID = 'sa-helper-panel';
     const SLOT_IDS = 'ABCDEFGHIJ'.split('');   // up to 10 planets
     // Version comes from the @version header so it's never out of sync
-    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.21.2';
+    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.22.0';
     // Two copies installed (usually an update pasted in as a new script): since v3.17.1 every copy writes its version on the
     // page before doing anything, so the second copy always sees the first, even if the first has no panel yet or crashed.
     // The second copy stops and shows a large banner at the top of the page naming the older copy to delete.
@@ -150,6 +150,24 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         /* All text can be selected and copied (since v3.21.1), even if the game turns selection off; only the header bar (it drags the panel) can't */
         #${PANEL_ID}, #${PANEL_ID} *, #sa-pull-pop, #sa-pull-pop * { -webkit-user-select: text !important; user-select: text !important; }
         #${PANEL_ID} .sa-header, #${PANEL_ID} .sa-header * { -webkit-user-select: none !important; user-select: none !important; }
+        /* Sharky's request pop-up (since v3.21.3: readable buttons the game's styles can't change, and it can be dragged by its title) */
+        #sa-pull-pop { position: fixed !important; z-index: 2147483646 !important; width: 420px !important; max-width: calc(100vw - 32px) !important; box-sizing: border-box !important;
+            background: #111827 !important; color: #e5e7eb !important; border: 1px solid #3b82f6 !important; border-radius: 10px !important; padding: 0 !important; margin: 0 !important;
+            font: 12px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important; box-shadow: 0 6px 24px rgba(0,0,0,.6) !important; text-align: left !important; }
+        #sa-pull-pop * { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important; color: inherit; box-sizing: border-box !important; }
+        #sa-pull-pop .sa-pp-head { cursor: move !important; padding: 9px 14px 7px !important; margin: 0 !important; font-weight: 700 !important; font-size: 13px !important;
+            border-bottom: 1px solid #1f2a44 !important; background: #172036 !important; border-radius: 10px 10px 0 0 !important; -webkit-user-select: none !important; user-select: none !important; }
+        #sa-pull-pop .sa-pp-body { padding: 8px 14px 12px !important; margin: 0 !important; }
+        #sa-pull-pop ul { margin: 0 0 6px !important; padding: 0 0 0 18px !important; list-style: disc !important; }
+        #sa-pull-pop li { margin: 0 !important; padding: 0 !important; display: list-item !important; list-style: disc outside !important; }
+        #sa-pull-pop .sa-pp-note { color: #9ca3af !important; font-size: 11px !important; margin: 0 0 10px !important; }
+        #sa-pull-pop .sa-pp-btns { display: flex !important; gap: 8px !important; margin: 0 !important; }
+        #sa-pull-pop button { all: unset; flex: 1 1 0 !important; display: block !important; text-align: center !important; cursor: pointer !important; padding: 8px 10px !important;
+            border-radius: 6px !important; font: 600 12px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important; line-height: 1.2 !important; box-sizing: border-box !important; }
+        #sa-pull-pop .sa-pp-send { background: #2563eb !important; color: #ffffff !important; border: 1px solid #3b82f6 !important; }
+        #sa-pull-pop .sa-pp-send:hover { background: #1d4ed8 !important; }
+        #sa-pull-pop .sa-pp-no { background: #374151 !important; color: #e5e7eb !important; border: 1px solid #4b5563 !important; }
+        #sa-pull-pop .sa-pp-no:hover { background: #4b5563 !important; }
         #${PANEL_ID} .sa-header {
             padding: 8px 12px;
             background: linear-gradient(90deg, var(--head1), var(--head2));
@@ -5269,16 +5287,29 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         const sm = shareSummary();
         pop = document.createElement('div');
         pop.id = 'sa-pull-pop'; pop.dataset.at = pullAt;
-        pop.style.cssText = 'all:initial; position:fixed; top:16px; left:50%; transform:translateX(-50%); z-index:2147483646; max-width:420px; width:calc(100% - 32px); box-sizing:border-box;' +
-            'background:#111827; color:#e5e7eb; border:1px solid #3b82f6; border-radius:10px; padding:12px 14px; font:12px/1.45 -apple-system, "Segoe UI", sans-serif; box-shadow:0 6px 24px rgba(0,0,0,.6)';
-        const btn = 'all:initial; cursor:pointer; flex:1; text-align:center; padding:6px 10px; border-radius:6px; font:600 12px -apple-system, "Segoe UI", sans-serif;';
-        pop.innerHTML = `<div style="font-weight:700; font-size:13px; margin-bottom:6px">🦈 Sharky requested fresh SharkBot data</div>
-            <div style="margin-bottom:4px">If you click <b>Send my data</b>, this goes to Sharky (about ${Math.max(1, Math.round(sm.size / 1024))} KB):</div>
-            <ul style="margin:0 0 6px; padding-left:18px">${sm.lines.map(l => `<li>${escapeHtml(l)}</li>`).join('')}</ul>
-            <div style="color:#9ca3af; font-size:11px; margin-bottom:10px">Sharky and approved SharkBot admins can see it. Nothing is sent unless you click Send.</div>
-            <div style="display:flex; gap:8px"><button class="sa-pp-send" style="${btn} background:#2563eb; color:#fff">Send my data</button>
-                <button class="sa-pp-no" style="${btn} background:#374151; color:#e5e7eb">Not now</button></div>`;
+        pop.innerHTML = `<div class="sa-pp-head" title="Drag to move">🦈 Sharky requested fresh SharkBot data</div>
+            <div class="sa-pp-body"><div style="margin:0 0 4px">If you click <b>Send my data</b>, this goes to Sharky (about ${Math.max(1, Math.round(sm.size / 1024))} KB):</div>
+            <ul>${sm.lines.map(l => `<li>${escapeHtml(l)}</li>`).join('')}</ul>
+            <div class="sa-pp-note">Sharky and approved SharkBot admins can see it. Nothing is sent unless you click Send.</div>
+            <div class="sa-pp-btns"><button type="button" class="sa-pp-send">Send my data</button><button type="button" class="sa-pp-no">Not now</button></div></div>`;
         document.body.appendChild(pop);
+        // Where it was last dropped (kept on screen), else top centre
+        const place = (x, y) => {
+            const w = pop.offsetWidth || 420, h = pop.offsetHeight || 200;
+            pop.style.setProperty('left', Math.max(4, Math.min(x, window.innerWidth - w - 4)) + 'px', 'important');
+            pop.style.setProperty('top', Math.max(4, Math.min(y, window.innerHeight - Math.min(h, 60))) + 'px', 'important');
+        };
+        const saved = GM_getValue('sa-pull-pos', null);
+        if (saved && saved.left != null) place(saved.left, saved.top); else place((window.innerWidth - (pop.offsetWidth || 420)) / 2, 16);
+        const head = pop.querySelector('.sa-pp-head');
+        head.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            const r = pop.getBoundingClientRect(), dx = e.clientX - r.left, dy = e.clientY - r.top;
+            const move = (ev) => place(ev.clientX - dx, ev.clientY - dy);
+            const up = () => { document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up);
+                const q = pop.getBoundingClientRect(); GM_setValue('sa-pull-pos', { left: Math.round(q.left), top: Math.round(q.top) }); };
+            document.addEventListener('mousemove', move); document.addEventListener('mouseup', up);
+        });
         pop.querySelector('.sa-pp-send').addEventListener('click', async () => {
             pop.remove(); GM_setValue('sa-pull-pending', null);
             if (sharePref().share !== 'yes') await setSharePref({ share: 'yes' });   // sending is choosing to share
@@ -6062,7 +6093,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         if (lockWas === true && !locked) {   // just unlocked: bring the panel up to date
             try { renderAllViews(); } catch (e) {}
             try { renderPlayers(); fetchOnline(false); fetchAllianceCfg(true); } catch (e) {}
-            try { if (!GM_getValue('sa-tutorial-v2-done', false)) startTutorial(); } catch (e) {}   // first-time users get the tour now
+            try { if (!GM_getValue('sa-tutorial-v2-done', false) && !GM_getValue('sa-tutorial-v3-done', false)) startTutorial(); else renderTourOffer(); } catch (e) {}   // first-time users get the tour now
         }
         lockWas = locked;
     }
@@ -10159,7 +10190,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     // ---------- Settings: reset all saved data ----------
     // Keeps preferences (theme, collapsed state, open tab).
     const KEEP_KEYS = ['sa-theme', 'sa-collapsed', 'sa-active-tab', 'sa-tip-facilities-oldview', 'sa-tip-facilities-newview',
-                       'sa-last-sub-general', 'sa-last-sub-data', 'sa-last-sub-calculators', 'sa-tutorial-done', 'sa-tutorial-v2-done',
+                       'sa-last-sub-general', 'sa-last-sub-data', 'sa-last-sub-calculators', 'sa-tutorial-done', 'sa-tutorial-v2-done', 'sa-tutorial-v3-done', 'sa-tour-offer-v3',
                        'sa-autoscan', 'sa-theme-custom', 'sa-cg-assume', 'sa-bd', 'sa-share-on', 'sa-ui-scale', 'sa-size', 'sa-maxed',
                        // Registration: this copy stays the same registered device (since v2.24.4)
                        'sa-install', 'sa-reg', 'sa-reg-agree', 'sa-username', 'sa-share-pref', 'sa-share-pop-ver', 'sa-share-note-seen', 'sa-hold-note-seen', 'sa-hold-note-v320', 'sa-hold-note-v350', 'sa-share-last', 'sa-update',
@@ -10356,10 +10387,11 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     // Steps. tab: subtab to open; target: element to highlight (default: the subtab);
     // tryIt: clicking the target moves on; waitScan: an auto-scan moves on;
     // live: re-drawn after every scan. text can be a function for live content.
+    // The tour (rewritten for v3.22.0)
     const TUTORIAL = [
         { target: '.sa-header', title: 'Welcome to SharkBot',
-          text: `SharkBot saves your planets' data while you play and does the math for you.<br><br>
-                 This short tour shows how it works. Use <b>Next</b> and <b>Back</b>, or skip anytime.` },
+          text: `SharkBot saves your planets' data while you play and does the math for you: income, upgrades, investments and what your empire is worth.<br><br>
+                 This tour takes a couple of minutes. Use <b>Next</b> and <b>Back</b>, or skip anytime (you can restart it in General → Settings).` },
         { tab: 'debug', target: '#sa-status', title: "It's already working", live: true,
           text: () => `SharkBot <b>scans automatically</b>: every time a game page opens, it reads the page and saves what's on it for the planet you're on.<br><br>
                  Right now:<br><span style="font-family:monospace; font-size:11px">${
@@ -10370,43 +10402,44 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                  This step moves on by itself once SharkBot has saved the new page.<br><br>
                  <span style="font-family:monospace; font-size:11px">${escapeHtml(document.getElementById('sa-status').textContent)}</span>`,
           tip: 'Waiting for you to open a game page…' },
-        { target: '#sa-scan', title: 'Scan by hand', tryIt: true,
-          text: `<b>Manual Scan</b> rereads the current page. You only need it when something changes without the page itself changing,
-                 like switching <b>Facilities</b> views or opening the <b>Central bank</b> tab.`,
+        { target: '#sa-scan', title: 'Manual Scan', tryIt: true,
+          text: `<b>Manual Scan</b> rereads the current page. You only need it when something changes without the page address changing,
+                 like switching <b>Facilities</b> sections or a <b>Bank</b> tab (TRAPs, NERDs, Print, Central bank).`,
           tip: 'Try it: click Manual Scan.' },
-        { target: '#sa-toggle', title: 'Move and collapse',
-          text: `Drag the panel by its header to move it. <b>−</b> folds it down to this bar; <b>+</b> opens it again.` },
+        { target: '#sa-toggle', title: 'The panel',
+          text: `Drag the panel by its header to move it. <b>−</b> folds it down to this bar, <b>⤢</b> fills the screen, and the bottom-right corner resizes it.
+                 <b>UI size</b> in General → Settings makes everything bigger or smaller. All text can be selected and copied.` },
         { target: '.sa-maintabs', title: 'Four main tabs',
-          text: `<b>General</b>: status and settings.<br><b>Data</b>: everything SharkBot has saved.<br><b>Calculators</b>: tools that use that data.<br><b>Statements</b>: balance sheet, income, cash flow and equity for your whole empire.<br><br>
-                 Each one remembers the subtab you last opened.` },
+          text: `<b>General</b>: status, settings and sharing.<br><b>Data</b>: everything SharkBot has saved.<br><b>Calculators</b>: tools that use that data.<br>
+                 <b>Statements</b>: net worth, income, cash flow and equity for your whole empire.<br><br>Each one remembers the subtab you last opened.` },
         { tab: 'units', target: '.sa-tabs', title: 'Data',
-          text: `Top row, <b>Empire</b>: Research, Market, Bank and Cards are shared by all your planets.<br>
-                 Bottom row, <b>Planet</b>: Units, Facilities, Inventory and Nation are saved for each planet. Units and Facilities can <b>compare</b> two planets.<br><br>
-                 Each fills in on its own when you visit that game page. Three need a little help, shown next.` },
-        { tab: 'facilities', title: 'Facilities: use the new view',
-          text: `Open the Facilities page in the <b>new view</b>: every section is read at once.<br><br>
-                 If a section is collapsed, click <b>Expand</b> and then <b>Manual Scan</b>. Hover an area to save its free space.` },
-        { tab: 'bank', title: 'Bank: both tabs',
-          text: `On the Bank page, your own bank tab saves your <b>bank balance</b>. Then open the <b>Central bank</b> tab: that saves the <b>galaxy fee</b> Credit Gen needs. The two are kept separate.` },
-        { tab: 'cards', title: 'Cards: your collection',
-          text: `Open <b>Cards → All Hero cards</b>. SharkBot lists the best card for each effect and every card by type; open a row for details.<br><br>
-                 Only one card can be active at a time, and a card's days are how long it lasts once used.` },
-        { tab: 'creditgen', title: 'Calculators → Credit Gen',
-          text: `Your <b>passive</b> credits per tick and what you earn by <b>spending a turn</b>, from your workers, Income Facility, Economy research, productivity and galaxy fee. Work mode only affects passive income.<br><br>
-                 Inputs fill in from saved data. Anything you type yourself stays (marked ○).` },
-        { tab: 'turns', title: 'Calculators → Turn Gen',
-          text: `What a <b>Tick Generator</b> upgrade costs, by target level or target turns per minute, compared with what your planets and bank hold and converted to credits at market prices.` },
-        { tab: 'area', title: 'Calculators → Area Size',
-          text: `What it costs to grow an <b>Area</b> (Industrial, Commercial, Farms…), by target level or target area size, and how much bigger it gets.
-                 Starting level and the matching research fill in from your Facilities → Areas scan.` },
-        { tab: 'resgen', title: 'Calculators → Resource Gen',
-          text: `Coal, iron and gold made per turn and per day, and what they're worth in credits at market prices.<br><br>
-                 Fill the <b>Compare</b> column to see what an upgrade (research, productivity, mines, a card) would change.` },
-        { tab: 'optimizer', title: 'Calculators → Best Spend',
-          text: `Splits <b>all your capital</b> (credits, bank and resources you could sell) between Area upgrades on every planet and your Tick Generator, wherever it adds the most <b>credits per day</b>.<br><br>
-                 Every calculator also ends with what all your capital could buy there. The bar at the top of each calculator sets how much of your capital to use (slider in 5% steps, or 25/50/75/100%) and whether <b>Brains</b>, <b>Diamonds</b> and <b>SSB</b> count.` },
-        { tab: 'settings', title: 'General → Settings',
-          text: `Rename or remove <b>planets</b>, turn <b>auto-scan</b> off, pick a <b>color scheme</b>, replay this tour, or <b>reset all saved data</b>.` },
+          text: `Top row, <b>Empire</b>: Research, Market, Bank, Cards and Missions, shared by all your planets.<br>
+                 Bottom row, <b>Planet</b>: Units, Facilities, Inventory and Nation, saved for each planet (Units and Facilities can <b>compare</b> two planets).<br><br>
+                 Planets are listed in the game's order: open the game's planet list (<b>▾</b> under the planet picture) once on two or three different planets.` },
+        { tab: 'bank', title: 'Pages that need a click',
+          text: `Most pages save themselves. A few need you to open something:<br>
+                 • <b>Facilities</b>: use the new view; click <b>Expand</b> on collapsed sections and hover each Area once.<br>
+                 • <b>Bank</b>: open Deposit (your balance), TRAPs, NERDs, Print (Money Printer level) and Central bank (galaxy fee), with Manual Scan on each.<br>
+                 • <b>Cards → All Hero cards</b>, your <b>Profile → Investments</b>, and spy reports on <b>Reports</b> (Data → Missions).` },
+        { tab: 'creditgen', target: '.sa-tabs', title: 'Calculators',
+          text: `Ranked by complexity: <b>Tier I</b> (one formula: Turn Storage, Area Size, Training, Research, Energy, Factory, Money Printer…),
+                 <b>Tier II</b> (Credit Gen, Resource Gen, Unit Value), <b>Tier III</b> (Best Spend, Value Optimizer, TRAPs) and <b>⚔ Military</b> (Attack, Assassination).<br><br>
+                 Inputs fill in from saved data; anything you type stays. The bar at the top sets how much of your capital the plans may spend.` },
+        { tab: 'creditgen', target: '.sa-pane[data-pane="creditgen"] .sa-how', title: "How it's calculated",
+          text: `Under every result: the formula in plain words with your numbers, marked <b>✓ Given</b> (a complete formula from players) or <b>≈ Assumed</b> (SharkBot's own model).<br><br>
+                 <b>More detail</b> shows every input and where it came from; <b>Nerdy details</b> has the exact formulas.` },
+        { tab: 'stbalance', target: '#sa-bal-switch', title: 'Statements → Net Worth',
+          text: `<b>Assets</b>: everything you own minus everything you owe, in Q (Quintillion), with the V-D, I-D and I-V ratios. Type your own prices or amounts anywhere.
+                 Save snapshots, or paste rows from your own tracker to bring your history.<br><b>Debt</b>: what you owe, in credits or resources.` },
+        { tab: 'settings', target: '#sa-share-box', title: 'Your data, your choice',
+          text: `SharkBot <b>never sends your data by itself</b>. <b>Send my data</b> shows exactly what goes before anything is sent; <b>Download my data</b> saves it as a file;
+                 <b>Delete what I've shared</b> removes it from Sharky's server.<br><br>When Sharky requests fresh data, a pop-up asks; nothing goes unless you click Send.
+                 Everything in Data works either way.` },
+        { target: '#sa-update', title: 'Updates',
+          text: `<b>Check for update</b> looks for a new version (SharkBot also checks by itself). Click <b>Update</b> in the bar, confirm in Tampermonkey, and come back: the game reloads by itself.<br><br>
+                 Install SharkBot only from its link (Welcome page and README). If a red bar says two copies are installed, delete the older one in Tampermonkey.` },
+        { tab: 'settings', target: '#sa-planet-list', title: 'General → Settings',
+          text: `Rename, remove or reorder <b>planets</b> (▲ / ▼), change the <b>UI size</b> and <b>color scheme</b>, turn <b>auto-scan</b> off, manage sharing, replay this tour, or <b>reset all saved data</b>.` },
         { tab: 'debug', target: '.sa-header', title: 'Your checklist', live: true,
           text: () => `Visit these pages on each planet and SharkBot does the rest:${tutChecklist()}` },
     ];
@@ -10491,7 +10524,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         const wasActive = tutStep >= 0;
         tutStep = -1; tutConfirm = false;
         if (!silent && wasActive) {
-            GM_setValue('sa-tutorial-v2-done', true);
+            GM_setValue('sa-tutorial-v2-done', true); GM_setValue('sa-tutorial-v3-done', true); renderTourOffer();
             switchTab('debug');
             maybeShowTips();
         }
@@ -10514,8 +10547,24 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         }
     });
 
-    document.getElementById('sa-tut-restart').addEventListener('click', () => startTutorial());
-    if (!GM_getValue('sa-tutorial-v2-done', false) && !isLocked()) startTutorial();
+    document.getElementById('sa-tut-restart').addEventListener('click', () => { GM_setValue('sa-tour-offer-v3', true); renderTourOffer(); startTutorial(); });
+    // New tour (since v3.22.0): first-time players get it straight away; players who saw the old tour get a one-time offer
+    function renderTourOffer() {
+        let el = document.getElementById('sa-tour-offer');
+        const show = !sbView && !isLocked() && GM_getValue('sa-tutorial-v2-done', false) && !GM_getValue('sa-tutorial-v3-done', false) && !GM_getValue('sa-tour-offer-v3', false) && !tutorialActive();
+        if (!show) { if (el) el.remove(); return; }
+        if (el) return;
+        el = document.createElement('div'); el.id = 'sa-tour-offer';
+        el.style.cssText = 'display:flex; gap:6px; align-items:center; flex-wrap:wrap; padding:5px 10px; font-size:11px; border-bottom:1px solid var(--border); background:rgba(80,200,140,0.12)';
+        el.innerHTML = `<span style="flex:1">🦈 There's a new SharkBot tour covering everything added lately (Net Worth, sharing, calculators, updates).</span>
+            <button class="sa-btn" id="sa-tour-go" style="margin:0">Take the tour</button><button class="sa-btn" id="sa-tour-no" style="margin:0">No thanks</button>`;
+        const nb = document.getElementById('sa-notice-bar') || document.getElementById('sa-update-bar');
+        if (nb) nb.after(el); else panel.prepend(el);
+        el.querySelector('#sa-tour-go').addEventListener('click', () => { GM_setValue('sa-tour-offer-v3', true); el.remove(); startTutorial(); });
+        el.querySelector('#sa-tour-no').addEventListener('click', () => { GM_setValue('sa-tour-offer-v3', true); el.remove(); });
+    }
+    if (!GM_getValue('sa-tutorial-v2-done', false) && !GM_getValue('sa-tutorial-v3-done', false) && !isLocked()) startTutorial();
+    else renderTourOffer();
 
     maybeShowTips();
 
