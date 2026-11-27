@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SharkBot
 // @namespace    https://spacealpha.net/
-// @version      3.14.0
+// @version      3.14.3
 // @description  SharkBot for Space Alpha: saves your planets' units, facilities, inventory, research, bank and market prices, and calculates credit generation and Tick Generator upgrade costs.
 // @author       SharkBot
 // @match        https://spacealpha.net/*
@@ -41,7 +41,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     const PANEL_ID = 'sa-helper-panel';
     const SLOT_IDS = 'ABCDEFGHIJ'.split('');   // up to 10 planets
     // Version comes from the @version header so it's never out of sync
-    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.14.0';
+    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.14.3';
     // Another copy of SharkBot already put its panel on the page: warn and stop,
     // so two installed copies are obvious instead of silently showing the old one.
     const existing = document.getElementById(PANEL_ID);
@@ -639,6 +639,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                     </div>
                     <div style="font-size:10px; color:var(--muted); margin-top:4px">
                         Defaults: one tick per minute (1,440/day); 2 prints a day, 100,000 turns in total; printing on 5 of 7 days.
+                        A print is at most 50,000 turns with an 8-hour cooldown, so more than 150,000 turns a day counts as 150,000.
                     </div>
                 </div>
                 <div class="sa-section">
@@ -3001,6 +3002,8 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         const a = Object.assign({}, CG_DEFAULTS, GM_getValue('sa-cg-assume', {}) || {});
         Object.keys(CG_DEFAULTS).forEach(k => { const n = parseNumber(a[k]); a[k] = n != null && n >= 0 ? n : CG_DEFAULTS[k]; });
         a.printDays = Math.min(7, a.printDays);
+        // Printing credits: at most 50,000 turns a print and one print per 8 hours, so 150,000 turns a day at most (since v3.14.1)
+        a.turnsPerDay = Math.min(150000, a.turnsPerDay);
         return a;
     }
 
@@ -4966,6 +4969,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             investedItems: (() => { try { return investRows().filter(r => r.mine > 0 || (r.managed && r.typedAmt != null)).map(r => [r.name, r.mine || 0, !!r.managed, r.managed ? r.typedAmt ?? null : null]); } catch (e) { return null; } })(),
             nerds: (nerdsLoad()?.items || []).filter(x => x.invested > 0).map(x => [x.name, x.invested]),   // since v3.11.0
             nerdsTotal: nerdsTotal(),
+            adminCopy: !!GM_getValue('sa-admin-copy', false),   // this copy has logged in as admin (since v3.14.3; Users shows "admin")
             investedTotal: (() => { try { return investRows().reduce((t, r) => t + (r.mine > 0 ? r.mine : 0), 0); } catch (e) { return null; } })(),
             investedGame: (() => { const f = (GM_getValue('sa-player-bank', null)?.fields || []).find(x => /^\s*invested\s*$/i.test(x.label)); return f ? f.value : null; })(),
             investedDaily: (() => { try { return trapCalcRows().reduce((t, x) => t + (x.you && x.you.pDay ? x.you.pDay : 0), 0); } catch (e) { return null; } })(),
@@ -5003,9 +5007,14 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             } catch (e) { res(null); }
         });
     }
-    async function checkUpdate(manual) {
+    // When SharkBot checks Sharky's server (status, pull requests, required version) and GitHub (since v3.14.1): every
+    // 15 minutes, on a page load or when you come back to the game tab if the last check is 30+ minutes old, and on Check for update
+    async function checkUpdate(manual, every) {
+        every = every || 30 * 60e3;
+        const last = updLoad().checkedAt;
+        if (!manual && last && Date.now() - new Date(last) < every) { try { await checkReg(false, every); } catch (e) {} return; }
         if (manual) { updMsg = 'Checking…'; renderUpdateBar(); }
-        try { await checkReg(!!manual, manual ? 0 : 2 * 60e3); } catch (e) {}
+        try { await checkReg(!!manual, manual ? 0 : every); } catch (e) {}
         const gv = await fetchGistVersion();
         const cur = updLoad();
         if (gv) updSave({ gistVersion: gv, latest: [gv, cur.latest].filter(Boolean).sort((a, b) => verLess(a, b) ? 1 : -1)[0], checkedAt: new Date().toISOString() });
@@ -5055,6 +5064,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             if (!r || !r.ok) throw new Error((r && r.error) || 'refused');
             GM_setValue('sa-share-last', new Date().toISOString());
             if (st) st.textContent = 'Last shared ' + new Date().toLocaleString();
+            if (adminCreds) setTimeout(() => adminRefresh(), 1500);   // your own row shows up straight away (since v3.14.2)
         } catch (e) { if (st) st.textContent = 'Sharing failed: ' + e.message; }
     }
     function renderShareSettings() {
@@ -5066,10 +5076,10 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         // One-time note about holder lists for copies registered before v3.1.0
         const holdNote = r.status === 'accepted' && !GM_getValue('sa-hold-note-v350', false) && !(r.agreedAt && r.agreedV350);
         box.innerHTML = `
-            ${note ? `<div class="sa-recommend" style="margin-bottom:6px">Since v2.23.3, sharing your data with Sharky is part of registering SharkBot,
+            ${note ? `<div class="sa-recommend" style="margin-bottom:6px; white-space:normal">Since v2.23.3, sharing your data with Sharky is part of registering SharkBot,
                 so it's now on for your copy. If you'd rather not share, use <b>Unregister</b> below.
                 <button class="sa-btn" id="sa-share-note-ok" style="margin:4px 0 0">OK</button></div>` : ''}
-            ${holdNote ? `<div class="sa-recommend" style="margin-bottom:6px">New since v3.1.0: your investments, and the amounts you type for managed investments,
+            ${holdNote ? `<div class="sa-recommend" style="margin-bottom:6px; white-space:normal">New since v3.1.0: your investments, and the amounts you type for managed investments,
                 are now shown to other SharkBot players (Data → Bank holder lists and Calculators → TRAPs), and SharkBot sends the investments shown on any player's Profile → Investments
                 window you open. Since v3.5.0, SharkBot also shares everything else it saves (calculator settings, debts and statement history), so Sharky can see SharkBot as you see it.
                 If you'd rather not share, use <b>Unregister</b> below.
@@ -5130,7 +5140,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                 try {
                     const r = await gmPost(u, Object.assign({ action: 'admin', user: adminCreds.user, pass: adminCreds.pass, version: VERSION }, regIdentity()));
                     if (!r || !r.ok) throw new Error((r && r.error) || 'refused');
-                    adminData = r.players || []; adminSelfNote = r.selfNote || ''; adminPullAt = r.pullAt || null; adminTemps = r.temps || [];
+                    adminData = r.players || []; adminDataAt = Date.now(); adminSelfNote = r.selfNote || ''; adminPullAt = r.pullAt || null; adminTemps = r.temps || [];
                     if (r.config) allianceSave(r.config);
                     // The Apps Script accepts the admin's own copy
                     if (r.self && r.self.status === 'accepted')
@@ -5255,7 +5265,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         try { trapCalcRows().forEach(x => {
             const n = Object.keys(tp.items).find(k => invMatch(k, x.r.name)); if (!n) return;
             const inv = Math.min(Number(tp.items[n]) || 0, x.E || Infinity), tpd = investTurnsPerDay();
-            if (x.r.managed) { if (x.net != null && x.E > 0) { t += x.net * inv / x.E * tpd; any = true; } }
+            if (x.r.managed) { if (x.net != null && x.E > 0) { t += inv * investRealDay(x.net, x.E); any = true; } }
             else if (x.dDay != null) { const px = x.price || x.a.price; if (px) { t += inv / px * x.dDay; any = true; } }
         }); } catch (e) {}
         return any ? t : null;
@@ -5477,10 +5487,13 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     // After this browser collects something, send it soon (when logged in as admin)
     function adminSyncSoon() { if (!adminCreds) return; clearTimeout(adminSyncTimer); adminSyncTimer = setTimeout(adminSync, 20000); }
     setInterval(() => { if (adminCreds) adminSync(); }, 5 * 60e3);
+    // Players' shared data reloads every 5 minutes while logged in (since v3.14.2), and right after your own copy shares
+    var adminDataAt = null;
+    setInterval(() => { if (adminCreds && !sbView) { adminRefresh(); loadAdminUsers(); } }, 5 * 60e3);   // Users too, for the pending badge (since v3.14.3)
     async function adminRefresh() {
         if (!adminCreds) return;
         try { const r = await gmPost(shareUrl(), { action: 'admin', user: adminCreds.user, pass: adminCreds.pass });
-              if (r && r.ok) { adminData = r.players || []; if (r.temps) adminTemps = r.temps; if (r.pullAt !== undefined) adminPullAt = r.pullAt; if (r.config) allianceSave(r.config); renderAdmin(); renderPlayers(); } } catch (e) {}
+              if (r && r.ok) { adminData = r.players || []; adminDataAt = Date.now(); if (r.temps) adminTemps = r.temps; if (r.pullAt !== undefined) adminPullAt = r.pullAt; if (r.config) allianceSave(r.config); renderAdmin(); renderPlayers(); renderAdminUsers(); } } catch (e) {}
     }
     // "Pull data from everyone" (since v3.3.1): how many accepted players have sent since; refreshes every minute for an hour
     function pullLine() {
@@ -5492,7 +5505,11 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         const old = waiting.filter(n => verLess(n.version, '3.3.1'));
         if (Date.now() - at < 3600e3) adminPullTimer = setTimeout(() => { if (document.querySelector('.sa-pane[data-pane="admin"].active')) adminRefresh(); }, 60e3);
         return `<div class="sa-recommend" style="margin-bottom:6px">Pull requested ${escapeHtml(at.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }))} (${escapeHtml(agoText(at))}) · <b>${sent.length}</b> of ${Math.max(acc.length, sent.length)} players sent since${
-            waiting.length ? `<br><span style="font-size:10px">Waiting: ${waiting.map(n => escapeHtml(n.name) + (verLess(n.version, '3.3.1') ? ` <span style="color:var(--muted)">(on an old version, ${escapeHtml(n.version || '?')})</span>` : '')).join(', ')}. Players send when their game is open (within 5 minutes or on their next page load)${old.length ? '; old versions can\'t respond until they update' : ''}.</span>` : ''}</div>`;
+            waiting.length ? `<br><span style="font-size:10px">Waiting: ${waiting.map(n => { const on = onlineNow(n.name);
+                const bits = [on === true ? '<span class="sa-diff-pos">online</span>' : on === false ? 'offline' : '',
+                    n.lastCheck ? 'SharkBot checked in ' + escapeHtml(agoText(new Date(n.lastCheck).toISOString())) : '',
+                    verLess(n.version, '3.3.1') ? `old version ${escapeHtml(n.version || '?')}, can't respond` : ''].filter(Boolean);
+                return escapeHtml(n.name) + (bits.length ? ` <span style="color:var(--muted)">(${bits.join(' · ')})</span>` : ''); }).join(', ')}. Players send when their game is open: within 15 minutes, when they reload or come back to the game tab after 30 minutes, or when they click Check for update${old.length ? '; old versions can\'t respond until they update' : ''}.</span>` : ''}</div>`;
     }
     function verLess(a, b) {
         const x = String(a || '0').split('.').map(Number), y = String(b).split('.').map(Number);
@@ -5500,9 +5517,17 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         return false;
     }
     // Accepted players (from Users, if loaded): name and newest version
+    // Is a player in the game's online list right now? (null = unknown: online list not loaded)
+    function onlineNow(name) {
+        try { const pl = playersLoad(); if (!pl.checkedAt) return null; const ids = new Set(pl.online || []), k = String(name).trim().toLowerCase();
+              return Object.values(pl.players || {}).some(p => ids.has(p.id) && String(p.name).trim().toLowerCase() === k); } catch (e) { return null; }
+    }
     function groupsAccepted() {
         if (!adminUsers) return [];
-        return userGroups(adminUsers).filter(g => g.status === 'accepted').map(g => ({ name: g.name, version: g.version }));
+        return userGroups(adminUsers).filter(g => g.status === 'accepted').map(g => ({ name: g.name, version: g.version,
+            // When their SharkBot last checked in with the server (newest of their devices), since v3.14.1
+            lastCheck: (adminUsers || []).filter(u => String(u.username).trim().toLowerCase() === String(g.name).trim().toLowerCase() && u.lastCheck)
+                .map(u => new Date(u.lastCheck).getTime()).sort((a, b) => b - a)[0] || null }));
     }
     // Buttons in a player's details (Dashboard or Players): Reset (click twice) and Copy raw data
     function wireAdminDetail(root, sel) {
@@ -5575,8 +5600,18 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     // to the Register box and Admin. The Apps Script also refuses sharing and settings to copies that aren't accepted.
     // sa-reg = { status: 'none'|'pending'|'accepted'|'denied'|'mismatch', username, verified, retryAt, requestedAt, checkedAt }
     const USERNAME_XPATH = '//*[@id="upperbarContent"]/table[6]/tr[2]/td/div';
+    // Registration backup (since v3.14.3): the install code is also kept in the game site's browser storage, so a reinstall
+    // in the same browser (e.g. pasting a new version into a new script) finds it and stays accepted without registering again
+    const INSTALL_BACKUP = 'sharkbot-install-backup';
+    var installRestored = false;
     function installCode() {
         let c = GM_getValue('sa-install', '');
+        if (!/^[0-9a-f]{32}$/.test(c) && !sbView) {
+            try { const b = JSON.parse(localStorage.getItem(INSTALL_BACKUP) || 'null');
+                  if (b && /^[0-9a-f]{32}$/.test(b.install)) { c = b.install; GM_setValue('sa-install', c); installRestored = true;
+                      if (b.username && !GM_getValue('sa-username', '')) GM_setValue('sa-username', b.username); } } catch (e) {}
+        }
+        if (/^[0-9a-f]{32}$/.test(c) && !sbView) { try { localStorage.setItem(INSTALL_BACKUP, JSON.stringify({ install: c, username: GM_getValue('sa-username', '') || (regLoad().username || ''), at: new Date().toISOString() })); } catch (e) {} }
         if (!/^[0-9a-f]{32}$/.test(c)) {
             const a = new Uint8Array(16); crypto.getRandomValues(a);
             c = Array.from(a, x => x.toString(16).padStart(2, '0')).join('');
@@ -5692,7 +5727,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     async function checkReg(force, every) {
         const url = shareUrl(), r = regLoad();
         if (!url || regBusy) return;
-        every = every || (r.status === 'pending' ? 15 * 60e3 : 5 * 60e3);
+        every = every || 15 * 60e3;
         if (!force && (r.status === 'none' || (r.checkedAt && Date.now() - new Date(r.checkedAt) < every))) return;
         regBusy = true; if (force) { regMsg = 'Checking…'; renderLock(); }
         try {
@@ -5756,7 +5791,11 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     function renderAdminUsers() {
         const view = document.getElementById('sa-adminusers-view'), tab = document.getElementById('sa-tab-adminusers');
         const list = adminUsers || [], groups = userGroups(list), pending = groups.filter(g => g.status === 'pending').length;
-        if (tab) tab.textContent = pending ? `Users (${pending})` : 'Users';
+        // Pending badge (since v3.14.3): "(1)!" on Users and on the Admin tab while players wait for approval
+        const badge = (n) => n ? ` <span class="sa-badge" style="color:#fff; background:var(--neg, #d55); border-radius:8px; padding:0 5px; font-weight:700">(${n})!</span>` : '';
+        if (tab) tab.innerHTML = 'Users' + badge(pending);
+        const mt = document.querySelector(`#${PANEL_ID} .sa-mtab[data-group="admin"]`);
+        if (mt) mt.innerHTML = 'Admin' + badge(adminCreds ? pending : 0);
         if (!view) return;
         if (!adminCreds) {
             view.innerHTML = `<div class="sa-empty">Log in on the <b>Dashboard</b> tab first.</div>
@@ -5769,7 +5808,9 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         const dt = (t) => t ? escapeHtml(new Date(t).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })) : '—';
         const col = { pending: 'var(--warn)', accepted: 'var(--pos)', denied: 'var(--neg)', unregistered: 'var(--muted)' };
         const tsv = (x) => x ? new Date(x).getTime() : '';
-        const online = (d, mine) => mine ? '<span style="color:var(--accent)" title="Accepted by your admin login">admin</span>'
+        // Copies that have logged in as admin say so in their shared data (since v3.14.3)
+        const adminNames = new Set((adminData || []).filter(sp => sp.data && sp.data.adminCopy).map(sp => String(sp.player).trim().toLowerCase()));
+        const online = (d, mine) => mine || adminNames.has(String(d.name || d.username || '').trim().toLowerCase()) ? `<span style="color:var(--accent)" title="${mine ? 'Accepted by your admin login' : 'This player logs in as admin'}">admin</span>`
             : d.verified ? '<span class="sa-diff-pos">✓</span>' : '<span style="color:var(--muted)" title="Not on the online list when they registered">not verified</span>';
         const devSummary = (g) => g.devs.length + (g.devs.length > 1 || g.status !== 'accepted'
             ? ' · ' + Object.entries(g.counts).map(([s, n]) => `<span style="color:${col[s] || 'inherit'}">${n} ${s}</span>`).join(', ') : '');
@@ -5850,18 +5891,20 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     applyLock();
     renderAdminUsers();
     // Just updated past the version the server asked for: check straight away so the panel unlocks
-    if (regLoad().status === 'update' && !(updLoad().min && verLess(VERSION, updLoad().min))) checkReg(true);
-    else checkReg(false, 2 * 60e3);   // on every page load, if the last check is over 2 minutes old
+    if (installRestored || (regLoad().status === 'update' && !(updLoad().min && verLess(VERSION, updLoad().min)))) checkReg(true);   // restored registration: ask the server straight away
+    else checkReg(false, 30 * 60e3);   // on a page load, if the last check is 30+ minutes old (since v3.14.1)
     panel.querySelector('#sa-update')?.addEventListener('click', () => checkUpdate(true));
     if (sbView) { panel.classList.add('sa-viewing'); renderViewBar(); }
     else if (__SB_GM.list && __SB_GM.del) { try { __SB_GM.list().filter(k => k === 'sa-admin-viewing' || (/^sa-admin-viewing:/.test(k) && Date.now() - new Date((__SB_GM.get(k, {}) || {}).openedAt || 0) > 2 * 86400e3)).forEach(k => __SB_GM.del(k)); } catch (e) {} }
     renderUpdateBar();
-    setTimeout(() => checkUpdate(false), 3000);   // on every page load (since v3.5.0)
+    setTimeout(() => checkUpdate(false, 30 * 60e3), 3000);   // on a page load, if the last check is 30+ minutes old (since v3.14.1)
+    // Coming back to the game tab counts like a page load
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && !sbView) checkUpdate(false, 30 * 60e3); });
     // Re-check the lock as the game's top bar loads or changes account, and the status on its schedule
     setInterval(() => { const was = panel.classList.contains('sa-locked'); if (was !== isLocked()) applyLock(); }, 3000);
     // Your Profile → Investments window is a pop-up (no page change), so look for it every few seconds
     setInterval(() => { try { checkProfileInvest(false); } catch (e) {} }, 4000);
-    setInterval(() => checkReg(false), 5 * 60e3);
+    setInterval(() => { if (!sbView) checkUpdate(false, 15 * 60e3); }, 15 * 60e3);   // every 15 minutes (since v3.14.1)
 
     // ---------- Players (/openapi/online_users) ----------
     // The API lists only who is online now: { user_id, user_name, alliance? }. Every player seen is kept:
@@ -6008,7 +6051,10 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                     iv.items.map(x => `<tr><td>${escapeHtml(x.name)}</td><td class="sa-num">${x.shares != null ? escapeHtml(fmt(x.shares)) : '—'}</td><td class="sa-num">${x.stake != null ? x.stake + '%' : '—'}</td><td class="sa-num">${x.value == null ? '<span style="color:var(--muted)" title="Managed: only typed amounts count">not entered</span>' : escapeHtml(fmt(x.value)) + (x.managed ? ' <span style="color:var(--muted)" title="Managed: typed amount">(typed)</span>' : '')}</td></tr>`).join('')}</tbody></table>` : ''; })()}
                 ${sp ? adminDetail(sp) : Object.keys(GM_getValue('sa-admin-resets', {}) || {}).some(n => n.toLowerCase() === plOpen.name.trim().toLowerCase())
                     ? `<div class="sa-empty"><b>${escapeHtml(plOpen.name)}</b>'s shared data was reset; waiting for their next share (within 15 minutes of their next scan).</div>`
-                    : `<div class="sa-empty"><b>${escapeHtml(plOpen.name)}</b> doesn't share data with SharkBot (not registered, or not accepted yet).</div>${deleteBtn(plOpen.name)}`}</div>`;
+                    : (() => {   // Since v3.14.2: only say they don't share when the Users list shows they aren't accepted
+                        const k = plOpen.name.trim().toLowerCase(), acc = adminUsers ? groupsAccepted().some(g => String(g.name).trim().toLowerCase() === k) : null;
+                        return acc === false ? `<div class="sa-empty"><b>${escapeHtml(plOpen.name)}</b> doesn't share data with SharkBot (not registered, or not accepted yet).</div>${deleteBtn(plOpen.name)}`
+                            : `<div class="sa-empty">No shared data loaded for <b>${escapeHtml(plOpen.name)}</b>${adminDataAt ? ` (shared data loaded ${escapeHtml(agoText(new Date(adminDataAt).toISOString()))})` : ''}${acc ? '; they\'re accepted, so they may not have sent yet' : ''}. If they've shared since, click ↻ Refresh.</div>${deleteBtn(plOpen.name)}`; })()}</div>`;
         };
         const unseen = Object.keys(shared).filter(k => !seenNames.has(k));
         const unseenAss = unseen.reduce((t, k) => t + shared[k], 0);
@@ -6051,7 +6097,8 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             <div class="sa-recommend" style="margin-bottom:6px">Online now: <b>${onlineSet.size}</b> · players seen: ${all.length}${adminSyncErr ? ` · <span style="color:var(--warn)">${escapeHtml(adminSyncErr)}</span>` : adminSyncAt ? ` · shared with all admins (synced ${escapeHtml(agoText(adminSyncAt))})` : ''}${d.hsLast ? ` · highscore read ${escapeHtml(agoText(d.hsLast.at))} (${d.hsLast.rows} rows, ${d.hsLast.added} new)` : ''}${
                 invKnown.length ? ` · credits invested (known): <b>${escapeHtml(fmt(invAll))}</b> across ${invKnown.length} player${invKnown.length === 1 ? '' : 's'}` : ''}${
                 my ? ` · your alliance (${myLabel}): ${(al[my] || { online: 0 }).online} online of ${(al[my] || { seen: 0 }).seen} seen` : ''}<br><span style="font-size:10px; color:var(--muted)">${playersFetching ? 'Checking…' : d.checkedAt ? 'Checked ' + agoText(d.checkedAt) : 'Not checked yet'}${
-                d.error ? ` · <span class="sa-diff-neg">last check failed: ${escapeHtml(d.error)}</span>` : ''}${fresh ? '' : d.checkedAt ? ' · online list is old' : ''}</span></div>
+                d.error ? ` · <span class="sa-diff-neg">last check failed: ${escapeHtml(d.error)}</span>` : ''}${fresh ? '' : d.checkedAt ? ' · online list is old' : ''}${
+                adminDataAt ? ` · shared data loaded ${escapeHtml(agoText(new Date(adminDataAt).toISOString()))}` : ''}</span></div>
             <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; font-size:11px; margin-bottom:6px">
                 <button class="sa-btn" id="sa-players-refresh" style="margin:0">${playersFetching ? 'Loading…' : '↻ Refresh'}</button>
                 <input id="sa-players-q" class="sa-amt" value="${escapeHtml(GM_getValue('sa-players-q', '') || '')}" placeholder="Search name" style="flex:1; min-width:90px" />
@@ -6086,7 +6133,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
 </tr>`).join('')}</tbody></table></div>${detailBox('players')}`
                 : `<div class="sa-empty">${all.length ? 'No players match.' : 'No players seen yet.'}</div>`}
             <div class="sa-slot-meta" style="margin-top:4px">Click a shortened alliance ID to copy it and fill the form above.${my ? '' : ' Mark your alliance with ☆ in the Alliances table.'}</div>`;
-        view.querySelector('#sa-players-refresh').addEventListener('click', () => fetchOnline(true));
+        view.querySelector('#sa-players-refresh').addEventListener('click', () => { fetchOnline(true); adminRefresh(); });   // shared data too (since v3.14.2)
         const qi = view.querySelector('#sa-players-q');
         qi.addEventListener('input', () => { GM_setValue('sa-players-q', qi.value); renderPlayers();
             const n = document.getElementById('sa-players-q'); if (n) { n.focus(); n.setSelectionRange(n.value.length, n.value.length); } });
@@ -7706,6 +7753,9 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                 price: x.last_values && x.last_values.interval_1 != null ? Number(x.last_values.interval_1) : null,
                 price8: x.last_values && x.last_values.interval_8 != null ? Number(x.last_values.interval_8) : null,
                 price1440: x.last_values && x.last_values.interval_1440 != null ? Number(x.last_values.interval_1440) : null,
+                // The list's price history is in 30-minute steps (since v3.14.1): 48 = 24 hours ago, 336 = 7 days, 1440 = 30 days
+                price48: x.last_values && x.last_values.interval_48 != null ? Number(x.last_values.interval_48) : null,
+                price336: x.last_values && x.last_values.interval_336 != null ? Number(x.last_values.interval_336) : null,
                 buyRatio: x.buy_ratio != null ? Number(x.buy_ratio) : null, sellRatio: x.sell_ratio != null ? Number(x.sell_ratio) : null,
                 unpaidTax: Number(x.unpaid_tax) || 0 }));
             GM_setValue('sa-invest-api', { savedAt: new Date().toISOString(), items });
@@ -7726,15 +7776,18 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         try { if (adminData) renderAdmin(); } catch (e) {}
         return investApiLoad();
     }
-    function investTurnsPerDay() { return parseNumber(GM_getValue('sa-invest-tpd', '1440')) || 1440; }
+    // Investments pay every 30 minutes (since v3.14.1): 48 steps a day, whatever turns you spend. turn_interest is per step.
+    function investTurnsPerDay() { return 48; }
+    // Real interest per day: (1 + constant interest × (earnings − tax payment) ÷ earnings)^48 − 1, i.e. (1 + net ÷ equity)^48 − 1
+    function investRealDay(net, E) { return E > 0 && net != null ? Math.pow(1 + net / E, 48) - 1 : null; }
     // API joined with your TRAPs scan. Several TRAPs share a name start ("serenity managed …"),
     // so: exact name first; a cut-off name ("…") matches by prefix, and the one whose price is
     // closest to the TRAPs price wins.
     // Share price change per share over a day (unmanaged investments, since v3.12.0): price now − the price a day ago,
     // scaled to your turns per day. null until the game's list has a price from a day ago.
     function unmanagedDayPerShare(a, tpd) {
-        if (!a || a.price == null || a.price1440 == null || !(a.price1440 > a.price * 1e-3)) return null;
-        return (a.price - a.price1440) * (tpd / 1439);
+        if (!a || a.price == null || a.price48 == null || !(a.price48 > a.price * 1e-3)) return null;
+        return (a.price - a.price48) * (48 / 47);   // interval_1 is now, interval_48 is 47 steps before it
     }
     function investRows() {
         const api = investApiLoad(), traps = trapsLoad();
@@ -7779,17 +7832,20 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             let mine = managed ? (typedAmt ?? 0) : shareVal, capped = false;
             if (total != null && total >= 0 && mine > total) { mine = total; capped = true; }
             // Interest is earned by managed investments only (since v3.12.0); unmanaged ones only move with the share price
-            const daily = a && managed ? total * rate * tpd : null;
+            const hiL = (GM_getValue('sa-tc-hilimit', {}) || {})[nm];
+            const net30 = a && managed ? total * rate - (a.unpaidTax || 0) * (hiL ? 0.001 : 0.0005) : null;   // per 30 minutes
+            const daily = a && managed ? total * investRealDay(net30, total) : null;
             const share = !managed && pv && pv.stake != null ? pv.stake / 100 : a && total > 0 ? mine / total : null;
             // Unmanaged (since v3.12.0): your gain is only the share price moving: your shares × (price now − price a day ago),
             // the same day-ago price as Calculators → TRAPs. Unknown until the game's list has a price from a day ago.
-            const d24 = t && t.d24 != null ? t.d24 / 100 : (a && a.price && a.price8 ? a.price / a.price8 - 1 : null);
+            const d24 = t && t.d24 != null ? t.d24 / 100 : (a && a.price && a.price48 ? a.price / a.price48 - 1 : null);
+            const apiPct = (old) => a && a.price && old ? (a.price / old - 1) * 100 : null;   // 24h / 7d / 30d from the game's list when not scanned
             const perShare = a ? unmanagedDayPerShare(a, tpd) : null;
             const myShares = pv && pv.shares != null ? parseNumber(String(pv.shares)) : (a && a.price > 0 && mine > 0 ? mine / a.price : null);
             const myDaily = managed ? (daily != null && share != null ? daily * share : null) : (perShare != null && myShares != null ? myShares * perShare : null);
             return { name: nm, managed, typedAmt, shareVal, shareSrc, capped, shares: pv ? pv.shares : null, stake: pv ? pv.stake : null,
                      mine, share, total, rate, daily, myDaily, dayChange: d24,
-                     d24: t ? t.d24 : null, d7: t ? t.d7 : null, d30: t ? t.d30 : null,
+                     d24: t && t.d24 != null ? t.d24 : apiPct(a && a.price48), d7: t && t.d7 != null ? t.d7 : apiPct(a && a.price336), d30: t && t.d30 != null ? t.d30 : apiPct(a && a.price1440),
                      price: t && t.price != null ? t.price : a ? a.price : null, desc: a ? a.desc : '', matched: !!(t && a), api: a || null, locked };
         };
         // Biggest holdings claim their match first
@@ -7904,7 +7960,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                 pay = a.unpaidTax * (hi[r.name] ? 0.001 : 0.0005);
                 const h = hist[a.id] || [];
                 if (h.length >= 2 && h[h.length - 1][0] > h[0][0]) {
-                    const turns = (h[h.length - 1][0] - h[0][0]) / 60e3 * tpm;
+                    const turns = (h[h.length - 1][0] - h[0][0]) / (30 * 60e3);   // 30-minute steps
                     tax = turns > 0 ? (h[h.length - 1][2] - h[0][2]) / turns + pay : null;
                 }
                 if (tax == null) { tax = earn * 0.75; taxEst = true; }
@@ -7950,7 +8006,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                 hs.push({ player: me || 'you', key: '__you', you: true, shares, inv: cap(inv), src: r.managed ? 'typed' : shares > 0 ? 'shares × price' : 'profile value', seen: profileInvestLoad()?.savedAt || null });
             }
             hs.forEach(x => {
-                if (r.managed) { x.pTurn = x.inv != null && E > 0 ? net * x.inv / E : null; x.pDay = x.pTurn != null ? x.pTurn * tpd : null; }
+                if (r.managed) { x.pTurn = x.inv != null && E > 0 ? net * x.inv / E : null; x.pDay = x.inv != null ? x.inv * investRealDay(net, E) : null; }
                 else { const sh = x.shares > 0 ? x.shares : x.inv && sharePx ? x.inv / sharePx : 0;
                        x.pTurn = dTurn != null ? sh * dTurn : null; x.pDay = dDay != null ? sh * dDay : null; }
             });
@@ -7980,14 +8036,14 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         const child = (x) => {
             const r = x.r, mg = r.managed;
             const brk = mg ? `<div style="font-size:10px; margin-bottom:4px">
-                    <b>Managed, per turn / per day:</b> Earnings ${f(x.earn)} / ${f(x.earn * tpd)} (equity × ${(x.a.turnInterest * 100).toFixed(4)}%) ·
-                    Payment ${f(x.pay)} / ${f(x.pay * tpd)} (debt ${f(x.a.unpaidTax)} × ${x.hi ? '0.1' : '0.05'}%) ·
-                    Taxes ${f(x.tax)} / ${f(x.tax * tpd)}${x.taxEst ? ' <span style="color:#e0a040" title="Needs two refreshes of the game\'s list; until then 75% of Earnings">(estimate)</span>' : ' (debt rise + Payment)'} ·
-                    <b>Net ${sg(x.net)} / ${sg(x.net * tpd)}</b> = Earnings − Payment (${pct(x.E > 0 ? x.net * tpd / x.E : null)} of equity a day)
+                    <b>Managed, per 30 minutes:</b> Earnings ${f(x.earn)} (equity × ${(x.a.turnInterest * 100).toFixed(4)}%) ·
+                    Payment ${f(x.pay)} (debt ${f(x.a.unpaidTax)} × ${x.hi ? '0.1' : '0.05'}%) ·
+                    Taxes ${f(x.tax)}${x.taxEst ? ' <span style="color:#e0a040" title="Needs two refreshes of the game\'s list; until then 75% of Earnings">(estimate)</span>' : ' (debt rise + Payment)'} ·
+                    <b>Net ${sg(x.net)}</b> = Earnings − Payment · real interest ${pct(investRealDay(x.net, x.E))} a day = (1 + Net ÷ equity)^48 − 1 → <b>${sg(x.E * investRealDay(x.net, x.E))}/day</b>
                     <label class="sa-check" style="margin:3px 0 0; display:inline-flex"><input type="checkbox" class="sa-tc-hi" data-name="${escapeHtml(r.name)}" ${x.hi ? 'checked' : ''} /><span>Above the volatility limit (Payment 0.1%)</span></label></div>`
-                : `<div style="font-size:10px; margin-bottom:4px"><b>Unmanaged:</b> share price change ${sg(x.dTurn)} per turn · ${sg(x.dDay)} per day; profit = shares × change</div>`;
+                : `<div style="font-size:10px; margin-bottom:4px"><b>Unmanaged:</b> share price change ${sg(x.dTurn)} per 30 minutes · ${sg(x.dDay)} per day (vs 24 hours ago); profit = shares × change</div>`;
             const tbl = x.holders.length ? `<table class="sa-unit-table" style="font-size:10px; width:auto; min-width:70%"><thead><tr><th>Holder</th>${mg ? '' : '<th style="text-align:right">Shares</th>'}
-                    <th style="text-align:right">Invested</th><th style="text-align:right">% of equity</th><th style="text-align:right">Profit /turn</th><th style="text-align:right">Profit /day</th><th>From</th>${mg ? '<th>Override</th>' : ''}</tr></thead><tbody>
+                    <th style="text-align:right">Invested</th><th style="text-align:right">% of equity</th><th style="text-align:right">Profit /30 min</th><th style="text-align:right">Profit /day</th><th>From</th>${mg ? '<th>Override</th>' : ''}</tr></thead><tbody>
                 ${x.holders.map(h => `<tr><td>${escapeHtml(h.player)}${h.you ? ' <span style="color:var(--muted)">(you)</span>' : ''}</td>
                     ${mg ? '' : `<td class="sa-num" data-sort="${h.shares || ''}">${h.shares != null ? f(h.shares) : '—'}</td>`}
                     <td class="sa-num" data-sort="${h.inv ?? ''}">${h.inv == null && mg ? '<span style="color:var(--muted)">not entered</span>' : f(h.inv)}</td><td class="sa-num" data-sort="${h.inv != null && x.E > 0 ? h.inv / x.E : ''}">${h.inv != null && x.E > 0 ? pct(h.inv / x.E) : '—'}</td>
@@ -8000,18 +8056,17 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             return `<tr data-child="1"><td colspan="15" style="background:var(--inset); padding:4px 8px 6px 22px">${brk}${tbl}${addOv}</td></tr>`;
         };
         view.innerHTML = `
-            <div class="sa-recommend" style="margin-bottom:6px">All known holders: <b>${f(T('invested'))}</b> invested · profit ${sg(T('pTurn'))}/turn · <b>${sg(T('pDay'))}/day</b><br>You: ${f(Y('inv'))} invested · ${sg(Y('pTurn'))}/turn · <b>${sg(Y('pDay'))}/day</b></div>
+            <div class="sa-recommend" style="margin-bottom:6px">All known holders: <b>${f(T('invested'))}</b> invested · profit ${sg(T('pTurn'))}/30 min · <b>${sg(T('pDay'))}/day</b><br>You: ${f(Y('inv'))} invested · ${sg(Y('pTurn'))}/30 min · <b>${sg(Y('pDay'))}/day</b></div>
             <div style="font-size:10px; color:var(--muted); margin-bottom:6px">Volatility: ${volTxt}. Share price = equity ÷ total shares × multi × (volatility + 1).</div>
             <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; font-size:11px; margin-bottom:6px">
-                <span>Turns/day</span><input id="sa-tc-tpd" value="${escapeHtml(String(GM_getValue('sa-invest-tpd', '1440')))}" style="width:60px" />
                 <button class="sa-btn" id="sa-tc-refresh" style="margin:0">${investFetching ? 'Loading…' : '↻ Refresh'}</button>
                 <label class="sa-check" style="margin:0"><input type="checkbox" id="sa-tc-mine" ${mineOnly ? 'checked' : ''} /><span>Only mine</span></label>
             </div>
             ${rows.length ? `<div style="overflow-x:auto"><table class="sa-unit-table" data-sort-id="trapcalc">
                 <thead><tr><th>Name</th><th>Type</th><th style="text-align:right">Equity</th><th style="text-align:right">Shares</th><th style="text-align:right">Multi</th>
                     <th style="text-align:right" title="Calculated; the game's price is in grey">Share price</th><th style="text-align:right" title="All known holders">Invested</th><th style="text-align:right">Holders</th>
-                    <th style="text-align:right" title="All known holders">Profit /turn</th><th style="text-align:right" title="All known holders">Profit /day</th><th style="text-align:right">You</th><th style="text-align:right">Your /day</th>
-                    <th style="text-align:right" title="Managed: (Earnings − Tax payment) ÷ Earnings">Efficiency</th><th style="text-align:right" title="Managed: efficiency × the game's interest per turn (turn_interest)">Real interest /turn</th><th style="text-align:right" title="Managed: equity × real interest × turns per day">Daily interest</th></tr></thead>
+                    <th style="text-align:right" title="All known holders">Profit /30 min</th><th style="text-align:right" title="All known holders">Profit /day</th><th style="text-align:right">You</th><th style="text-align:right">Your /day</th>
+                    <th style="text-align:right" title="Managed: (Earnings − Tax payment) ÷ Earnings">Efficiency</th><th style="text-align:right" title="Managed: (1 + the game's interest per 30 minutes × efficiency)^48 − 1">Real interest /day</th><th style="text-align:right" title="Managed: equity × real interest per day">Daily interest</th></tr></thead>
                 <tbody>${rows.map(x => `<tr data-tc=""${escapeHtml(x.r.name)}" style="cursor:pointer" title="Click to ${tcOpen[x.r.name] ? 'hide' : 'show'} holders and details">
                     <td class="sa-trap-name" title="${escapeHtml(x.r.name)}"><span style="color:var(--muted)">${tcOpen[x.r.name] ? '▾' : '▸'}</span> ${escapeHtml(x.r.name)}</td>
                     <td${x.r.locked ? ' title="Set to managed for everyone"' : ''}>${x.r.managed ? 'Managed' : 'Unmanaged'}${x.r.locked ? ' 🔒' : ''}</td>
@@ -8023,15 +8078,15 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                     <td class="sa-num" data-sort="${x.pTurn}">${x.holders.length ? sg(x.pTurn) : ''}</td><td class="sa-num" data-sort="${x.pDay}">${x.holders.length ? sg(x.pDay) : ''}</td>
                     <td class="sa-num" data-sort="${x.you?.inv ?? ''}">${x.you ? f(x.you.inv) : ''}</td><td class="sa-num" data-sort="${x.you?.pDay ?? ''}">${x.you ? sg(x.you.pDay) : ''}</td>
                     ${(() => { if (!x.r.managed || !(x.earn > 0)) return '<td class="sa-num">—</td><td class="sa-num">—</td><td class="sa-num">—</td>';
-                        const eff = (x.earn - x.pay) / x.earn, real = eff * x.a.turnInterest;   // Efficiency calculator (since v3.14.0)
-                        return `<td class="sa-num" data-sort="${eff}">${pct(eff)}</td><td class="sa-num" data-sort="${real}">${(real * 100).toFixed(4)}%</td><td class="sa-num" data-sort="${x.E * real * tpd}">${sg(x.E * real * tpd)}</td>`; })()}</tr>${tcOpen[x.r.name] ? child(x) : ''}`).join('')}
+                        const eff = (x.earn - x.pay) / x.earn, real = Math.pow(1 + x.a.turnInterest * eff, 48) - 1;   // Efficiency calculator (since v3.14.0; ^48 since v3.14.1)
+                        return `<td class="sa-num" data-sort="${eff}">${pct(eff)}</td><td class="sa-num" data-sort="${real}">${(real * 100).toFixed(2)}%</td><td class="sa-num" data-sort="${x.E * real}">${sg(x.E * real)}</td>`; })()}</tr>${tcOpen[x.r.name] ? child(x) : ''}`).join('')}
                 <tr data-pin="1" style="font-weight:600"><td>Total</td><td></td><td class="sa-num">${f(T('E'))}</td><td></td><td></td><td></td><td class="sa-num">${f(T('invested'))}</td><td></td>
                     <td class="sa-num">${sg(T('pTurn'))}</td><td class="sa-num">${sg(T('pDay'))}</td><td class="sa-num">${f(Y('inv'))}</td><td class="sa-num">${sg(Y('pDay'))}</td><td></td><td></td><td></td></tr>
                 </tbody></table></div>` : '<div class="sa-empty">No investments to show.</div>'}
             <div class="sa-slot-meta" style="margin-top:4px">Invested: unmanaged = shares × share price, managed = the amount typed in (yours in Data → Bank, other players' from their SharkBot, or your override); never more than the equity.
                 Profit: managed = (Earnings − Payment) × invested ÷ equity; unmanaged = shares × share price change. Game list ${escapeHtml(agoText(api.savedAt))}.</div>`;
         const re = () => renderTrapCalc();
-        view.querySelector('#sa-tc-tpd')?.addEventListener('change', (e) => { GM_setValue('sa-invest-tpd', e.target.value); e.target.blur(); re(); try { renderBank(); renderStatements(); } catch (er) {} });
+        // (the Turns/day box is gone since v3.14.1: investments always pay 48 times a day)
         view.querySelector('#sa-tc-refresh')?.addEventListener('click', () => { fetchInvestments(true); fetchHolders(true); });
         view.querySelector('#sa-tc-mine')?.addEventListener('change', (e) => { GM_setValue('sa-tc-mine', e.target.checked); re(); });
         view.querySelectorAll('tr[data-tc]').forEach(tr => tr.addEventListener('click', (e) => {
@@ -8065,13 +8120,12 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             <div class="sa-label">Investments (TRAPs)</div>
             <div class="sa-recommend" style="margin-bottom:6px">Yours: ${mine.length} of ${rows.length} · ${f(myTotal)} invested<br>Earning: <b>${myDaily < 0 ? '−' + f(-myDaily) : '+' + f(myDaily)}/day</b>${myTotal ? ` (${pc(myDaily / myTotal)} a day)` : ''} · interest on managed, price change on unmanaged</div>
             ${popout ? '' : `<div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; font-size:11px; margin-bottom:6px">
-                <span>Turns/day</span><input id="sa-invest-tpd" value="${escapeHtml(String(GM_getValue('sa-invest-tpd', '1440')))}" style="width:60px" />
                 <button class="sa-btn" id="sa-invest-refresh" style="margin:0">${investFetching ? 'Loading…' : '↻ API'}</button>
                 <label class="sa-check" style="margin:0"><input type="checkbox" id="sa-traps-mine" ${mineOnly ? 'checked' : ''} /><span>Only mine</span></label>
             </div>`}
             ${shown.length ? `<div style="overflow-x:auto"><table class="sa-unit-table sa-traps-table">
                 <thead><tr><th>#</th><th>Name</th><th>You</th><th>Your %</th><th>Total</th>
-                    <th>24h</th><th>7d</th><th>30d</th><th>Price</th><th>/turn</th><th>Daily (all)</th><th>Daily (you)</th></tr></thead>
+                    <th>24h</th><th>7d</th><th>30d</th><th>Price</th><th title="The game's interest per 30 minutes">/30 min</th><th title="Managed: equity × ((1 + interest per 30 min × efficiency)^48 − 1)">Daily (all)</th><th>Daily (you)</th></tr></thead>
                 <tbody>${shown.map((r, i) => `<tr ${popout ? '' : `data-inv="${escapeHtml(r.name)}" style="cursor:pointer" title="Click to ${invOpen[r.name] ? 'hide' : 'show'} everyone known to hold it"`}>
                     <td style="color:var(--muted)">${i + 1}</td>
                     <td class="sa-trap-name" title="${escapeHtml(r.name + (r.desc ? '\n' + r.desc : ''))}">${popout ? '' : `<span style="color:var(--muted)">${invOpen[r.name] ? '▾' : '▸'}</span> `}${escapeHtml(r.name)}</td>
@@ -8092,7 +8146,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             <div class="sa-slot-meta" style="margin:4px 0 12px">
                 API ${api ? new Date(api.savedAt).toLocaleString() : 'not read yet'} · TRAPs scan ${td ? new Date(td.savedAt).toLocaleString() : 'none yet (open /bank → TRAPs, Scan)'}
                 · Profile → Investments ${pinv ? new Date(pinv.savedAt).toLocaleString() : 'not read yet (open your Profile → Investments)'}<br>
-                Managed: Daily = total × interest per turn × ${tpd.toLocaleString()} turns; yours = that × your share. Unmanaged pay no interest (/turn and Daily (all) show —).<br>
+                Managed: interest is paid every 30 minutes (48 times a day); Daily = total × ((1 + interest × efficiency)^48 − 1), efficiency = (earnings − tax payment) ÷ earnings; yours = that × your share. Unmanaged pay no interest (/30 min and Daily (all) show —); their 24h / 7d / 30d come from your TRAPs scan, else from the game's list.<br>
                 Managed (a box to type in; investments named "managed" or set for everyone): "You" is the amount you type in (blank = 0); you earn interest × your share.
                 Unmanaged: "You" is your share value (Value in Profile → Investments; ⚠ = still the older TRAPs page figure) and your % is your Stake; you earn only the share price change: your shares × (share price now − a day ago), the same as Calculators → TRAPs ("—" until the game's list has a price from a day ago).
                 "You" is never more than the investment's total equity (⚠ capped at equity).
@@ -8103,8 +8157,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     }
     function bindInvest(view) {
         view.querySelector('#sa-invest-refresh')?.addEventListener('click', () => { fetchInvestments(true); fetchHolders(true); });
-        const inp = view.querySelector('#sa-invest-tpd');
-        inp?.addEventListener('change', () => { GM_setValue('sa-invest-tpd', inp.value); renderBank(); renderStatements(); });
+        // (no Turns/day box since v3.14.1)
         view.querySelector('#sa-traps-mine')?.addEventListener('change', (e) => { GM_setValue('sa-traps-mine', e.target.checked); renderBank(); });
         view.querySelector('.sa-popout-btn')?.addEventListener('click', () => popOut('SharkBot · Bank', bankHtml(true)));
         const setM = (name, patch) => { const m = GM_getValue('sa-invest-managed', {}) || {}; m[name] = Object.assign({}, m[name], patch); GM_setValue('sa-invest-managed', m); };
