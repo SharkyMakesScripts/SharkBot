@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SharkBot
 // @namespace    https://spacealpha.net/
-// @version      3.20.0
+// @version      3.21.0
 // @description  SharkBot for Space Alpha: saves your planets' units, facilities, inventory, research, bank and market prices, and calculates credit generation and Tick Generator upgrade costs.
 // @author       SharkBot
 // @match        https://spacealpha.net/*
@@ -41,7 +41,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     const PANEL_ID = 'sa-helper-panel';
     const SLOT_IDS = 'ABCDEFGHIJ'.split('');   // up to 10 planets
     // Version comes from the @version header so it's never out of sync
-    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.20.0';
+    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.21.0';
     // Two copies installed (usually an update pasted in as a new script): since v3.17.1 every copy writes its version on the
     // page before doing anything, so the second copy always sees the first, even if the first has no panel yet or crashed.
     // The second copy stops and shows a large banner at the top of the page naming the older copy to delete.
@@ -5202,14 +5202,11 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         const pull = GM_getValue('sa-pull-pending', null);
         const pullLive = pull && Date.now() - new Date(pull).getTime() < 15 * 60e3 && !shareOff() && !isLocked() && !sbView;
         const prof = profileOffer && !shareOff() && !isLocked() && !sbView ? profileOffer : null;
-        if (!pullLive && !prof) { bar.style.display = 'none'; bar.innerHTML = ''; return; }
+        renderPullPopup(pullLive ? pull : null);
+        if (!prof) { bar.style.display = 'none'; bar.innerHTML = ''; return; }
         bar.style.cssText = 'display:flex; flex-direction:column; gap:4px; padding:5px 10px; font-size:11px; border-bottom:1px solid var(--border); background:rgba(80,160,255,0.12)';
-        bar.innerHTML = (pullLive ? `<div style="display:flex; gap:6px; align-items:center"><span style="flex:1">Sharky asked for fresh SharkBot data.</span>
-                <button class="sa-btn" id="sa-nb-pull" style="margin:0">Send my data</button><button class="sa-btn" id="sa-nb-pull-x" style="margin:0">Not now</button></div>` : '') +
-            (prof ? `<div style="display:flex; gap:6px; align-items:center"><span style="flex:1">${escapeHtml(prof.owner)}'s Profile → Investments is open (${prof.items.length} investment${prof.items.length === 1 ? '' : 's'}).</span>
+        bar.innerHTML = (prof ? `<div style="display:flex; gap:6px; align-items:center"><span style="flex:1">${escapeHtml(prof.owner)}'s Profile → Investments is open (${prof.items.length} investment${prof.items.length === 1 ? '' : 's'}).</span>
                 <button class="sa-btn" id="sa-nb-prof" style="margin:0">Send to holder lists</button><button class="sa-btn" id="sa-nb-prof-x" style="margin:0">Not now</button></div>` : '');
-        bar.querySelector('#sa-nb-pull')?.addEventListener('click', () => askShareNow());
-        bar.querySelector('#sa-nb-pull-x')?.addEventListener('click', () => { GM_setValue('sa-pull-pending', null); renderNoticeBar(); });
         bar.querySelector('#sa-nb-prof')?.addEventListener('click', () => {
             const d = profileOffer; if (!d) return;
             confirmSend(`Send ${d.owner}'s investments to the holder lists?`, [`${d.items.length} investment${d.items.length === 1 ? '' : 's'} from ${d.owner}'s Profile → Investments window: name, shares, stake and value`,
@@ -5219,6 +5216,35 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                 });
         });
         bar.querySelector('#sa-nb-prof-x')?.addEventListener('click', () => { if (profileOffer) profileSkip[profileOffer.owner.trim().toLowerCase()] = Date.now(); profileOffer = null; renderNoticeBar(); });
+    }
+    // Sharky's request for fresh data (since v3.20.1): a pop-up over the game page itself (seen even with the panel collapsed),
+    // listing what would be sent, with Send my data / Not now. Only for players who haven't turned sharing off; once per request,
+    // gone when the request ends (15 minutes). Nothing is sent unless the player clicks Send.
+    function renderPullPopup(pullAt) {
+        let pop = document.getElementById('sa-pull-pop');
+        if (!pullAt) { if (pop) pop.remove(); return; }
+        if (pop && pop.dataset.at === pullAt) return;
+        if (pop) pop.remove();
+        const sm = shareSummary();
+        pop = document.createElement('div');
+        pop.id = 'sa-pull-pop'; pop.dataset.at = pullAt;
+        pop.style.cssText = 'all:initial; position:fixed; top:16px; left:50%; transform:translateX(-50%); z-index:2147483646; max-width:420px; width:calc(100% - 32px); box-sizing:border-box;' +
+            'background:#111827; color:#e5e7eb; border:1px solid #3b82f6; border-radius:10px; padding:12px 14px; font:12px/1.45 -apple-system, "Segoe UI", sans-serif; box-shadow:0 6px 24px rgba(0,0,0,.6)';
+        const btn = 'all:initial; cursor:pointer; flex:1; text-align:center; padding:6px 10px; border-radius:6px; font:600 12px -apple-system, "Segoe UI", sans-serif;';
+        pop.innerHTML = `<div style="font-weight:700; font-size:13px; margin-bottom:6px">🦈 Sharky requested fresh SharkBot data</div>
+            <div style="margin-bottom:4px">If you click <b>Send my data</b>, this goes to Sharky (about ${Math.max(1, Math.round(sm.size / 1024))} KB):</div>
+            <ul style="margin:0 0 6px; padding-left:18px">${sm.lines.map(l => `<li>${escapeHtml(l)}</li>`).join('')}</ul>
+            <div style="color:#9ca3af; font-size:11px; margin-bottom:10px">Sharky and approved SharkBot admins can see it. Nothing is sent unless you click Send.</div>
+            <div style="display:flex; gap:8px"><button class="sa-pp-send" style="${btn} background:#2563eb; color:#fff">Send my data</button>
+                <button class="sa-pp-no" style="${btn} background:#374151; color:#e5e7eb">Not now</button></div>`;
+        document.body.appendChild(pop);
+        pop.querySelector('.sa-pp-send').addEventListener('click', async () => {
+            pop.remove(); GM_setValue('sa-pull-pending', null);
+            if (sharePref().share !== 'yes') await setSharePref({ share: 'yes' });   // sending is choosing to share
+            shareNow(true);
+        });
+        pop.querySelector('.sa-pp-no').addEventListener('click', () => { pop.remove(); GM_setValue('sa-pull-pending', null); renderNoticeBar(); });
+        setTimeout(() => { if (document.getElementById('sa-pull-pop') === pop) renderNoticeBar(); }, Math.max(1000, new Date(pullAt).getTime() + 15 * 60e3 - Date.now() + 500));
     }
     // The sharing pop-up, once per game account (since v3.20.0): shown when accepted, unless "Don't show again" was ticked;
     // without the tick it comes back after the next update
@@ -5288,6 +5314,18 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         box.addEventListener('click', (ev) => { if (ev.target === box) box.remove(); });
         box.querySelector('.sa-confirm-ok').addEventListener('click', () => { box.remove(); onOk(); });
     }
+    // Download my data (since v3.21.0): exactly what Send my data would send, as a JSON file, built here and never sent anywhere
+    function downloadMyData() {
+        if (isLocked() || sbView) return;
+        let snap; try { snap = shareSnapshot(); } catch (e) { const st = document.getElementById('sa-share-status'); if (st) st.textContent = 'Couldn\'t gather your data: ' + e.message; return; }
+        const who = String(pageUsername() || GM_getValue('sa-username', '') || 'player').replace(/[\\/:*?"<>|]+/g, '_');
+        const d = new Date(), day = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        const blob = new Blob([JSON.stringify({ exportedAt: d.toISOString(), sharkbot: VERSION, data: snap }, null, 2)], { type: 'application/json' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob); a.download = `SharkBot data - ${who} - ${day}.json`;
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    }
     function askShareNow() {
         if (shareOff() || isLocked() || sbView || !shareUrl()) return;
         const sm = shareSummary();
@@ -5329,6 +5367,8 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                 <button class="sa-btn ${sp.share === 'no' ? 'active' : ''}" id="sa-share-off" style="margin:0; flex:1" ${url && !isLocked() ? '' : 'disabled'}>Don't share</button></div>
             <div style="margin-top:6px"><button class="sa-btn" id="sa-share-send" style="margin:0" ${url && !isLocked() && sp.share !== 'no' ? '' : 'disabled'}>📤 Send my data</button>
             <span id="sa-share-status" class="sa-slot-meta" style="margin-left:6px">${sp.share === 'no' ? 'Sharing is off. ' : ''}${last ? 'Last shared ' + new Date(last).toLocaleString() : ''}</span></div>
+            <div style="margin-top:6px"><button class="sa-btn" id="sa-share-dl" style="margin:0" ${isLocked() || sbView ? 'disabled' : ''}>⬇ Download my data</button>
+                <span class="sa-slot-meta" style="margin-left:6px">The same data Send my data would send, saved as a file on your computer. Nothing goes online.</span></div>
             <label class="sa-check" style="margin:6px 0 0"><input type="checkbox" id="sa-share-hide" ${sp.hide ? 'checked' : ''}> <span>Don't show the sharing pop-up again (for this game account)</span></label>
             <div style="margin-top:10px; font-size:10px; color:var(--muted)">Delete what you've already shared: your row of shared data and the profile investments you sent are removed from Sharky's server.</div>
             <button class="sa-btn sa-btn-danger" id="sa-share-del" style="margin:4px 0 0" ${url && !isLocked() ? '' : 'disabled'}>${shareDelArmed ? 'Click again to delete what you shared' : '🗑 Delete what I\'ve shared'}</button>
@@ -5340,6 +5380,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         box.querySelector('#sa-share-off').addEventListener('click', () => setSharePref({ share: 'no' }));
         box.querySelector('#sa-share-hide').addEventListener('change', (e) => setSharePref({ hide: e.target.checked }));
         box.querySelector('#sa-share-send').addEventListener('click', () => askShareNow());
+        box.querySelector('#sa-share-dl').addEventListener('click', () => downloadMyData());
         box.querySelector('#sa-share-del').addEventListener('click', async () => {
             if (!shareDelArmed) { shareDelArmed = true; renderShareSettings(); setTimeout(() => { shareDelArmed = false; renderShareSettings(); }, 8000); return; }
             shareDelArmed = false; shareDelMsg = 'Deleting…'; renderShareSettings();
@@ -5936,8 +5977,20 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     // Whose numbers the panel shows: the player being viewed (Admin → Viewer), else you
     function viewMe() { return sbView ? sbView.player : (pageUsername() || GM_getValue('sa-username', '')); }
     function regIdentity() { return { install: installCode(), username: pageUsername() || GM_getValue('sa-username', ''), version: VERSION }; }
+    // An "update required" saved by an older SharkBot in another tab (they share storage) doesn't lock a copy that already
+    // meets the server's minimum (since v3.20.1): this copy ignores it and asks the server itself, at most once a minute
+    var staleCheckAt = 0;
+    function staleUpdate(r) {
+        const min = updLoad().min;
+        return r.status === 'update' && r.forVersion !== VERSION && !!min && !verLess(VERSION, min);
+    }
     function isLocked() {
         const r = regLoad();
+        if (staleUpdate(r)) {
+            if (Date.now() - staleCheckAt > 60e3) { staleCheckAt = Date.now(); setTimeout(() => { try { checkReg(true); } catch (e) {} }, 0); }
+            const u = pageUsername();
+            return !!(u && r.username && u.toLowerCase() !== r.username.toLowerCase());
+        }
         if (r.status !== 'accepted') return true;
         const u = pageUsername();
         return !!(u && r.username && u.toLowerCase() !== r.username.toLowerCase());
@@ -6025,6 +6078,9 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         if (last && new Date(last).getTime() >= t) return;
         if (GM_getValue('sa-pull-answered', '') === pullAt || shareOff()) return;
         GM_setValue('sa-pull-answered', pullAt);
+        // The account's choice may have changed in another browser: ask the server first (since v3.20.1)
+        checkReg(true).then(() => { if (shareOff()) return; GM_setValue('sa-pull-pending', pullAt); try { renderNoticeBar(); } catch (e) {} });
+        return;
         GM_setValue('sa-pull-pending', pullAt);   // a note with a Send button, never an automatic send (since v3.20.0)
         try { renderNoticeBar(); } catch (e) {}
     }
@@ -6034,6 +6090,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         try { const r = await gmPost(url, { action: 'pullcheck' }); if (r && r.ok && r.pullAt) pullAnswer(r.pullAt); } catch (e) {}
     }
     setInterval(() => pullCheck(), 60e3);
+    setTimeout(() => { try { renderNoticeBar(); } catch (e) {} }, 2500);   // a request still open after a reload shows again (since v3.20.1)
     async function checkReg(force, every) {
         const url = shareUrl(), r = regLoad();
         if (!url || regBusy) return;
@@ -6044,7 +6101,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             const res = await gmPost(url, Object.assign({ action: 'status', version: VERSION }, regIdentity()));
             updFromServer(res);
             if (!res || !res.ok) throw new Error((res && res.error) || 'refused');
-            regSave(Object.assign({}, r, { status: res.status, username: res.username ?? r.username, verified: res.verified,
+            regSave(Object.assign({}, r, { status: res.status, forVersion: VERSION, username: res.username ?? r.username, verified: res.verified,
                 retryAt: res.retryAt || null, checkedAt: new Date().toISOString() }));
             regMsg = force ? 'Checked' : '';
             if (res.status === 'accepted' && res.share) sharePrefSave({ share: res.share, hide: !!res.shareHide });   // the account's choice (since v3.20.0)
