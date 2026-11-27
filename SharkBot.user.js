@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SharkBot
 // @namespace    https://spacealpha.net/
-// @version      3.19.2
+// @version      3.19.3
 // @description  SharkBot for Space Alpha: saves your planets' units, facilities, inventory, research, bank and market prices, and calculates credit generation and Tick Generator upgrade costs.
 // @author       SharkBot
 // @match        https://spacealpha.net/*
@@ -41,7 +41,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     const PANEL_ID = 'sa-helper-panel';
     const SLOT_IDS = 'ABCDEFGHIJ'.split('');   // up to 10 planets
     // Version comes from the @version header so it's never out of sync
-    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.19.2';
+    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.19.3';
     // Two copies installed (usually an update pasted in as a new script): since v3.17.1 every copy writes its version on the
     // page before doing anything, so the second copy always sees the first, even if the first has no panel yet or crashed.
     // The second copy stops and shows a large banner at the top of the page naming the older copy to delete.
@@ -563,7 +563,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                     <div class="sa-label">What you get</div>
                     <ul style="margin:2px 0 8px; padding-left:18px; font-size:11px; line-height:1.5">
                         <li><b>Calculators:</b> credit and resource income, Best Spend, Value Optimizer, training, research, energy, productivity and more</li>
-                        <li><b>Statements:</b> balance sheet, debt, income, cash flow and equity for your whole empire</li>
+                        <li><b>Statements:</b> net worth, debt, income, cash flow and equity for your whole empire</li>
                         <li><b>Bank &amp; investments:</b> your TRAPs with daily interest and price changes</li>
                     </ul>
                     <div class="sa-label">How to start</div>
@@ -572,6 +572,11 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                         <li>Sharky accepts you</li>
                         <li>Everything unlocks, and a short tour shows you around</li>
                     </ol>
+                    <div class="sa-label">Installing &amp; updating</div>
+                    <div style="font-size:11px; line-height:1.5; margin-bottom:8px">Install SharkBot only from
+                        <a href="https://raw.githubusercontent.com/SharkyMakesScripts/SharkBot/main/SharkBot.user.js" target="_blank" rel="noopener" style="color:var(--accent)">this link</a>: Tampermonkey shows Install (or Update), and it keeps one copy that updates itself.
+                        To update, use <b>Update</b> in SharkBot's bar. <b>Don't</b> paste SharkBot into a new script: that installs a second copy, and two copies running at once make SharkBot glitchy.
+                        If a red bar says two copies are installed, delete the older one in the Tampermonkey dashboard.</div>
                 </div>
                 <div class="sa-section" id="sa-lock"></div>
             </div>
