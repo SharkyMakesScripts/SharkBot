@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SharkBot
 // @namespace    https://spacealpha.net/
-// @version      3.14.3
+// @version      3.15.0
 // @description  SharkBot for Space Alpha: saves your planets' units, facilities, inventory, research, bank and market prices, and calculates credit generation and Tick Generator upgrade costs.
 // @author       SharkBot
 // @match        https://spacealpha.net/*
@@ -41,7 +41,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     const PANEL_ID = 'sa-helper-panel';
     const SLOT_IDS = 'ABCDEFGHIJ'.split('');   // up to 10 planets
     // Version comes from the @version header so it's never out of sync
-    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.14.3';
+    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.15.0';
     // Another copy of SharkBot already put its panel on the page: warn and stop,
     // so two installed copies are obvious instead of silently showing the old one.
     const existing = document.getElementById(PANEL_ID);
@@ -147,7 +147,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         #${PANEL_ID} table td .sa-btn { width: auto !important; min-width: 0 !important; max-width: none !important; display: inline-block !important; flex: none !important; white-space: nowrap; }
         #${PANEL_ID} .sa-btn:disabled { opacity: 0.45; cursor: not-allowed; }
         /* Admin → Users and Players only show while logged in as admin (since v3.0.1) */
-        #${PANEL_ID}:not(.sa-admin-in) .sa-tab[data-tab="adminusers"], #${PANEL_ID}:not(.sa-admin-in) .sa-tab[data-tab="players"], #${PANEL_ID}:not(.sa-admin-in) .sa-tab[data-tab="viewer"], #${PANEL_ID}:not(.sa-admin-in) .sa-tab[data-tab="fleets"] { display: none !important; }
+        #${PANEL_ID}:not(.sa-admin-in) .sa-tab[data-tab="adminusers"], #${PANEL_ID}:not(.sa-admin-in) .sa-tab[data-tab="players"], #${PANEL_ID}:not(.sa-admin-in) .sa-tab[data-tab="plist"], #${PANEL_ID}:not(.sa-admin-in) .sa-tab[data-tab="viewer"], #${PANEL_ID}:not(.sa-admin-in) .sa-tab[data-tab="fleets"] { display: none !important; }
         /* Alliance form and rename box (since v2.25.1): full width, whatever the game page styles inputs as */
         #${PANEL_ID} .sa-ally-form { display: grid; grid-template-columns: auto 1fr; gap: 4px 8px; align-items: center; font-size: 11px; }
         #${PANEL_ID} .sa-ally-form label { color: var(--soft); }
@@ -234,9 +234,9 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         /* Registration lock: only Welcome (with the Register box) and Admin are usable until the copy is accepted.
            Welcome is hidden once the copy is accepted; Admin is always there. */
         #${PANEL_ID}:not(.sa-locked) .sa-mtab[data-group="welcome"] { display: none !important; }
-        #${PANEL_ID}.sa-locked .sa-pane:not([data-pane="welcome"]):not([data-pane="admin"]):not([data-pane="adminusers"]):not([data-pane="players"]):not([data-pane="viewer"]):not([data-pane="fleets"]),
+        #${PANEL_ID}.sa-locked .sa-pane:not([data-pane="welcome"]):not([data-pane="admin"]):not([data-pane="adminusers"]):not([data-pane="players"]):not([data-pane="plist"]):not([data-pane="viewer"]):not([data-pane="fleets"]),
         #${PANEL_ID}.sa-locked .sa-mtab:not([data-group="admin"]):not([data-group="welcome"]),
-        #${PANEL_ID}.sa-locked .sa-tab:not([data-tab="admin"]):not([data-tab="adminusers"]):not([data-tab="players"]):not([data-tab="viewer"]):not([data-tab="fleets"]),
+        #${PANEL_ID}.sa-locked .sa-tab:not([data-tab="admin"]):not([data-tab="adminusers"]):not([data-tab="players"]):not([data-tab="plist"]):not([data-tab="viewer"]):not([data-tab="fleets"]),
         #${PANEL_ID}.sa-locked .sa-tab-label, #${PANEL_ID}.sa-locked .sa-tab-break,
         #${PANEL_ID}.sa-locked #sa-scan, #${PANEL_ID}.sa-viewing #sa-scan { display: none !important; }
         /* Inside a Viewer box (since v3.5.3): only the panel, filling the box */
@@ -525,7 +525,8 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             <div class="sa-tab" data-tab="stholder">Stockholder</div>
             <div class="sa-tab" data-tab="admin">Dashboard</div>
             <div class="sa-tab" data-tab="adminusers" id="sa-tab-adminusers">Users</div>
-            <div class="sa-tab" data-tab="players">Players</div>
+            <div class="sa-tab" data-tab="plist" title="Every player, without alliances">Players</div>
+            <div class="sa-tab" data-tab="players" title="Alliances, built from the players">Alliances</div>
             <div class="sa-tab" data-tab="viewer">Viewer</div>
             <div class="sa-tab" data-tab="fleets">Fleets</div>
         </div>
@@ -1020,9 +1021,16 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                 </div>
                 <div id="sa-viewer-view"></div>
             </div>
-            <div class="sa-pane" data-pane="players">
+            <div class="sa-pane" data-pane="plist">
                 <div class="sa-section">
                     <div class="sa-label">Players</div>
+                    <div style="font-size: 10px; color: var(--muted); margin-bottom: 6px;">Every player SharkBot knows (seen online, on the highscore, sharing SharkBot data or noted as a temp profile), without alliances. Click a player for their details.</div>
+                </div>
+                <div id="sa-plist-view"></div>
+            </div>
+            <div class="sa-pane" data-pane="players">
+                <div class="sa-section">
+                    <div class="sa-label">Alliances</div>
                     <div style="font-size: 10px; color: var(--muted); margin-bottom: 6px;">
                         Who's online, from the game's public list (/openapi/online_users), checked every 5 minutes while you're logged in as admin (nothing is collected while logged out).
                         That list only shows who is online right now, so SharkBot keeps every player it has seen, with when it first and last saw them online.
@@ -1326,7 +1334,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         data:        ['research', 'market', 'bank', 'cards', 'units', 'facilities', 'inventory', 'nation'],
         calculators: ['storage', 'area', 'turns', 'training', 'rescalc', 'energy', 'productivity', 'creditgen', 'resgen', 'unitvalue', 'optimizer', 'valueopt', 'trapcalc', 'factorycalc', 'printer', 'invcreate', 'attack', 'assassin'],
         statements:  ['stbalance', 'stincome', 'stcash', 'stholder'],
-        admin:       ['admin', 'adminusers', 'players', 'viewer', 'fleets'],
+        admin:       ['admin', 'adminusers', 'plist', 'players', 'viewer', 'fleets'],
     };
     const groupOf = (tab) => Object.keys(TAB_GROUPS).find(g => TAB_GROUPS[g].includes(tab)) || 'general';
     if (!Object.values(TAB_GROUPS).flat().includes(activeTab)) activeTab = 'debug';
@@ -1359,6 +1367,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         if (name === "valueopt" && typeof sbReady !== "undefined" && sbReady) { try { renderValueOpt(); } catch (e) {} }
         if (name === 'trapcalc' && typeof sbReady !== 'undefined' && sbReady) { try { renderTrapCalc(); fetchInvestments(false); fetchHolders(false); } catch (e) {} }
         if (group === 'statements' && typeof STMT_TABS !== 'undefined' && STMT_TABS) { try { renderStatements(); } catch (e) {} }
+        if (name === 'plist' && typeof PLAYERS_READY !== 'undefined' && PLAYERS_READY) { try { renderPlayers(); fetchOnline(false); } catch (e) {} }
         if (name === 'players' && typeof PLAYERS_READY !== 'undefined' && PLAYERS_READY) { try { renderPlayers(); fetchOnline(false); } catch (e) {} }
         if (name === 'viewer' && typeof PLAYERS_READY !== 'undefined' && PLAYERS_READY) { try { renderViewer(); } catch (e) {} }
         if (name === 'fleets' && typeof PLAYERS_READY !== 'undefined' && PLAYERS_READY) { try { renderFleets(); } catch (e) {} }
@@ -5169,6 +5178,10 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                 <button class="sa-btn" id="sa-adm-refresh" style="margin:0; flex:1">↻ Refresh</button>
                 <button class="sa-btn" id="sa-adm-pull" style="margin:0; flex:1" title="Ask every accepted copy to send its data now">⇣ Pull data from everyone</button>
                 <button class="sa-btn" id="sa-adm-logout" style="margin:0; flex:1">Log out</button></div>
+            ${(() => { const c = clearCandidates(); return `<div style="margin-bottom:6px"><button class="sa-btn sa-btn-danger" id="sa-adm-clear" style="margin:0; width:100%" ${c.names.length ? '' : 'disabled'}
+                title="Removes them from the Players and Alliances lists for every admin (not their registration or shared data). Players we have data on are kept. A cleared player comes back when seen online or on the highscore again.">${
+                clearArmed ? `Click again to clear ${c.names.length} players` : `🧹 Clear 1-player alliances and players with no alliance (${c.names.length}: ${c.single} alone in an alliance, ${c.none} with no alliance)`}</button>${
+                clearMsg ? `<div class="sa-slot-meta">${escapeHtml(clearMsg)}</div>` : ''}</div>`; })()}
             ${adminSelfNote ? `<div class="sa-slot-meta" style="margin-bottom:6px; color:var(--warn)">${escapeHtml(adminSelfNote)}</div>` : ''}
             ${adminDeletedNote ? `<div class="sa-recommend" style="margin-bottom:6px">${escapeHtml(adminDeletedNote)}</div>` : ''}
             ${pullLine()}
@@ -5196,6 +5209,19 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                 ${deleteBtn(resetPick)}` : ''}
             ${managedAdminHtml()}`;
         view.querySelector('#sa-adm-refresh').addEventListener('click', adminRefresh);
+        view.querySelector('#sa-adm-clear')?.addEventListener('click', async () => {
+            if (!clearArmed) { clearArmed = true; renderAdmin(); setTimeout(() => { if (clearArmed) { clearArmed = false; renderAdmin(); } }, 8000); return; }
+            clearArmed = false;
+            const c = clearCandidates();
+            try {
+                const r = await gmPost(shareUrl(), { action: 'clearplayers', user: adminCreds.user, pass: adminCreds.pass, names: c.names });
+                if (!r || !r.ok) throw new Error((r && r.error) || 'refused');
+                const set = new Set(c.names.map(n => n.toLowerCase())), pl = playersLoad();
+                Object.keys(pl.players || {}).forEach(id => { if (set.has(String(pl.players[id].name).trim().toLowerCase())) delete pl.players[id]; });
+                GM_setValue('sa-players', pl); clearMsg = `Cleared ${c.names.length} players.`; adminSync();
+            } catch (e) { clearMsg = /unknown action/.test(e.message) ? 'Your Apps Script needs the v3.15.0 update.' : 'Not cleared: ' + e.message; }
+            renderAdmin(); try { renderPlayers(); } catch (e) {}
+        });
         view.querySelector('#sa-adm-pull').addEventListener('click', async (e) => {
             const btn = e.currentTarget; btn.disabled = true; adminPullMsg = 'Asking…';
             try {
@@ -5351,28 +5377,37 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         view.innerHTML = `${sbView ? `<div class="sa-recommend" style="margin-bottom:6px">This window shows <b>${escapeHtml(sbView.player)}</b>. Close it to stop viewing.</div>` : ''}
             ${list.length ? `<div style="overflow-x:auto"><table class="sa-unit-table" data-sort-id="admin-viewer">
                 <thead><tr><th>Player</th><th>Shared</th><th>Version</th><th style="text-align:right">Saved data</th></tr></thead>
-                <tbody>${list.map(p => { const sz = p.data && p.data.storeSize; return `<tr ${sz ? `data-view-player="${escapeHtml(p.player)}" style="cursor:pointer" title="Click to open ${escapeHtml(p.player)}'s SharkBot in a window on this page"`
-                    : `title="${escapeHtml(p.player)} hasn't shared their full data yet: they need SharkBot v3.5.0 or newer and one share (Send now, or ⇣ Pull data from everyone)"`}><td class="sa-trap-name">${sz ? '👁 ' : ''}${escapeHtml(p.player)}</td>
+                <tbody>${list.map(p => { const sz0 = p.data && p.data.storeSize, sz = sz0 >= 1024 ? sz0 : 0;   // under 1 KB = nothing to show (since v3.15.0)
+                    return `<tr ${sz ? `data-view-player="${escapeHtml(p.player)}" style="cursor:pointer" title="Click to open ${escapeHtml(p.player)}'s SharkBot in a window on this page"`
+                    : `data-noview="${escapeHtml(p.player)}" style="cursor:pointer" title="${escapeHtml(p.player)} hasn't shared their full data yet: they need SharkBot v3.5.0 or newer and one share (Send now, or ⇣ Pull data from everyone)"`}><td class="sa-trap-name">${sz ? '👁 ' : ''}${escapeHtml(p.player)}</td>
                     <td data-sort="${new Date(p.updated).getTime() || ''}">${escapeHtml(agoText(p.updated))}</td><td class="sa-num">${escapeHtml(p.version || '')}</td>
-                    <td class="sa-num" data-sort="${sz || 0}">${sz ? Math.round(sz / 1024) + ' KB' : '<span style="color:var(--muted)">not shared yet</span>'}</td></tr>`; }).join('')}</tbody></table></div>
+                    <td class="sa-num" data-sort="${sz || 0}">${sz ? Math.round(sz / 1024) + ' KB' : `<span class="sa-diff-neg" title="${sz0 ? 'Their shared data is empty (nothing scanned yet)' : 'They haven\'t shared their full data yet: SharkBot v3.5.0 or newer and one share'}">no data on the server</span>`}</td></tr>`; }).join('')}</tbody></table></div>
                 <div class="sa-slot-meta" style="margin-top:4px">Click a player to open their SharkBot in a window on this page (drag its title bar, resize from the corner). ✕ closes it; your own panel isn't changed.</div>`
                 : '<div class="sa-empty">No players share data yet.</div>'}
             <div class="sa-slot-meta" id="sa-view-msg" style="margin-top:4px"></div>`;
+        view.querySelectorAll('tr[data-noview]').forEach(tr => tr.addEventListener('click', () => {
+            const msg = view.querySelector('#sa-view-msg');
+            msg.innerHTML = `<b>No data on the server for ${escapeHtml(tr.dataset.noview)}.</b> They need SharkBot v3.5.0 or newer and at least one share with something scanned. Nothing was opened.`;
+        }));
         view.querySelectorAll('tr[data-view-player]').forEach(tr => tr.addEventListener('click', async () => {
             const msg = view.querySelector('#sa-view-msg'), name = tr.dataset.viewPlayer, key = name.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '_');
             msg.textContent = `Loading ${name}'s data…`;
             try {
                 const r = await gmPost(shareUrl(), { action: 'playerstore', user: adminCreds.user, pass: adminCreds.pass, player: name });
                 if (!r || !r.ok) throw new Error((r && r.error) || 'refused');
+                if (!r.store || !Object.keys(r.store).length) { msg.innerHTML = `<b>No data on the server for ${escapeHtml(name)}.</b> Nothing was opened.`; return; }
                 __SB_GM.set('sa-admin-viewing:' + key, { player: r.player, at: r.updated, version: r.version, store: r.store, openedAt: new Date().toISOString() });
                 openViewBox(r.player, key, r.updated);
                 msg.textContent = `Opened ${r.player}.`;
-            } catch (e) { msg.textContent = (/unknown action/.test(e.message) ? 'Your Apps Script needs the v3.5.0 update.' : 'Couldn\'t open: ' + e.message); }
+            } catch (e) { msg.textContent = (/unknown action/.test(e.message) ? 'Your Apps Script needs the v3.5.0 update.' : /no such player|hasn't shared|too large/.test(e.message) ? `No data on the server for ${name}: ${e.message}. Nothing was opened.` : 'Couldn\'t open: ' + e.message); }
         }));
     }
     // A SharkBot window inside the page showing one player (since v3.5.3): a draggable, resizable box holding a
     // frame of the game page with SharkBot in view mode (the frame's name tells it which player)
     var viewBoxes = 0;
+    // The box hosts SharkBot on a plain data page of the game's site (since v3.15.0): a small JSON list, so the game itself never loads.
+    // Everything shown comes from the player's data on Sharky's server.
+    const VIEW_HOST = () => location.origin + '/openapi/online_users';
     function viewBoxStyle() {
         if (document.getElementById('sa-viewbox-style')) return;
         const st = document.createElement('style'); st.id = 'sa-viewbox-style';
@@ -5404,7 +5439,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                 <span class="sa-vb-title" title="Read only: nothing is saved, scanned, shared or sent">👁 <b>Viewing as ${escapeHtml(player)}</b> · read only${at ? ` · data from ${escapeHtml(new Date(at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }))}` : ''}</span>
                 <button class="sa-vb-close" title="Close">✕</button></div>
             <div class="sa-vb-msg" style="display:none"></div>
-            <iframe name="sbview_${escapeHtml(key)}" src="${escapeHtml(location.origin + '/bank')}"></iframe>`;
+            <iframe name="sbview_${escapeHtml(key)}" src="${escapeHtml(VIEW_HOST())}"></iframe>`;
         document.body.appendChild(box);
         box.querySelector('.sa-vb-close').addEventListener('click', () => box.remove());
         // Drag by the title bar
@@ -5421,9 +5456,9 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         const frame = box.querySelector('iframe');
         const blocked = () => {
             const m = box.querySelector('.sa-vb-msg'); m.style.display = 'block';
-            m.innerHTML = `The game page can't be shown inside this box. <button class="sa-vb-win">Open in a separate window</button>`;
+            m.innerHTML = `SharkBot couldn't start inside this box. <button class="sa-vb-win">Open in a separate window</button>`;
             frame.style.display = 'none';
-            m.querySelector('.sa-vb-win').addEventListener('click', () => { const w = window.open(location.origin + '/bank', 'sbview_' + key, 'popup,width=960,height=900'); if (w) box.remove(); });
+            m.querySelector('.sa-vb-win').addEventListener('click', () => { const w = window.open(VIEW_HOST(), 'sbview_' + key, 'popup,width=960,height=900'); if (w) box.remove(); });
         };
         let ok = false;
         frame.addEventListener('load', () => { try { const d = frame.contentDocument; if (!d || !d.body || /^chrome-error/.test(frame.contentWindow.location.href)) return blocked(); if (/^https?:/.test(frame.contentWindow.location.href)) ok = true; } catch (e) { blocked(); } });
@@ -5449,7 +5484,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             const r = await gmPost(shareUrl(), { action: 'adminsync', user: adminCreds.user, pass: adminCreds.pass,
                 players: playersLoad(), fleets: {}, log: f.log || [], links: planetLinks(), tags: GM_getValue('sa-admin-hs-tags', {}) || {}, resets: GM_getValue('sa-admin-resets', {}) || {} });
             if (!r || !r.ok) throw new Error((r && r.error) || 'refused');
-            const del = r.deleted || {};
+            const del = r.deleted || {}, clr = r.cleared || {};
             const pl = Object.assign({ players: {}, online: [] }, r.players || {});
             // Keep anything this browser collected while the sync was on its way (newer than the server's copy), and send it next time
             const tms = (x) => x ? new Date(x).getTime() || 0 : 0, mine = playersLoad();
@@ -5457,6 +5492,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             Object.values(mine.players || {}).forEach(p => {
                 const seen = Math.max(tms(p.last), tms(p.hsSeen), tms(p.first)), k = String(p.name || '').trim().toLowerCase();
                 if (del[k] && seen <= tms(del[k])) return;
+                if (clr[k] && Math.max(tms(p.last), tms(p.hsSeen)) <= tms(clr[k])) return;   // cleared by an admin (since v3.15.0)
                 const sp = pl.players[p.id], spSeen = sp ? Math.max(tms(sp.last), tms(sp.hsSeen)) : -1;
                 if (!sp || Math.max(tms(p.last), tms(p.hsSeen)) > spSeen) { pl.players[p.id] = Object.assign({}, sp || {}, p); newer = true; }
             });
@@ -5475,6 +5511,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             GM_setValue('sa-admin-hs-tags', r.tags || {});
             const rs = r.resets || {}; Object.keys(rs).forEach(n => { if (del[n.trim().toLowerCase()]) delete rs[n]; }); GM_setValue('sa-admin-resets', rs);
             adminSyncAt = new Date().toISOString(); adminSyncErr = '';
+            if (document.querySelector('.sa-pane[data-pane="admin"].active') && !document.querySelector('.sa-confirm') && !(document.activeElement && document.activeElement.tagName === 'INPUT' && document.getElementById('sa-admin-view')?.contains(document.activeElement)) && !clearArmed) { try { renderAdmin(); } catch (e) {} }
             // v3.9.0 logged the fleet list's title row as a player "Sender": remove it everywhere (never if a real "Sender" was seen online)
             const fake = Object.values(pl.players || {}).find(p => /^sender$/i.test(String(p.name)) && String(p.id).startsWith('hs:'));
             if ((fake || (r.log || []).some(x => /^sender$/i.test(String(x.owner)))) && !Object.values(pl.players || {}).some(p => /^sender$/i.test(String(p.name)) && !String(p.id).startsWith('hs:'))) {
@@ -5496,20 +5533,39 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
               if (r && r.ok) { adminData = r.players || []; adminDataAt = Date.now(); if (r.temps) adminTemps = r.temps; if (r.pullAt !== undefined) adminPullAt = r.pullAt; if (r.config) allianceSave(r.config); renderAdmin(); renderPlayers(); renderAdminUsers(); } } catch (e) {}
     }
     // "Pull data from everyone" (since v3.3.1): how many accepted players have sent since; refreshes every minute for an hour
+    // Players to clear (since v3.15.0): alone in their alliance, or with no alliance; never anyone we have data on
+    var clearArmed = false, clearMsg = '';
+    function clearCandidates() {
+        const low = (x) => String(x || '').trim().toLowerCase();
+        const keep = new Set([...(adminData || []).map(sp => low(sp.player)), ...(adminTemps || []).map(t => low(t.player)),
+            ...(holdersLoad()?.players || []).filter(hp => (hp.items || []).length || hp.managed).map(hp => low(hp.player))]);
+        const all = Object.values(playersLoad().players || {}), byAlly = {};
+        all.forEach(p => { const a = p.alliance || ''; (byAlly[a] = byAlly[a] || []).push(p); });
+        const names = [], my = allianceCfg().allianceId;
+        let single = 0, none = 0;
+        all.forEach(p => {
+            if (keep.has(low(p.name))) return;
+            const a = p.alliance || '';
+            if (!a) { names.push(p.name); none++; }
+            else if (byAlly[a].length === 1 && a !== my) { names.push(p.name); single++; }
+        });
+        return { names, single, none };
+    }
     function pullLine() {
         clearTimeout(adminPullTimer);
         if (adminPullMsg) return `<div class="sa-slot-meta" style="margin-bottom:6px">${escapeHtml(adminPullMsg)}</div>`;
         if (!adminPullAt) return '';
-        const at = new Date(adminPullAt), sent = adminData.filter(p => new Date(p.updated) >= at);
-        const acc = groupsAccepted(), waiting = acc.filter(n => !sent.some(p => p.player.toLowerCase() === n.name.toLowerCase()));
-        const old = waiting.filter(n => verLess(n.version, '3.3.1'));
-        if (Date.now() - at < 3600e3) adminPullTimer = setTimeout(() => { if (document.querySelector('.sa-pane[data-pane="admin"].active')) adminRefresh(); }, 60e3);
-        return `<div class="sa-recommend" style="margin-bottom:6px">Pull requested ${escapeHtml(at.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }))} (${escapeHtml(agoText(at))}) · <b>${sent.length}</b> of ${Math.max(acc.length, sent.length)} players sent since${
-            waiting.length ? `<br><span style="font-size:10px">Waiting: ${waiting.map(n => { const on = onlineNow(n.name);
-                const bits = [on === true ? '<span class="sa-diff-pos">online</span>' : on === false ? 'offline' : '',
-                    n.lastCheck ? 'SharkBot checked in ' + escapeHtml(agoText(new Date(n.lastCheck).toISOString())) : '',
-                    verLess(n.version, '3.3.1') ? `old version ${escapeHtml(n.version || '?')}, can't respond` : ''].filter(Boolean);
-                return escapeHtml(n.name) + (bits.length ? ` <span style="color:var(--muted)">(${bits.join(' · ')})</span>` : ''); }).join(', ')}. Players send when their game is open: within 15 minutes, when they reload or come back to the game tab after 30 minutes, or when they click Check for update${old.length ? '; old versions can\'t respond until they update' : ''}.</span>` : ''}</div>`;
+        // One-time pull (since v3.15.0): counts only players online with SharkBot, and ends after 15 minutes
+        const at = new Date(adminPullAt), age = Date.now() - at, open = age < 15 * 60e3;
+        const low = (x) => String(x || '').trim().toLowerCase();
+        const sent = adminData.filter(p => new Date(p.updated) >= at), sentSet = new Set(sent.map(p => low(p.player)));
+        const active = groupsAccepted().filter(n => sentSet.has(low(n.name)) || (n.lastCheck && Math.abs(n.lastCheck - at.getTime()) < 20 * 60e3 && !verLess(n.version, '3.15.0')));
+        const total = new Set([...sentSet, ...active.map(n => low(n.name))]).size;
+        const notYet = active.filter(n => !sentSet.has(low(n.name)));
+        if (open) adminPullTimer = setTimeout(() => { if (document.querySelector('.sa-pane[data-pane="admin"].active')) adminRefresh(); }, 30e3);
+        return `<div class="sa-recommend" style="margin-bottom:6px">Pull at ${escapeHtml(at.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }))} (${escapeHtml(agoText(at))}) · <b>${sent.length}</b> of ${Math.max(total, sent.length)} player${total === 1 ? '' : 's'} online with SharkBot ${open ? 'have sent so far' : 'sent'}${
+            open && notYet.length ? `<br><span style="font-size:10px">Not yet: ${notYet.map(n => escapeHtml(n.name)).join(', ')} (open copies answer within a minute)</span>` : ''}${
+            open ? '' : '<br><span style="font-size:10px; color:var(--muted)">Finished: the pull lasted 15 minutes. Players who weren\'t online with SharkBot then aren\'t counted.</span>'}</div>`;
     }
     function verLess(a, b) {
         const x = String(a || '0').split('.').map(Number), y = String(b).split('.').map(Number);
@@ -5648,7 +5704,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         renderLock();
         const tab = GM_getValue('sa-active-tab', 'debug');
         // Locked: open Welcome unless Admin is open. Unlocked: Welcome is gone, so open General → Debug.
-        if (locked && !['welcome', 'admin', 'adminusers', 'players'].includes(tab)) switchTab('welcome');
+        if (locked && !['welcome', 'admin', 'adminusers', 'players', 'plist'].includes(tab)) switchTab('welcome');
         if (!locked && tab === 'welcome') switchTab('debug');
         if (lockWas === true && !locked) {   // just unlocked: bring the panel up to date
             try { renderAllViews(); } catch (e) {}
@@ -5724,6 +5780,22 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     // If the server can't be reached, the last known status is kept.
     // Status check (since v3.3.1: every 5 minutes, and on page loads when the last check is over 2 minutes old,
     // so a Deny locks the panel within minutes; it also carries Sharky's "pull data from everyone" request)
+    // "Pull data from everyone" (since v3.15.0): a one-time request that lasts 15 minutes. Open copies ask every minute (a cheap
+    // request that only reads the pull time) and send their data once, like Send now; a copy that opens later ignores it.
+    function pullAnswer(pullAt) {
+        const t = new Date(pullAt).getTime(), last = GM_getValue('sa-share-last', null);
+        if (!t || Date.now() - t > 15 * 60e3 || Date.now() < t - 60e3) return;
+        if (last && new Date(last).getTime() >= t) return;
+        if (GM_getValue('sa-pull-answered', '') === pullAt) return;
+        GM_setValue('sa-pull-answered', pullAt);
+        setTimeout(() => { applyLock(); shareNow(true); }, 500);
+    }
+    async function pullCheck() {
+        const url = shareUrl();
+        if (!url || sbView || isLocked() || regLoad().status !== 'accepted') return;
+        try { const r = await gmPost(url, { action: 'pullcheck' }); if (r && r.ok && r.pullAt) pullAnswer(r.pullAt); } catch (e) {}
+    }
+    setInterval(() => pullCheck(), 60e3);
     async function checkReg(force, every) {
         const url = shareUrl(), r = regLoad();
         if (!url || regBusy) return;
@@ -5738,10 +5810,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                 retryAt: res.retryAt || null, checkedAt: new Date().toISOString() }));
             regMsg = force ? 'Checked' : '';
             // Sharky asked every copy to send its data: share now if this copy hasn't since the request
-            if (res.status === 'accepted' && res.pullAt) {
-                const last = GM_getValue('sa-share-last', null);
-                if (!last || new Date(last) < new Date(res.pullAt)) setTimeout(() => { applyLock(); shareNow(true); }, 500);
-            }
+            if (res.status === 'accepted' && res.pullAt) pullAnswer(res.pullAt);
         } catch (e) {
             if (force) regMsg = /unknown action/.test(e.message) ? 'Sharky\'s server isn\'t updated for registration yet' : 'Couldn\'t reach Sharky\'s server: ' + e.message;
         } finally { regBusy = false; }
@@ -5882,8 +5951,8 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     function setAdminIn(on) {
         panel.classList.toggle('sa-admin-in', !!on);
         if (!on) {
-            if (['adminusers', 'players', 'viewer', 'fleets'].includes(GM_getValue('sa-last-sub-admin', ''))) GM_setValue('sa-last-sub-admin', 'admin');
-            if (['adminusers', 'players', 'viewer', 'fleets'].includes(GM_getValue('sa-active-tab', ''))) switchTab('admin');
+            if (['adminusers', 'players', 'plist', 'viewer', 'fleets'].includes(GM_getValue('sa-last-sub-admin', ''))) GM_setValue('sa-last-sub-admin', 'admin');
+            if (['adminusers', 'players', 'plist', 'viewer', 'fleets'].includes(GM_getValue('sa-active-tab', ''))) switchTab('admin');
         }
     }
     setAdminIn(false);   // never logged in after a page load (the password isn't stored)
@@ -5894,6 +5963,30 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     if (installRestored || (regLoad().status === 'update' && !(updLoad().min && verLess(VERSION, updLoad().min)))) checkReg(true);   // restored registration: ask the server straight away
     else checkReg(false, 30 * 60e3);   // on a page load, if the last check is 30+ minutes old (since v3.14.1)
     panel.querySelector('#sa-update')?.addEventListener('click', () => checkUpdate(true));
+    // Admin buttons ask first (since v3.15.0): any button in an Admin subtab shows a confirm box before it acts
+    const ADMIN_PANES = ['admin', 'adminusers', 'plist', 'players', 'viewer', 'fleets'];
+    var sbConfirmOk = null;
+    panel.addEventListener('click', (e) => {
+        const btn = e.target && e.target.closest ? e.target.closest('button') : null;
+        if (!btn || sbView || btn.closest('.sa-confirm')) return;
+        const pane = btn.closest('.sa-pane');
+        if (!pane || !ADMIN_PANES.includes(pane.dataset.pane)) return;
+        if (btn === sbConfirmOk) { sbConfirmOk = null; return; }
+        e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
+        panel.querySelector('.sa-confirm')?.remove();
+        const box = document.createElement('div');
+        box.className = 'sa-confirm';
+        box.style.cssText = 'position:absolute; inset:0; z-index:50; display:flex; align-items:center; justify-content:center; background:rgba(0,0,0,0.55)';
+        const label = (btn.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 80);
+        box.innerHTML = `<div style="max-width:360px; margin:12px; padding:12px 14px; background:var(--bg, #111827); border:1px solid var(--border); border-radius:8px; font-size:12px">
+            <div style="margin-bottom:6px"><b>These buttons are meant for Sharky, confirm you understand your action.</b></div>
+            <div style="color:var(--muted); margin-bottom:10px">Button: ${escapeHtml(label || 'button')}</div>
+            <div style="display:flex; gap:6px"><button class="sa-btn sa-confirm-ok" style="margin:0; flex:1">Confirm</button><button class="sa-btn sa-confirm-no" style="margin:0; flex:1">Cancel</button></div></div>`;
+        panel.appendChild(box);
+        box.querySelector('.sa-confirm-no').addEventListener('click', () => box.remove());
+        box.addEventListener('click', (ev) => { if (ev.target === box) box.remove(); });
+        box.querySelector('.sa-confirm-ok').addEventListener('click', () => { box.remove(); if (btn.isConnected) { sbConfirmOk = btn; btn.click(); } });
+    }, true);
     if (sbView) { panel.classList.add('sa-viewing'); renderViewBar(); }
     else if (__SB_GM.list && __SB_GM.del) { try { __SB_GM.list().filter(k => k === 'sa-admin-viewing' || (/^sa-admin-viewing:/.test(k) && Date.now() - new Date((__SB_GM.get(k, {}) || {}).openedAt || 0) > 2 * 86400e3)).forEach(k => __SB_GM.del(k)); } catch (e) {} }
     renderUpdateBar();
@@ -5954,7 +6047,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             console.warn('[SharkBot] online users API failed', e);
             const d = playersLoad(); d.error = e.message; GM_setValue('sa-players', d);
         } finally { playersFetching = false; }
-        renderPlayers();
+        renderPlayers(); if (document.querySelector('.sa-pane[data-pane="admin"].active') && !document.querySelector('.sa-confirm') && !(document.activeElement && document.activeElement.tagName === 'INPUT' && document.getElementById('sa-admin-view')?.contains(document.activeElement))) { try { renderAdmin(); } catch (e) {} }   // clear-button count (since v3.15.0)
         return playersLoad();
     }
     // The alliance ID is set by the admin in the Apps Script; read it at most once an hour
@@ -5981,6 +6074,8 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         const view = document.getElementById('sa-players-view');
         if (!view) return;
         if (!adminCreds) {
+            const pv = document.getElementById('sa-plist-view');
+            if (pv) { pv.innerHTML = `<div class="sa-empty">Log in on the <b>Dashboard</b> tab first.</div>`; }
             view.innerHTML = `<div class="sa-empty">Log in on the <b>Dashboard</b> tab first.</div>
                 <button class="sa-btn" id="sa-pl-login" style="margin:6px 0 0; width:100%">Go to Dashboard</button>`;
             view.querySelector('#sa-pl-login').addEventListener('click', () => switchTab('admin'));
@@ -6067,8 +6162,14 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         const onlyInv = GM_getValue('sa-players-inv', false);
         // Hide players with no data (since v3.11.0): no shared SharkBot data, no temp profile and no known investments
         const hideEmpty = GM_getValue('sa-players-hide-empty', false);
-        const shown = all.filter(p => (!q || (p.name || '').toLowerCase().includes(q)) && (!onlyMine || p.alliance === my) && (!onlyInv || invOf(p) > 0) && (!hideEmpty || hasData(p.name)))
-            .sort((a, b) => onlineSet.has(b.id) - onlineSet.has(a.id) || new Date(b.last) - new Date(a.last));
+        // Players tab (since v3.15.0): every player, no alliances; SharkBot users and temp profiles never seen online are listed too
+        const onlyOnline = GM_getValue('sa-players-online', false);
+        const extra = [...new Set([...(adminData || []).map(sp => sp.player), ...(adminTemps || []).map(t => t.player)].filter(Boolean))]
+            .filter(n => !seenNames.has(lowK(n))).map(n => ({ id: 'x:' + lowK(n), name: n, last: null, first: null, extra: true }));
+        const verOf = (n) => (adminData || []).find(sp => lowK(sp.player) === lowK(n))?.version || '';
+        const nerdsOf = (n) => (adminData || []).find(sp => lowK(sp.player) === lowK(n))?.data?.nerdsTotal;
+        const shown = [...all, ...extra].filter(p => (!q || (p.name || '').toLowerCase().includes(q)) && (!onlyOnline || onlineSet.has(p.id)) && (!onlyInv || invOf(p) > 0) && (!hideEmpty || hasData(p.name)))
+            .sort((a, b) => onlineSet.has(b.id) - onlineSet.has(a.id) || (b.last ? new Date(b.last) : 0) - (a.last ? new Date(a.last) : 0));
         const dt = (t) => t ? escapeHtml(new Date(t).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })) : '—';
         const ts = (t) => t ? new Date(t).getTime() : '';
         const myLabel = my ? escapeHtml(label(my) || my.slice(0, 8) + '…') : '';
@@ -6100,11 +6201,8 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                 d.error ? ` · <span class="sa-diff-neg">last check failed: ${escapeHtml(d.error)}</span>` : ''}${fresh ? '' : d.checkedAt ? ' · online list is old' : ''}${
                 adminDataAt ? ` · shared data loaded ${escapeHtml(agoText(new Date(adminDataAt).toISOString()))}` : ''}</span></div>
             <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; font-size:11px; margin-bottom:6px">
-                <button class="sa-btn" id="sa-players-refresh" style="margin:0">${playersFetching ? 'Loading…' : '↻ Refresh'}</button>
-                <input id="sa-players-q" class="sa-amt" value="${escapeHtml(GM_getValue('sa-players-q', '') || '')}" placeholder="Search name" style="flex:1; min-width:90px" />
-                ${my ? `<label class="sa-check" style="margin:0"><input type="checkbox" id="sa-players-mine" ${onlyMine ? 'checked' : ''} /><span>Only my alliance</span></label>` : ''}
-                <label class="sa-check" style="margin:0"><input type="checkbox" id="sa-players-inv" ${onlyInv ? 'checked' : ''} /><span>Has investments</span></label>
-                <label class="sa-check" style="margin:0" title="Hide players we have nothing on: they don't share SharkBot data, have no temp profile and no known investments. Alliance totals still count everyone"><input type="checkbox" id="sa-players-hide-empty" ${hideEmpty ? 'checked' : ''} /><span>Hide players with no data</span></label>
+                <button class="sa-btn sa-players-refresh" style="margin:0">${playersFetching ? 'Loading…' : '↻ Refresh'}</button>
+                <label class="sa-check" style="margin:0" title="Hide members we have nothing on. Alliance totals still count everyone"><input type="checkbox" class="sa-players-hide-empty" ${hideEmpty ? 'checked' : ''} /><span>Hide players with no data</span></label>
             </div>
             <div class="sa-label">Alliances</div>
             ${alRows.length ? `<table class="sa-unit-table" data-sort-id="admin-alliances"><thead><tr><th title="Your alliance">★</th><th>Alliance</th><th style="text-align:right">Online</th><th style="text-align:right">Seen</th>
@@ -6120,68 +6218,92 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                     <td></td><td style="color:var(--muted)">${allyOpen.__unseen ? '▾' : '▸'} not seen online</td><td class="sa-num">—</td><td class="sa-num">—</td>
                     <td class="sa-num">${escapeHtml(fmt(unseenAss))}</td><td class="sa-num">${unseen.length}</td><td></td></tr>${allyOpen.__unseen
                     ? unseen.slice().sort().map(k => memberRow((adminData.find(sp => String(sp.player).trim().toLowerCase() === k) || {}).player || k, false, null, shared[k])).join('') : ''}` : ''}</tbody></table>${detailBox('alliances')}` : '<div class="sa-empty">No alliances seen yet.</div>'}
+            <div class="sa-slot-meta" style="margin-top:4px">Click a shortened alliance ID to copy it and fill the form above.${my ? '' : ' Mark your alliance with ☆ in the Alliances table.'}</div>`;
+        // Players tab (since v3.15.0): the same players with no alliance information
+        const pview = document.getElementById('sa-plist-view');
+        if (pview) pview.innerHTML = `
+            <div class="sa-recommend" style="margin-bottom:6px">Online now: <b>${onlineSet.size}</b> · players seen: ${all.length}${adminSyncErr ? ` · <span style="color:var(--warn)">${escapeHtml(adminSyncErr)}</span>` : adminSyncAt ? ` · shared with all admins (synced ${escapeHtml(agoText(adminSyncAt))})` : ''}${d.hsLast ? ` · highscore read ${escapeHtml(agoText(d.hsLast.at))} (${d.hsLast.rows} rows, ${d.hsLast.added} new)` : ''}${
+                invKnown.length ? ` · credits invested (known): <b>${escapeHtml(fmt(invAll))}</b> across ${invKnown.length} player${invKnown.length === 1 ? '' : 's'}` : ''}${
+                my ? ` · your alliance (${myLabel}): ${(al[my] || { online: 0 }).online} online of ${(al[my] || { seen: 0 }).seen} seen` : ''}<br><span style="font-size:10px; color:var(--muted)">${playersFetching ? 'Checking…' : d.checkedAt ? 'Checked ' + agoText(d.checkedAt) : 'Not checked yet'}${
+                d.error ? ` · <span class="sa-diff-neg">last check failed: ${escapeHtml(d.error)}</span>` : ''}${fresh ? '' : d.checkedAt ? ' · online list is old' : ''}${
+                adminDataAt ? ` · shared data loaded ${escapeHtml(agoText(new Date(adminDataAt).toISOString()))}` : ''}</span></div>
+            <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; font-size:11px; margin-bottom:6px">
+                <button class="sa-btn sa-players-refresh" style="margin:0">${playersFetching ? 'Loading…' : '↻ Refresh'}</button>
+                <input id="sa-players-q" class="sa-amt" value="${escapeHtml(GM_getValue('sa-players-q', '') || '')}" placeholder="Search name" style="flex:1; min-width:90px" />
+                <label class="sa-check" style="margin:0"><input type="checkbox" id="sa-players-online" ${onlyOnline ? 'checked' : ''} /><span>Online only</span></label>
+                <label class="sa-check" style="margin:0"><input type="checkbox" id="sa-players-inv" ${onlyInv ? 'checked' : ''} /><span>Has investments</span></label>
+                <label class="sa-check" style="margin:0" title="Hide players we have nothing on: they don't share SharkBot data, have no temp profile and no known investments"><input type="checkbox" class="sa-players-hide-empty" ${hideEmpty ? 'checked' : ''} /><span>Hide players with no data</span></label>
+            </div>
             <div class="sa-label" style="margin-top:8px">Players (${shown.length})</div>
-            ${shown.length ? `<div style="overflow-x:auto"><table class="sa-unit-table" data-sort-id="admin-players"><thead><tr><th title="Online">●</th><th>Name</th><th>Alliance</th><th>Last seen</th><th>First seen</th><th style="text-align:right" title="From their shared data (blank if they don't share)">Assassins</th><th style="text-align:right" title="Credits invested, if their investments are known">Invested</th></tr></thead><tbody>
+            ${shown.length ? `<div style="overflow-x:auto"><table class="sa-unit-table" data-sort-id="admin-players"><thead><tr><th title="Online">●</th><th>Name</th><th>Last seen</th><th>First seen</th><th style="text-align:right" title="From their shared data (blank if they don't share)">Assassins</th><th style="text-align:right" title="Credits invested, if their investments are known">Invested</th><th style="text-align:right">NERDs</th><th style="text-align:right" title="✓ shares SharkBot data · temp = temp profile">SharkBot</th><th style="text-align:right">Version</th></tr></thead><tbody>
                 ${shown.map(p => `<tr data-pname="${escapeHtml(p.name)}" data-pwhere="players" title="Click to ${isOpen('players', p.name) ? 'hide' : 'show'} their shared data"
                     style="cursor:pointer${isOpen('players', p.name) ? '; background:var(--hover)' : ''}"><td data-sort="${onlineSet.has(p.id) ? 1 : 0}" style="color:${onlineSet.has(p.id) ? 'var(--pos)' : 'var(--dim)'}" title="${onlineSet.has(p.id) ? 'Online now' : 'Offline'}">●</td>
                     <td title="User ID ${escapeHtml(p.id)}" data-sort="${escapeHtml((p.name || '').toLowerCase())}" style="white-space:nowrap">${escapeHtml(p.name)}${coin(p.name)}</td>
-                    <td data-sort="${escapeHtml(sortKey(p.alliance))}" ${p.alliance ? '' : 'data-sort-last="1"'}>${allyName(p.alliance)}</td>
-                    <td data-sort="${onlineSet.has(p.id) ? Date.now() : ts(p.last)}">${onlineSet.has(p.id) ? 'online' : agoText(p.last)}</td>
+                    <td data-sort="${onlineSet.has(p.id) ? Date.now() : ts(p.last)}">${onlineSet.has(p.id) ? 'online' : p.last ? agoText(p.last) : '<span style="color:var(--dim)">not seen</span>'}</td>
                     <td data-sort="${ts(p.first)}">${dt(p.first)}</td>
                     <td class="sa-num" data-sort="${assOf(p) != null ? assOf(p) : ''}">${assOf(p) != null ? escapeHtml(fmt(assOf(p))) : ''}</td>
                     <td class="sa-num" data-sort="${invOf(p) > 0 ? invOf(p) : ''}">${invOf(p) > 0 ? escapeHtml(fmt(invOf(p))) : ''}</td>
+                    <td class="sa-num" data-sort="${nerdsOf(p.name) ?? ''}">${nerdsOf(p.name) > 0 ? escapeHtml(fmt(nerdsOf(p.name))) : ''}</td>
+                    <td class="sa-num" style="color:var(--muted)">${sharesSet.has(lowK(p.name)) ? '<span class="sa-diff-pos" title="Shares SharkBot data">✓</span>' : tempSet.has(lowK(p.name)) ? '<span title="Temp profile">temp</span>' : ''}</td>
+                    <td class="sa-num" style="color:var(--muted)">${escapeHtml(verOf(p.name))}</td>
 </tr>`).join('')}</tbody></table></div>${detailBox('players')}`
                 : `<div class="sa-empty">${all.length ? 'No players match.' : 'No players seen yet.'}</div>`}
-            <div class="sa-slot-meta" style="margin-top:4px">Click a shortened alliance ID to copy it and fill the form above.${my ? '' : ' Mark your alliance with ☆ in the Alliances table.'}</div>`;
-        view.querySelector('#sa-players-refresh').addEventListener('click', () => { fetchOnline(true); adminRefresh(); });   // shared data too (since v3.14.2)
-        const qi = view.querySelector('#sa-players-q');
-        qi.addEventListener('input', () => { GM_setValue('sa-players-q', qi.value); renderPlayers();
-            const n = document.getElementById('sa-players-q'); if (n) { n.focus(); n.setSelectionRange(n.value.length, n.value.length); } });
-        view.querySelector('#sa-players-mine')?.addEventListener('change', (e) => { GM_setValue('sa-players-mine', e.target.checked); renderPlayers(); });
-        view.querySelector('#sa-players-inv')?.addEventListener('change', (e) => { GM_setValue('sa-players-inv', e.target.checked); renderPlayers(); });
-        view.querySelector('#sa-players-hide-empty')?.addEventListener('change', (e) => { GM_setValue('sa-players-hide-empty', e.target.checked); renderPlayers(); });
-        // Click a player (under an alliance, or in Players) to show / hide their shared data
-        view.querySelectorAll('tr[data-pname]').forEach(tr => tr.addEventListener('click', (e) => {
-            if (e.target.closest('.sa-ally-id, input, button')) return;
-            const where = tr.dataset.pwhere, name = tr.dataset.pname;
-            plOpen = isOpen(where, name) ? null : { where, name };
-            renderPlayers();
-            if (plOpen) { const box = view.querySelector('.sa-pl-detail'); if (box) box.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }
-        }));
-        view.querySelector('#sa-pl-close')?.addEventListener('click', () => { plOpen = null; renderPlayers(); });
-        const plBox = view.querySelector('.sa-pl-detail');
-        if (plBox && plOpen) { const sp = (adminData || []).find(x => String(x.player).trim().toLowerCase() === plOpen.name.trim().toLowerCase()); if (sp) wireAdminDetail(plBox, sp); else wireDelete(plBox); }
-        view.querySelectorAll('tr[data-agroup]').forEach(tr => tr.addEventListener('click', (e) => {
-            if (e.target.closest('.sa-ally-star, .sa-ally-edit, .sa-ally-id, input, button')) return;
-            const k = tr.dataset.agroup; allyOpen[k] = !allyOpen[k]; renderPlayers();
-        }));
-        // Clicking a shortened ID copies it and fills the "Name an alliance" form
-        view.querySelectorAll('.sa-ally-id').forEach(el => el.addEventListener('click', () => {
-            allyAddId = el.dataset.ally;
-            try { navigator.clipboard.writeText(el.dataset.ally); } catch (e) {}
-            const idBox = view.querySelector('#sa-ally-add-id'), nameBox = view.querySelector('#sa-ally-add-name');
-            if (idBox) { idBox.value = allyAddId; nameBox.value = ''; nameBox.focus(); nameBox.scrollIntoView({ block: 'nearest' }); }
-        }));
-        view.querySelector('#sa-ally-add-name').addEventListener('keydown', (e) => { if (e.key === 'Enter') view.querySelector('#sa-ally-add').click(); });
-        // Rename (Enter saves, Esc cancels), mark yours, add by ID: all saved on Sharky's server
-        view.querySelectorAll('.sa-ally-edit').forEach(el => el.addEventListener('click', () => {
-            allyEditing = el.dataset.edit; renderPlayers();
-            const inp = view.querySelector('.sa-ally-input'); if (inp) { inp.focus(); inp.select(); }
-        }));
-        view.querySelectorAll('.sa-ally-input').forEach(inp => inp.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape') { allyEditing = null; inp.blur(); renderPlayers(); }
-            if (e.key === 'Enter') { const id = inp.dataset.edit, name = inp.value; allyEditing = null; inp.blur(); allianceUpdate({ id, name }); }
-        }));
-        view.querySelectorAll('.sa-ally-star').forEach(el => el.addEventListener('click', () => {
-            const id = el.dataset.star; allianceUpdate({ id, mine: id !== my });
-        }));
-        wireRenameBar(view);
-        view.querySelector('#sa-ally-add').addEventListener('click', () => {
-            const id = view.querySelector('#sa-ally-add-id').value.trim().toLowerCase(), name = view.querySelector('#sa-ally-add-name').value;
-            if (!/^[0-9a-f]{24}$/.test(id)) { allyMsg = 'An alliance ID is 24 characters, 0-9 and a-f'; allyAddId = id; if (document.activeElement) document.activeElement.blur(); renderPlayers(); return; }
-            allyAddId = ''; if (document.activeElement && view.contains(document.activeElement)) document.activeElement.blur();
-            allianceUpdate({ id, name });
-        });
+`;
+
+        const wireRoot = (root) => {
+            root.querySelectorAll('.sa-players-refresh').forEach(bt => bt.addEventListener('click', () => { fetchOnline(true); adminRefresh(); }));   // shared data too (since v3.14.2)
+            const qi = root.querySelector('#sa-players-q');
+            qi?.addEventListener('input', () => { GM_setValue('sa-players-q', qi.value); renderPlayers();
+                const n = document.getElementById('sa-players-q'); if (n) { n.focus(); n.setSelectionRange(n.value.length, n.value.length); } });
+            root.querySelector('#sa-players-mine')?.addEventListener('change', (e) => { GM_setValue('sa-players-mine', e.target.checked); renderPlayers(); });
+            root.querySelector('#sa-players-inv')?.addEventListener('change', (e) => { GM_setValue('sa-players-inv', e.target.checked); renderPlayers(); });
+            root.querySelectorAll('.sa-players-hide-empty').forEach(cb => cb.addEventListener('change', (e) => { GM_setValue('sa-players-hide-empty', e.target.checked); renderPlayers(); }));
+            root.querySelector('#sa-players-online')?.addEventListener('change', (e) => { GM_setValue('sa-players-online', e.target.checked); renderPlayers(); });
+            // Click a player (under an alliance, or in Players) to show / hide their shared data
+            root.querySelectorAll('tr[data-pname]').forEach(tr => tr.addEventListener('click', (e) => {
+                if (e.target.closest('.sa-ally-id, input, button')) return;
+                const where = tr.dataset.pwhere, name = tr.dataset.pname;
+                plOpen = isOpen(where, name) ? null : { where, name };
+                renderPlayers();
+                if (plOpen) { const box = root.querySelector('.sa-pl-detail'); if (box) box.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }
+            }));
+            root.querySelector('#sa-pl-close')?.addEventListener('click', () => { plOpen = null; renderPlayers(); });
+            const plBox = root.querySelector('.sa-pl-detail');
+            if (plBox && plOpen) { const sp = (adminData || []).find(x => String(x.player).trim().toLowerCase() === plOpen.name.trim().toLowerCase()); if (sp) wireAdminDetail(plBox, sp); else wireDelete(plBox); }
+            root.querySelectorAll('tr[data-agroup]').forEach(tr => tr.addEventListener('click', (e) => {
+                if (e.target.closest('.sa-ally-star, .sa-ally-edit, .sa-ally-id, input, button')) return;
+                const k = tr.dataset.agroup; allyOpen[k] = !allyOpen[k]; renderPlayers();
+            }));
+            // Clicking a shortened ID copies it and fills the "Name an alliance" form
+            root.querySelectorAll('.sa-ally-id').forEach(el => el.addEventListener('click', () => {
+                allyAddId = el.dataset.ally;
+                try { navigator.clipboard.writeText(el.dataset.ally); } catch (e) {}
+                const idBox = root.querySelector('#sa-ally-add-id'), nameBox = root.querySelector('#sa-ally-add-name');
+                if (idBox) { idBox.value = allyAddId; nameBox.value = ''; nameBox.focus(); nameBox.scrollIntoView({ block: 'nearest' }); }
+            }));
+            root.querySelector('#sa-ally-add-name')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') root.querySelector('#sa-ally-add').click(); });
+            // Rename (Enter saves, Esc cancels), mark yours, add by ID: all saved on Sharky's server
+            root.querySelectorAll('.sa-ally-edit').forEach(el => el.addEventListener('click', () => {
+                allyEditing = el.dataset.edit; renderPlayers();
+                const inp = root.querySelector('.sa-ally-input'); if (inp) { inp.focus(); inp.select(); }
+            }));
+            root.querySelectorAll('.sa-ally-input').forEach(inp => inp.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape') { allyEditing = null; inp.blur(); renderPlayers(); }
+                if (e.key === 'Enter') { const id = inp.dataset.edit, name = inp.value; allyEditing = null; inp.blur(); allianceUpdate({ id, name }); }
+            }));
+            root.querySelectorAll('.sa-ally-star').forEach(el => el.addEventListener('click', () => {
+                const id = el.dataset.star; allianceUpdate({ id, mine: id !== my });
+            }));
+            wireRenameBar(view);
+            root.querySelector('#sa-ally-add')?.addEventListener('click', () => {
+                const id = root.querySelector('#sa-ally-add-id').value.trim().toLowerCase(), name = root.querySelector('#sa-ally-add-name').value;
+                if (!/^[0-9a-f]{24}$/.test(id)) { allyMsg = 'An alliance ID is 24 characters, 0-9 and a-f'; allyAddId = id; if (document.activeElement) document.activeElement.blur(); renderPlayers(); return; }
+                allyAddId = ''; if (document.activeElement && root.contains(document.activeElement)) document.activeElement.blur();
+                allianceUpdate({ id, name });
+            });
+        };
+        wireRoot(view);
+        if (pview) wireRoot(pview);
     }
     var allyRenamePick = '';
     function wireRenameBar(view) {
@@ -6627,7 +6749,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         q.addEventListener('input', () => { flFilter.q = q.value; const pos = q.selectionStart; q.blur(); renderFleets(); const n = document.getElementById('sa-fl-q'); if (n) { n.focus(); n.setSelectionRange(pos, pos); } });
         [['#sa-fl-ally', 'ally'], ['#sa-fl-mission', 'mission'], ['#sa-fl-range', 'range']].forEach(([id, k]) => view.querySelector(id).addEventListener('change', (e) => { flFilter[k] = e.target.value; renderFleets(); }));
         view.querySelectorAll('.sa-fl-owner').forEach(el => el.addEventListener('click', () => {
-            plOpen = { where: 'players', name: el.dataset.owner }; GM_setValue('sa-players-q', el.dataset.owner); switchTab('players'); try { renderPlayers(); } catch (e) {}
+            plOpen = { where: 'players', name: el.dataset.owner }; GM_setValue('sa-players-q', el.dataset.owner); switchTab('plist'); try { renderPlayers(); } catch (e) {}
         }));
     }
     function fleetsHtml(name) {
@@ -10074,7 +10196,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
 
     // ---------- Expand all / Collapse all (since v3.12.0) ----------
     // At the top of every subtab with parts that open and close. Display only: nothing new is loaded.
-    const EA_PANES = ['units', 'research', 'facilities', 'bank', 'trapcalc', 'cards', 'admin', 'adminusers', 'players', 'fleets'];
+    const EA_PANES = ['units', 'research', 'facilities', 'bank', 'trapcalc', 'cards', 'admin', 'adminusers', 'players', 'plist', 'fleets'];
     function eaApply(name, open) {
         const root = document.querySelector(`#${PANEL_ID} .sa-pane[data-pane="${name}"]`);
         if (!root) return;
