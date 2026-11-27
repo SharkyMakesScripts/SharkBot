@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SharkBot
 // @namespace    https://spacealpha.net/
-// @version      3.25.7
+// @version      3.26.1
 // @description  SharkBot for Space Alpha: saves your planets' units, facilities, inventory, research, bank and market prices, and calculates credit generation and Tick Generator upgrade costs.
 // @author       SharkBot
 // @match        https://spacealpha.net/*
@@ -44,7 +44,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     const PANEL_ID = 'sa-helper-panel';
     const SLOT_IDS = 'ABCDEFGHIJ'.split('');   // up to 10 planets
     // Version comes from the @version header so it's never out of sync
-    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.25.7';
+    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.26.1';
     // Two copies installed (usually an update pasted in as a new script): since v3.17.1 every copy writes its version on the
     // page before doing anything, so the second copy always sees the first, even if the first has no panel yet or crashed.
     // The second copy stops and shows a large banner at the top of the page naming the older copy to delete.
@@ -611,6 +611,10 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                         <a href="https://raw.githubusercontent.com/SharkyMakesScripts/SharkBot/main/SharkBot.user.js" target="_blank" rel="noopener" style="color:var(--accent)">this link</a>: Tampermonkey shows Install (or Update), and it keeps one copy that updates itself.
                         To update, use <b>Update</b> in SharkBot's bar. <b>Don't</b> paste SharkBot into a new script: that installs a second copy, and two copies running at once make SharkBot glitchy.
                         If a red bar says two copies are installed, delete the older one in the Tampermonkey dashboard.</div>
+                    <div style="font-size:11px; line-height:1.5; margin-bottom:8px"><b>Opera / Opera GX:</b> install Tampermonkey from Opera's add-ons store
+                        (<a href="https://addons.opera.com/en/extensions/details/tampermonkey-beta/" target="_blank" rel="noopener" style="color:var(--accent)">Tampermonkey on Opera add-ons</a>),
+                        not the Chrome Web Store, which Opera blocks. Then open <b>opera://extensions</b>, turn on <b>Developer mode</b> (top right), click Tampermonkey's <b>Details</b>
+                        and turn on <b>Allow user scripts</b>. If SharkBot still doesn't appear, turn Developer mode off and on again and restart Opera.</div>
                 </div>
                 <div class="sa-section" id="sa-lock"></div>
             </div>
@@ -1007,6 +1011,10 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                 <div class="sa-section" style="margin-top:14px">
                     <div class="sa-label">Sharing &amp; registration</div>
                     <div id="sa-share-box"></div>
+                </div>
+                <div class="sa-section" style="margin-top:14px">
+                    <div class="sa-label">Backup &amp; restore</div>
+                    <div id="sa-backup-box"></div>
                 </div>
                 <div class="sa-section" style="margin-top:14px">
                     <div class="sa-label">Tutorial</div>
@@ -2111,9 +2119,23 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         septillion: 1e24, octillion: 1e27, nonillion: 1e30, decillion: 1e33,
         qa: 1e15, qi: 1e18, sx: 1e21, sp: 1e24, oc: 1e27,   // short forms ("3.67 Sx")
     };
+    // The browser's decimal mark (since v3.26.1). The game writes full numbers the way the browser's language does: in Italian, German,
+    // Spanish and others "30.430.000.000" (dots group thousands) and "1,5" (comma is the decimal point)
+    const LOC_DEC = (() => { try { const p = new Intl.NumberFormat().formatToParts(1234567.5); return (p.find(x => x.type === 'decimal') || {}).value || '.'; } catch (e) { return '.'; } })();
+    function locNorm(s) {
+        let t = String(s).trim();
+        // Two or more dot groups ("30.430.000") can only be thousands, in any language; then a comma is the decimal point
+        if (/\d\.\d{3}\.\d{3}(?!\d)/.test(t)) return t.replace(/(\d)\.(?=\d{3}(?!\d))/g, '$1').replace(/(\d),(?=\d)/g, '$1.');
+        if (LOC_DEC !== ',' || /\de[+-]?\d+\s*[A-Za-z]*\s*$/i.test(t)) return t;   // scientific notation ("3.043e22") is left alone
+        // Comma-decimal languages: dots / spaces between digit groups are thousands, except before a unit ("78.555 T", "1.750 M"
+        // keep the game's decimal dot); the comma is the decimal point
+        const unit = /\d\s*[A-Za-z]+\s*$/.test(t) && !/\de[+-]?\d+\s*$/i.test(t);
+        if (!unit) t = t.replace(/(\d)[.\u00a0\u202f '’](?=\d{3}(?!\d))/g, '$1');
+        return t.replace(/(\d),(?=\d)/g, '$1.');
+    }
     function parseNumber(s) {
         if (s == null) return null;
-        let str = String(s).replace(/[,$€£%]/g, '').replace(/\s+/g, ' ').trim();
+        let str = locNorm(s).replace(/[,$€£%]/g, '').replace(/\s+/g, ' ').trim();
         if (!str) return null;
         if (/^\?+$/.test(str)) return null; // "???" means unknown
         // Word suffix: "22 Quintillion", "1 Octillion"
@@ -5296,21 +5318,20 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         if (!bar) return;
         const pull = GM_getValue('sa-pull-pending', null);
         const pullLive = pull && Date.now() - new Date(pull).getTime() < 15 * 60e3 && !shareOff() && !isLocked() && !sbView;
-        const prof = profileOffer && !shareOff() && !isLocked() && !sbView ? profileOffer : null;
+        const ok = !shareOff() && !isLocked() && !sbView && !!shareUrl();
+        const q = ok ? profQueue() : {}, list = Object.values(q), sig = profQueueSig(q);
+        const show = list.length && sig !== profBarHidden;
         renderPullPopup(pullLive ? pull : null);
-        if (!prof) { bar.style.display = 'none'; bar.innerHTML = ''; return; }
+        if (!show && !(ok && profMsg)) { bar.style.display = 'none'; bar.innerHTML = ''; return; }
         bar.style.cssText = 'display:flex; flex-direction:column; gap:4px; padding:5px 10px; font-size:11px; border-bottom:1px solid var(--border); background:rgba(80,160,255,0.12)';
-        bar.innerHTML = (prof ? `<div style="display:flex; gap:6px; align-items:center"><span style="flex:1">${escapeHtml(prof.owner)}'s Profile → Investments is open (${prof.items.length} investment${prof.items.length === 1 ? '' : 's'}).</span>
-                <button class="sa-btn" id="sa-nb-prof" style="margin:0">Send to holder lists</button><button class="sa-btn" id="sa-nb-prof-x" style="margin:0">Not now</button></div>` : '');
-        bar.querySelector('#sa-nb-prof')?.addEventListener('click', () => {
-            const d = profileOffer; if (!d) return;
-            confirmSend(`Send ${d.owner}'s investments to the holder lists?`, [`${d.items.length} investment${d.items.length === 1 ? '' : 's'} from ${d.owner}'s Profile → Investments window: name, shares, stake and value`,
-                'Who sent it (your game name)'], 'Every SharkBot player sees them in Data → Bank and Calculators → TRAPs.', async () => {
-                    if (sharePref().share !== 'yes') await setSharePref({ share: 'yes' });
-                    profileOffer = null; renderNoticeBar(); sendProfile(d);
-                });
-        });
-        bar.querySelector('#sa-nb-prof-x')?.addEventListener('click', () => { if (profileOffer) profileSkip[profileOffer.owner.trim().toLowerCase()] = Date.now(); profileOffer = null; renderNoticeBar(); });
+        bar.innerHTML = (show ? `<div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap"><span style="flex:1; min-width:180px">${list.length} profile${list.length === 1 ? '' : 's'} ready to send to the holder lists:
+                ${list.sort((a, b) => a.owner.localeCompare(b.owner, undefined, { sensitivity: 'base' })).map(x => `${escapeHtml(x.owner)} (${x.items.length})`).join(', ')}.</span>
+                <button class="sa-btn" id="sa-nb-prof" style="margin:0">Send all to holder lists</button><button class="sa-btn" id="sa-nb-prof-clear" style="margin:0">Clear list</button>
+                <button class="sa-btn" id="sa-nb-prof-x" style="margin:0">Not now</button></div>` : '')
+            + (profMsg ? `<div class="sa-slot-meta">${escapeHtml(profMsg)}</div>` : '');
+        bar.querySelector('#sa-nb-prof')?.addEventListener('click', () => sendAllProfiles());
+        bar.querySelector('#sa-nb-prof-clear')?.addEventListener('click', () => { GM_setValue('sa-profile-queue', {}); profSay('List cleared; nothing was sent.'); });
+        bar.querySelector('#sa-nb-prof-x')?.addEventListener('click', () => { profBarHidden = sig; renderNoticeBar(); });   // back when another profile is added
     }
     // Sharky's request for fresh data (since v3.20.1): a pop-up over the game page itself (seen even with the panel collapsed),
     // listing what would be sent, with Send my data / Not now. Only for players who haven't turned sharing off; once per request,
@@ -5377,10 +5398,11 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         box.querySelector('.sa-sp-yes').addEventListener('click', () => done('yes'));
         box.querySelector('.sa-sp-no').addEventListener('click', () => done('no'));
     }
-    function fullStore() {
+    function fullStore(whole) {
         if (!__SB_GM.list) return null;
         const o = {};
-        __SB_GM.list().filter(k => /^sa-/.test(k) && !VIEW_OWN.test(k)).forEach(k => { const v = __SB_GM.get(k, null); if (v != null && v !== '') o[k] = v; });
+        __SB_GM.list().filter(k => /^sa-/.test(k) && !backupSkip(k)).forEach(k => { const v = __SB_GM.get(k, null); if (v != null && v !== '') o[k] = v; });
+        if (whole) return o;
         let n = JSON.stringify(o).length;
         if (n > 1200000 && o['sa-stmt-history']) { delete o['sa-stmt-history']; o.__trimmed = 'sa-stmt-history'; n = JSON.stringify(o).length; }
         return n > 1200000 ? { __tooBig: n } : o;
@@ -5422,10 +5444,102 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         box.addEventListener('click', (ev) => { if (ev.target === box) box.remove(); });
         box.querySelector('.sa-confirm-ok').addEventListener('click', () => { box.remove(); onOk(); });
     }
+    // ---------- Backup & restore (since v3.26.0) ----------
+    // Items never in a backup or touched by an import: registration and install code, admin data, layout and look, data fetched from the game
+    // or Sharky's server (VIEW_OWN), plus this browser's profile send list and the admin's open/closed sections
+    function backupSkip(k) { return VIEW_OWN.test(k) || /^sa-(profile-queue|profile-sent|pl-folds|pull-)/.test(k); }
+    var bkMsg = '';
+    function renderBackup() {
+        const box = document.getElementById('sa-backup-box');
+        if (!box) return;
+        const off = isLocked() || sbView ? 'disabled' : '';
+        box.innerHTML = `<div style="font-size:10px; color:var(--muted); margin:2px 0 6px">Save everything SharkBot keeps for you (planets, research, bank, cards, debts,
+                calculator settings and Net Worth history) as a file, and bring it back later. It all happens in your browser: nothing goes online.
+                Your registration and panel layout aren't in the file and are never changed by an import.</div>
+            <div style="display:flex; gap:6px; flex-wrap:wrap">
+                <button class="sa-btn" id="sa-bk-dl" style="margin:0; flex:1" ${off}>⬇ Download my data</button>
+                <button class="sa-btn" id="sa-bk-imp" style="margin:0; flex:1" ${off}>⬆ Import data</button></div>
+            <input type="file" id="sa-bk-file" accept=".json,application/json" style="display:none">
+            <div id="sa-bk-msg" class="sa-slot-meta" style="margin-top:4px">${escapeHtml(bkMsg)}</div>`;
+        box.querySelector('#sa-bk-dl').addEventListener('click', () => { bkMsg = ''; downloadMyData(); });
+        const inp = box.querySelector('#sa-bk-file');
+        box.querySelector('#sa-bk-imp').addEventListener('click', () => { inp.value = ''; inp.click(); });
+        inp.addEventListener('change', () => { if (inp.files && inp.files[0]) readImportFile(inp.files[0]); });
+    }
+    function bkSay(m) { bkMsg = m; renderBackup(); }
+    function readImportFile(file) {
+        if (isLocked() || sbView) return;
+        const rd = new FileReader();
+        rd.onerror = () => bkSay('Couldn\'t read that file.');
+        rd.onload = () => {
+            let o; try { o = JSON.parse(String(rd.result || '')); } catch (e) { return bkSay('That file isn\'t SharkBot data (it isn\'t a JSON file).'); }
+            const d = o && o.data, store = d && d.store;
+            if (!store || typeof store !== 'object' || Array.isArray(store)) return bkSay('That file has no SharkBot data in it. Use a file saved with Download my data.');
+            if (store.__tooBig) return bkSay('That file was saved by an older SharkBot when your data was too large, so it has no saved data in it. Download a new one with this version.');
+            const keys = Object.keys(store).filter(k => /^sa-/.test(k) && !backupSkip(k));
+            if (!keys.length) return bkSay('That file has no SharkBot data in it.');
+            importBox(o, store, keys);
+        };
+        rd.readAsText(file);
+    }
+    function importBox(o, store, keys) {
+        panel.querySelector('.sa-confirm')?.remove();
+        const d = o.data || {}, who = String(d.player || '').trim(), me = String(pageUsername() || GM_getValue('sa-username', '') || '').trim();
+        const other = who && who !== 'unknown' && me && who.toLowerCase() !== me.toLowerCase();
+        const when = o.exportedAt || d.sentAt, trimmed = store.__trimmed ? String(store.__trimmed) : '';
+        const planets = keys.filter(k => /^sa-unit-slot-/.test(k)).length;
+        const box = document.createElement('div');
+        box.className = 'sa-confirm';
+        box.style.cssText = 'position:absolute; inset:0; z-index:50; display:flex; align-items:center; justify-content:center; background:rgba(0,0,0,0.55)';
+        box.innerHTML = `<div style="max-width:400px; margin:12px; padding:12px 14px; background:var(--bg, #111827); border:1px solid var(--border); border-radius:8px; font-size:12px">
+            <div style="margin-bottom:6px"><b>Import SharkBot data?</b></div>
+            <ul style="margin:0 0 6px; padding-left:18px; font-size:11px; line-height:1.45">
+                <li>Player: <b>${escapeHtml(who || 'unknown')}</b></li>
+                <li>Saved: ${when ? escapeHtml(new Date(when).toLocaleString()) : 'unknown'} · SharkBot v${escapeHtml(String(o.sharkbot || d.version || '?'))}</li>
+                <li>${keys.length} saved item${keys.length === 1 ? '' : 's'}${planets ? ` (${planets} planet${planets === 1 ? '' : 's'} with units)` : ''}</li></ul>
+            ${other ? `<div style="color:var(--neg, #e06060); font-size:11px; margin-bottom:6px"><b>This file is from ${escapeHtml(who)}, but the game shows ${escapeHtml(me)}.</b> Importing puts their data in your SharkBot.</div>` : ''}
+            ${trimmed ? `<div style="color:var(--warn, #e0b050); font-size:11px; margin-bottom:6px">This file was saved without your statement history (it was too large then). Your current statement history is kept.</div>` : ''}
+            <div style="font-size:10px; color:var(--muted); margin-bottom:10px; line-height:1.45"><b>Replace</b>: your SharkBot data becomes exactly what's in the file.
+                <b>Merge</b>: the file's data is added and anything the file doesn't have is kept; where both have the same thing, the file's wins, and Net Worth history rows are combined.
+                Your registration and layout aren't touched. Nothing is sent anywhere.</div>
+            <div style="display:flex; gap:6px"><button class="sa-btn sa-imp-rep" style="margin:0; flex:1">Replace</button><button class="sa-btn sa-imp-mrg" style="margin:0; flex:1">Merge</button>
+                <button class="sa-btn sa-imp-no" style="margin:0; flex:1">Cancel</button></div></div>`;
+        panel.appendChild(box);
+        box.querySelector('.sa-imp-no').addEventListener('click', () => { box.remove(); bkSay('Import cancelled; nothing changed.'); });
+        box.addEventListener('click', (ev) => { if (ev.target === box) box.remove(); });
+        box.querySelector('.sa-imp-rep').addEventListener('click', () => { box.remove(); applyImport(store, keys, 'replace', trimmed); });
+        box.querySelector('.sa-imp-mrg').addEventListener('click', () => { box.remove(); applyImport(store, keys, 'merge', trimmed); });
+    }
+    function applyImport(store, keys, mode, trimmed) {
+        if (isLocked() || sbView) return;
+        try {
+            if (mode === 'replace') {
+                const keep = trimmed ? trimmed.split(',') : [];
+                GM_listValues().filter(k => /^sa-/.test(k) && !backupSkip(k) && !keep.includes(k)).forEach(k => GM_deleteValue(k));
+                keys.forEach(k => GM_setValue(k, store[k]));
+            } else {
+                keys.forEach(k => {
+                    if (k === 'sa-nw-history' && Array.isArray(store[k])) {
+                        const m = {}; (GM_getValue(k, []) || []).forEach(r => { if (r && r.t) m[r.t] = r; }); store[k].forEach(r => { if (r && r.t) m[r.t] = r; });
+                        nwHistSave(Object.values(m));
+                    } else GM_setValue(k, store[k]);
+                });
+            }
+        } catch (e) { bkSay('Import stopped part-way: ' + e.message); return; }
+        lastScan = null;
+        rerenderAfterData();
+        bkSay(`${mode === 'replace' ? 'Replaced' : 'Merged'}: ${keys.length} item${keys.length === 1 ? '' : 's'} imported ${new Date().toLocaleTimeString()}.`);
+    }
+    // Redraw everything that shows saved data, in place (no reload, no tab change)
+    function rerenderAfterData() {
+        [renderSlots, renderResearchSlots, renderFacilitiesSlots, renderMarket, renderInventory, renderBank, renderTraps, renderTurnGen, renderTurns,
+         renderNation, renderCards, renderPlanetList, showDetected, renderAllViews].forEach(fn => { try { fn(); } catch (e) {} });
+    }
     // Download my data (since v3.21.0): exactly what Send my data would send, as a JSON file, built here and never sent anywhere
+    // Since v3.26.0 it's a full backup: the saved data inside is never trimmed (Send my data trims very large statement histories)
     function downloadMyData() {
         if (isLocked() || sbView) return;
-        let snap; try { snap = shareSnapshot(); } catch (e) { const st = document.getElementById('sa-share-status'); if (st) st.textContent = 'Couldn\'t gather your data: ' + e.message; return; }
+        let snap; try { snap = shareSnapshot(); snap.store = fullStore(true); if (!snap.player || snap.player === 'unknown') snap.player = String(pageUsername() || GM_getValue('sa-username', '') || 'unknown').trim(); } catch (e) { bkMsg = 'Couldn\'t gather your data: ' + e.message; renderBackup(); return; }
         const who = String(pageUsername() || GM_getValue('sa-username', '') || 'player').replace(/[\\/:*?"<>|]+/g, '_');
         const d = new Date(), day = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
         const blob = new Blob([JSON.stringify({ exportedAt: d.toISOString(), sharkbot: VERSION, data: snap }, null, 2)], { type: 'application/json' });
@@ -5475,8 +5589,6 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                 <button class="sa-btn ${sp.share === 'no' ? 'active' : ''}" id="sa-share-off" style="margin:0; flex:1" ${url && !isLocked() ? '' : 'disabled'}>Don't share</button></div>
             <div style="margin-top:6px"><button class="sa-btn" id="sa-share-send" style="margin:0" ${url && !isLocked() && sp.share !== 'no' ? '' : 'disabled'}>📤 Send my data</button>
             <span id="sa-share-status" class="sa-slot-meta" style="margin-left:6px">${sp.share === 'no' ? 'Sharing is off. ' : ''}${last ? 'Last shared ' + new Date(last).toLocaleString() : ''}</span></div>
-            <div style="margin-top:6px"><button class="sa-btn" id="sa-share-dl" style="margin:0" ${isLocked() || sbView ? 'disabled' : ''}>⬇ Download my data</button>
-                <span class="sa-slot-meta" style="margin-left:6px">The same data Send my data would send, saved as a file on your computer. Nothing goes online.</span></div>
             <label class="sa-check" style="margin:6px 0 0"><input type="checkbox" id="sa-share-hide" ${sp.hide ? 'checked' : ''}> <span>Don't show the sharing pop-up again (for this game account)</span></label>
             <div style="margin-top:10px; font-size:10px; color:var(--muted)">Delete what you've already shared: your row of shared data and the profile investments you sent are removed from Sharky's server.</div>
             <button class="sa-btn sa-btn-danger" id="sa-share-del" style="margin:4px 0 0" ${url && !isLocked() ? '' : 'disabled'}>${shareDelArmed ? 'Click again to delete what you shared' : '🗑 Delete what I\'ve shared'}</button>
@@ -5488,7 +5600,6 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         box.querySelector('#sa-share-off').addEventListener('click', () => setSharePref({ share: 'no' }));
         box.querySelector('#sa-share-hide').addEventListener('change', (e) => setSharePref({ hide: e.target.checked }));
         box.querySelector('#sa-share-send').addEventListener('click', () => askShareNow());
-        box.querySelector('#sa-share-dl').addEventListener('click', () => downloadMyData());
         box.querySelector('#sa-share-del').addEventListener('click', async () => {
             if (!shareDelArmed) { shareDelArmed = true; renderShareSettings(); setTimeout(() => { shareDelArmed = false; renderShareSettings(); }, 8000); return; }
             shareDelArmed = false; shareDelMsg = 'Deleting…'; renderShareSettings();
@@ -6267,12 +6378,12 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             if (force) regMsg = /unknown action/.test(e.message) ? 'Sharky\'s server isn\'t updated for registration yet' : 'Couldn\'t reach Sharky\'s server: ' + e.message;
         } finally { regBusy = false; }
         applyLock();
-        try { renderUpdateBar(); renderNoticeBar(); renderShareSettings(); } catch (e) {}
+        try { renderUpdateBar(); renderNoticeBar(); renderShareSettings(); renderBackup(); } catch (e) {}
         try { maybeSharePopup(); } catch (e) {}
     }
     // Every view that shows saved data, for when the panel unlocks
     function renderAllViews() {
-        [() => renderStatements(), () => renderBank(), () => renderShareSettings(), () => renderUiSize()].forEach(f => { try { f(); } catch (e) {} });
+        [() => renderStatements(), () => renderBank(), () => renderShareSettings(), () => renderBackup(), () => renderUiSize()].forEach(f => { try { f(); } catch (e) {} });
     }
 
     // Admin → Users: list registrations, accept or deny (needs the admin login from Dashboard)
@@ -6705,7 +6816,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             ${shown.length ? `<div style="overflow-x:auto"><table class="sa-unit-table" data-sort-id="admin-players"><thead><tr><th title="Online">●</th><th>Name</th><th>Last seen</th><th>First seen</th><th style="text-align:right" title="From their shared data (blank if they don't share)">Assassins</th><th style="text-align:right" title="Credits invested, if their investments are known">Invested</th><th style="text-align:right">NERDs</th><th style="text-align:right" title="✓ shares SharkBot data · temp = temp profile">SharkBot</th><th style="text-align:right">Version</th></tr></thead><tbody>
                 ${shown.map(p => `<tr data-pname="${escapeHtml(p.name)}" data-pwhere="players" title="Click to ${isOpen('players', p.name) ? 'hide' : 'show'} their shared data"
                     style="cursor:pointer${isOpen('players', p.name) ? '; background:var(--hover)' : ''}"><td data-sort="${onlineSet.has(p.id) ? 1 : 0}" style="color:${onlineSet.has(p.id) ? 'var(--pos)' : 'var(--dim)'}" title="${onlineSet.has(p.id) ? 'Online now' : 'Offline'}">●</td>
-                    <td title="User ID ${escapeHtml(p.id)}" data-sort="${escapeHtml((p.name || '').toLowerCase())}" style="white-space:nowrap"><span style="color:var(--muted)">${isOpen('players', p.name) ? '▾' : '▸'}</span> ${escapeHtml(p.name)}${p.pvp ? ' <span title="PvP mode (from the highscore)" style="font-size:9px; padding:0 4px; border:1px solid var(--warn, #e0b050); border-radius:3px; color:var(--warn, #e0b050)">PvP</span>' : ''}${coin(p.name)}</td>
+                    <td title="User ID ${escapeHtml(p.id)}" data-sort="${escapeHtml((p.name || '').toLowerCase())}" style="white-space:normal; overflow-wrap:anywhere; min-width:90px"><span style="color:var(--muted)">${isOpen('players', p.name) ? '▾' : '▸'}</span> ${escapeHtml(p.name)}${p.pvp ? ' <span title="PvP mode (from the highscore)" style="font-size:9px; padding:0 4px; border:1px solid var(--warn, #e0b050); border-radius:3px; color:var(--warn, #e0b050)">PvP</span>' : ''}${coin(p.name)}</td>
                     <td data-sort="${onlineSet.has(p.id) ? Date.now() : ts(p.last)}">${onlineSet.has(p.id) ? 'online' : p.last ? agoText(p.last) : '<span style="color:var(--dim)">not seen</span>'}</td>
                     <td data-sort="${ts(p.first)}">${dt(p.first)}</td>
                     <td class="sa-num" data-sort="${assOf(p) != null ? assOf(p) : ''}">${assOf(p) != null ? escapeHtml(fmt(assOf(p))) : ''}</td>
@@ -8967,6 +9078,23 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     // The game's investment list: Name | Invested | 24h | 7d | 30d | Price. The tab doesn't
     // change the page address, so open it and click Manual Scan.
     // ---------- Profile → Investments (since v3.0.5): your Shares, Stake % and Value per investment ----------
+    // Every Profile → Investments table open on the page (since v3.26.0 several profile windows can be open at once)
+    function findProfileInvestTables() {
+        const isHead = (cells) => {
+            const t = cells.map(c => (c.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase());
+            return t.includes('name') && t.includes('shares') && t.includes('stake') && t.includes('value');
+        };
+        const out = [];
+        for (const t of document.querySelectorAll('table')) {
+            if (t.closest('#' + PANEL_ID)) continue;
+            const rows = Array.from(t.querySelectorAll('tr'));
+            const hi = rows.findIndex(r => isHead(Array.from(r.children)));
+            if (hi >= 0 && !out.some(o => o.el.contains(t))) out.push({ rows, hi, el: t });
+        }
+        if (out.length) return out;
+        const one = findProfileInvestTable();
+        return one ? [one] : [];
+    }
     function findProfileInvestTable() {
         const isHead = (cells) => {
             const t = cells.map(c => (c.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase());
@@ -8976,19 +9104,22 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             if (t.closest('#' + PANEL_ID)) continue;
             const rows = Array.from(t.querySelectorAll('tr'));
             const hi = rows.findIndex(r => isHead(Array.from(r.children)));
-            if (hi >= 0) return { rows, hi };
+            if (hi >= 0) return { rows, hi, el: t };
         }
         // Not a <table>: find the "Stake" header and walk up to its row
         const leaf = Array.from(document.querySelectorAll('body *')).find(el =>
             !el.closest('#' + PANEL_ID) && !el.children.length && /^stake$/i.test((el.textContent || '').trim()));
         let row = leaf;
         while (row && !(row.children.length >= 4 && isHead(Array.from(row.children)))) row = row.parentElement;
-        if (row && row.parentElement) { const rows = Array.from(row.parentElement.children); return { rows, hi: rows.indexOf(row) }; }
+        if (row && row.parentElement) { const rows = Array.from(row.parentElement.children); return { rows, hi: rows.indexOf(row), el: row.parentElement }; }
         return null;
     }
-    function readProfileInvest() {
-        const f = findProfileInvestTable();
-        if (!f) return null;
+    function readProfileInvest() { return readProfileInvestAll()[0] || null; }
+    function readProfileInvestAll() {
+        const heads = profileHeads();
+        return findProfileInvestTables().map(f => readProfileTable(f, heads)).filter(Boolean);
+    }
+    function readProfileTable(f, heads) {
         const head = Array.from(f.rows[f.hi].children).map(c => (c.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase());
         const ci = { name: head.indexOf('name'), shares: head.indexOf('shares'), stake: head.indexOf('stake'), value: head.indexOf('value') };
         const items = [];
@@ -9003,35 +9134,90 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             items.push({ name, shares: parseNumber((c[ci.shares]?.textContent || '').trim()), stake: sm ? parseFloat(sm[1].replace(/,/g, '')) : null,
                          value: v.value, valueDisplay: v.display });
         });
-        return items.length ? { savedAt: new Date().toISOString(), owner: profileOwner(), items } : null;
+        return items.length ? { savedAt: new Date().toISOString(), owner: ownerFor(f.el, heads), items } : null;
     }
     // Whose profile is open: the "<name> - User Info" heading of the profile window
-    function profileOwner() {
-        const el = Array.from(document.querySelectorAll('body *')).find(e => !e.closest('#' + PANEL_ID) && !e.children.length &&
-            /^\s*\S.*?\s+[-–]\s+User Info\s*$/i.test(e.textContent || ''));
-        const m = el && (el.textContent || '').match(/^\s*(.+?)\s+[-–]\s+User Info\s*$/i);
-        return m ? m[1].trim() : '';
+    const USER_INFO_RE = /^\s*(\S.*?)\s+[-–]\s+User Info\s*$/i;
+    function profileHeads() {
+        return Array.from(document.querySelectorAll('body *')).filter(e => !e.closest('#' + PANEL_ID) && !e.children.length && USER_INFO_RE.test(e.textContent || ''));
+    }
+    function headOwner(el) { const m = el && (el.textContent || '').match(USER_INFO_RE); return m ? m[1].trim() : ''; }
+    function profileOwner() { return headOwner(profileHeads()[0]); }
+    // With several profile windows open, a table belongs to the heading in its own window: the closest box around the table
+    // that holds a heading (if that box holds several, the last heading before the table)
+    function ownerFor(el, heads) {
+        if (heads.length <= 1) return headOwner(heads[0]);
+        for (let n = el && el.parentElement; n; n = n.parentElement) {
+            const inside = heads.filter(h => n.contains(h));
+            if (inside.length === 1) return headOwner(inside[0]);
+            if (inside.length > 1) {
+                const before = inside.filter(h => h.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING);
+                return headOwner(before[before.length - 1] || inside[0]);
+            }
+        }
+        return '';
     }
     function profileInvestLoad() { return GM_getValue('sa-profile-invest', null); }
-    // Send a profile's investments to Sharky's server, at most every 15 minutes per player (the server checks too)
-    var profileSent = {};
+    // Send one profile's investments to Sharky's server (only from Send all on the bar). True if the server took it
+    // (or already had it from the last 15 minutes); the time is remembered so the same player isn't offered again for 15 minutes
     async function sendProfile(d) {
         const url = shareUrl(), k = d.owner.trim().toLowerCase();
-        if (!url || isLocked() || sbView || (profileSent[k] && Date.now() - profileSent[k] < 15 * 60e3)) return;
-        profileSent[k] = Date.now();
+        if (!url || isLocked() || sbView) return false;
         try {
-            refusedCheck(await gmPost(url, Object.assign({ action: 'saveprofile', owner: d.owner,
-                items: d.items.map(x => ({ name: x.name, shares: x.shares, stake: x.stake, value: x.value })) }, regIdentity())));
-            fetchHolders(true);
-        } catch (e) { /* try again next time the profile is open */ }
+            const r = await gmPost(url, Object.assign({ action: 'saveprofile', owner: d.owner,
+                items: d.items.map(x => ({ name: x.name, shares: x.shares, stake: x.stake, value: x.value })) }, regIdentity()));
+            refusedCheck(r);
+            if (!r || !r.ok) { profErr = (r && r.error) || 'refused'; return false; }
+            const s = GM_getValue('sa-profile-sent', {}) || {};
+            Object.keys(s).forEach(x => { if (Date.now() - s[x].at > 15 * 60e3) delete s[x]; });
+            s[k] = { at: Date.now(), sig: JSON.stringify(d.items) }; GM_setValue('sa-profile-sent', s);
+            return true;
+        } catch (e) { profErr = e.message; return false; }
     }
-    var profileOffer = null, profileSkip = {};
+    // Profiles to send (since v3.26.0): every Profile → Investments window you open is added to a list kept in this browser (newest per
+    // player, dropped after 24 hours), and the bar sends them all at once, on a click. Nothing is collected unless you open the window.
+    var profBarHidden = '', profMsg = '', profMsgTimer = null, profErr = '';
+    function profQueue() {
+        const q = GM_getValue('sa-profile-queue', {}) || {};
+        let changed = false;
+        Object.keys(q).forEach(k => { if (!q[k] || !q[k].savedAt || Date.now() - new Date(q[k].savedAt).getTime() > 24 * 3600e3) { delete q[k]; changed = true; } });
+        if (changed) GM_setValue('sa-profile-queue', q);
+        return q;
+    }
+    function profQueueSig(q) { return Object.keys(q).sort().map(k => k + '@' + q[k].savedAt).join('|'); }
+    function recentlySent(k, items) {
+        const s = (GM_getValue('sa-profile-sent', {}) || {})[k];
+        return !!(s && Date.now() - s.at < 15 * 60e3 && (!items || s.sig === JSON.stringify(items)));
+    }
     function offerProfile(d) {
-        if (shareOff() || !shareUrl()) return;
-        const k = d.owner.trim().toLowerCase();
-        if ((profileSent[k] && Date.now() - profileSent[k] < 15 * 60e3) || (profileSkip[k] && Date.now() - profileSkip[k] < 15 * 60e3)) return;
-        if (profileOffer && profileOffer.owner === d.owner && JSON.stringify(profileOffer.items) === JSON.stringify(d.items)) return;
-        profileOffer = d; try { renderNoticeBar(); } catch (e) {}
+        if (shareOff() || !shareUrl() || !d.owner) return;
+        const k = d.owner.trim().toLowerCase(), q = profQueue();
+        if (q[k] && JSON.stringify(q[k].items) === JSON.stringify(d.items)) return;   // already in the list as it is
+        if (!q[k] && recentlySent(k, d.items)) return;                                // just sent, unchanged
+        q[k] = { owner: d.owner, items: d.items, savedAt: d.savedAt || new Date().toISOString() };
+        GM_setValue('sa-profile-queue', q);
+        try { renderNoticeBar(); } catch (e) {}
+    }
+    function profSay(m) { profMsg = m; clearTimeout(profMsgTimer); profMsgTimer = setTimeout(() => { profMsg = ''; try { renderNoticeBar(); } catch (e) {} }, 15000); try { renderNoticeBar(); } catch (e) {} }
+    function sendAllProfiles() {
+        const q = profQueue(), all = Object.keys(q).map(k => Object.assign({ k }, q[k]));
+        if (!all.length) return;
+        const wait = all.filter(x => recentlySent(x.k)), go = all.filter(x => !recentlySent(x.k));
+        if (!go.length) return profSay(`All ${all.length} were sent in the last 15 minutes; they can be sent again ${wait.length === 1 ? 'after that' : 'once 15 minutes have passed'}.`);
+        const lines = go.map(x => `${x.owner}: ${x.items.length} investment${x.items.length === 1 ? '' : 's'} (name, shares, stake and value)`)
+            .concat(['Who sent them (your game name)'], wait.length ? [`Not sent now (sent in the last 15 minutes): ${wait.map(x => x.owner).join(', ')}`] : []);
+        confirmSend(`Send ${go.length} profile${go.length === 1 ? '' : 's'}' investments to the holder lists?`, lines,
+            'Every SharkBot player sees them in Data → Bank and Calculators → TRAPs.', async () => {
+                if (sharePref().share !== 'yes') await setSharePref({ share: 'yes' });
+                profSay(`Sending ${go.length}…`);
+                let ok = 0; const failed = []; profErr = '';
+                for (const x of go) {
+                    if (await sendProfile(x)) { ok++; const cur = profQueue(); if (cur[x.k] && cur[x.k].savedAt === x.savedAt) { delete cur[x.k]; GM_setValue('sa-profile-queue', cur); } }
+                    else failed.push(x.owner);
+                }
+                if (ok) fetchHolders(true);
+                profSay(`Sent ${ok} of ${go.length}${failed.length ? ` · not sent: ${failed.join(', ')} (kept in the list${profErr ? '; ' + profErr : ''})` : ''}${wait.length ? ` · ${wait.length} waiting (sent in the last 15 minutes)` : ''}.`);
+            });
     }
     // Every known holder of every investment, from Sharky's server (cached 10 minutes)
     var holdersFetching = false;
@@ -9053,12 +9239,13 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     let profileInvestSig = '';
     function checkProfileInvest(force) {
         if (isLocked() || sbView) return false;
-        const d = readProfileInvest();
-        if (!d) return false;
-        if (d.owner) offerProfile(d);   // any player's profile can feed the Bank holder lists, on a click (since v3.20.0)
+        const all = readProfileInvestAll();
+        if (!all.length) return false;
+        all.forEach(x => { if (x.owner) offerProfile(x); });   // every open profile goes on the send list (since v3.26.0); sent only on a click
         // Only your own profile counts as your investments (other players' profiles show theirs)
         const me = (pageUsername() || GM_getValue('sa-username', '') || '').trim().toLowerCase();
-        if (!me || !d.owner || d.owner.toLowerCase() !== me) return false;
+        const d = me && all.find(x => x.owner && x.owner.toLowerCase() === me);
+        if (!d) return false;
         const sig = JSON.stringify(d.items);
         if (!force && sig === profileInvestSig) return false;
         profileInvestSig = sig;
@@ -11465,7 +11652,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     { const pc = document.getElementById('sa-uv-passive'); if (pc) { pc.checked = uvPassiveOn();
         pc.addEventListener('change', () => { GM_setValue('sa-uv-passive', pc.checked); renderUnitValue(); try { refreshCalcs(); } catch (e) {} }); } }
     renderUnitValue();
-    renderShareSettings();
+    renderShareSettings(); try { renderBackup(); } catch (e) {}
     renderAdmin();
     (() => {
         const vi = document.getElementById('sa-vo-turns');
