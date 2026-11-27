@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SharkBot
 // @namespace    https://spacealpha.net/
-// @version      3.27.3
+// @version      3.28.0
 // @description  SharkBot for Space Alpha: saves your planets' units, facilities, inventory, research, bank and market prices, and calculates credit generation and Tick Generator upgrade costs.
 // @author       SharkBot
 // @match        https://spacealpha.net/*
@@ -44,7 +44,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     const PANEL_ID = 'sa-helper-panel';
     const SLOT_IDS = 'ABCDEFGHIJ'.split('');   // up to 10 planets
     // Version comes from the @version header so it's never out of sync
-    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.27.3';
+    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.28.0';
     // Two copies installed (usually an update pasted in as a new script): since v3.17.1 every copy writes its version on the
     // page before doing anything, so the second copy always sees the first, even if the first has no panel yet or crashed.
     // The second copy stops and shows a large banner at the top of the page naming the older copy to delete.
@@ -160,6 +160,23 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         /* All text can be selected and copied (since v3.21.1), even if the game turns selection off; only the header bar (it drags the panel) can't */
         #${PANEL_ID}, #${PANEL_ID} *, #sa-pull-pop, #sa-pull-pop * { -webkit-user-select: text !important; user-select: text !important; }
         #${PANEL_ID} .sa-header, #${PANEL_ID} .sa-header * { -webkit-user-select: none !important; user-select: none !important; }
+        /* Layout (since v3.28.0): hidden / popped-out tabs, pop-out windows (inside the panel element so its styles and lookups still apply) */
+        #${PANEL_ID} .sa-lay-hidden { display: none !important; }
+        #${PANEL_ID} .sa-eye { display: none; position: absolute; top: 1px; right: 3px; opacity: 0.6; cursor: pointer; font-size: 10px; line-height: 1; }
+        #${PANEL_ID} .sa-tab:hover .sa-eye, #${PANEL_ID} .sa-mtab:hover .sa-eye { display: inline; }
+        #${PANEL_ID} .sa-eye:hover { opacity: 1; }
+        #${PANEL_ID} .sa-tab, #${PANEL_ID} .sa-mtab { cursor: pointer; position: relative; }
+        #${PANEL_ID} .sa-popwin { position: fixed; z-index: 20; background: var(--bg); color: var(--text); border: 1px solid var(--accent); border-radius: 8px;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.55); display: flex; flex-direction: column; resize: both; overflow: hidden; min-width: 260px; min-height: 160px; }
+        #${PANEL_ID}.sa-locked .sa-popwin:not(.sa-setwin) { display: none !important; }
+        #${PANEL_ID} .sa-popwin-head { display: flex; align-items: center; gap: 6px; padding: 5px 8px; cursor: move; background: var(--surface2, rgba(255,255,255,0.04));
+            border-bottom: 1px solid var(--border); -webkit-user-select: none !important; user-select: none !important; }
+        #${PANEL_ID} .sa-popwin-title { flex: 1; font-weight: 700; font-size: 12px; color: var(--accent); text-transform: uppercase; letter-spacing: 0.5px; }
+        #${PANEL_ID} .sa-popwin-tabs { display: flex; flex-wrap: wrap; gap: 3px; padding: 4px 8px; border-bottom: 1px solid var(--border); }
+        #${PANEL_ID} .sa-popwin-body { flex: 1; overflow: auto; padding: 8px 10px; }
+        #${PANEL_ID} .sa-popwin .sa-pane { display: none !important; }
+        #${PANEL_ID} .sa-popwin .sa-pane.sa-win-on { display: block !important; }
+        #${PANEL_ID} #sa-hidden-bar { padding: 3px 8px; border-bottom: 1px solid var(--border); font-size: 11px; }
         /* ⓘ beside calculator inputs (since v3.23.0) */
         #${PANEL_ID} .sa-info-i { display: inline-block; margin-left: 5px; color: var(--accent); cursor: help; font-size: 11px; line-height: 1; vertical-align: middle; opacity: 0.85; }
         #${PANEL_ID} .sa-info-i:hover { opacity: 1; }
@@ -520,6 +537,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                 <span class="sa-page" id="sa-page-badge">${pageLabel}</span>
             </span>
             <div>
+                <button class="sa-btn" id="sa-gear" title="Settings">⚙</button>
                 <button class="sa-btn" id="sa-update" title="Check for a new SharkBot version">Check for update</button>
                 <button class="sa-btn" id="sa-scan" title="Reread this page now (SharkBot also scans by itself when you open a page)">Manual Scan</button>
                 <button class="sa-btn" id="sa-expand" title="Expand to fill the screen / back to your size">⤢</button>
@@ -529,6 +547,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         <div id="sa-update-bar" style="display:none"></div>
         <div id="sa-notice-bar" style="display:none"></div>
         <div id="sa-view-bar" style="display:none"></div>
+        <div id="sa-hidden-bar" style="display:none"></div>
         <div class="sa-maintabs">
             <div class="sa-mtab" data-group="welcome">Welcome</div>
             <div class="sa-mtab" data-group="general">General</div>
@@ -539,7 +558,6 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         </div>
         <div class="sa-tabs">
             <div class="sa-tab active" data-tab="debug">Debug</div>
-            <div class="sa-tab" data-tab="settings">⚙ Settings</div>
             <div class="sa-tab-label" data-group="data" title="Shared by all your planets">Empire</div>
             <div class="sa-tab" data-tab="research">Research</div>
             <div class="sa-tab" data-tab="market">Market</div>
@@ -1368,7 +1386,11 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                 `<button class="sa-btn${p === pct ? ' active' : ''}" data-ui="${p}" style="flex:1; margin:0">${p}%</button>`).join('')}</div>
             <div class="sa-slot-meta" style="margin-top:4px">Window: ${s && s.h ? `${s.w} × ${s.h}` : 'default size'}${GM_getValue('sa-maxed', false) ? ' · expanded (⤢)' : ''}.
                 Drag the bottom-right corner to resize; ⤢ in the header fills the screen.</div>
-            <button class="sa-btn" id="sa-ui-reset" style="margin:6px 0 0; width:100%">Reset size &amp; scale</button>`;
+            <button class="sa-btn" id="sa-ui-reset" style="margin:6px 0 0; width:100%">Reset size &amp; scale</button>
+            <div class="sa-slot-meta" style="margin-top:8px">Tabs: drag a tab along its bar to move it, drag it off the panel to open it in its own window (✕ puts it back),
+                and hover it for 👁 to hide it ("Show hidden" at the top brings it back).</div>
+            <button class="sa-btn" id="sa-lay-reset" style="margin:4px 0 0; width:100%">Reset tab layout</button>`;
+        box.querySelector('#sa-lay-reset')?.addEventListener('click', () => { try { layReset(); } catch (e) {} });
         const range = box.querySelector('#sa-ui-range');
         range.addEventListener('input', () => { box.querySelector('#sa-ui-pct').textContent = range.value + '%'; });
         range.addEventListener('change', () => setUiScale(+range.value));
@@ -1423,25 +1445,234 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     // Main tabs; every subtab belongs to one of them
     const TAB_GROUPS = {
         welcome:     ['welcome'],
-        general:     ['debug', 'settings'],
+        general:     ['debug'],   // Settings opens from ⚙ in the header (since v3.28.0)
         data:        ['research', 'market', 'bank', 'cards', 'missions', 'units', 'facilities', 'inventory', 'nation'],
         calculators: ['storage', 'area', 'turns', 'training', 'rescalc', 'energy', 'productivity', 'creditgen', 'resgen', 'unitvalue', 'optimizer', 'valueopt', 'trapcalc', 'factorycalc', 'printer', 'invcreate', 'attack', 'assassin'],
         statements:  ['stbalance', 'stincome', 'stcash', 'stholder'],
         admin:       ['admin', 'adminusers', 'plist', 'players', 'viewer', 'fleets', 'admmissions'],
     };
     const groupOf = (tab) => Object.keys(TAB_GROUPS).find(g => TAB_GROUPS[g].includes(tab)) || 'general';
-    if (!Object.values(TAB_GROUPS).flat().includes(activeTab) || activeTab === 'welcome') activeTab = 'debug';   // Welcome isn't a tab you choose (older versions saved it)
+    if (!Object.values(TAB_GROUPS).flat().includes(activeTab) || activeTab === 'welcome') activeTab = 'debug';   // Welcome isn't a tab you choose (older versions saved it); Settings is ⚙ since v3.28.0
+
+    // ---------- Tab layout (since v3.28.0) ----------
+    // Every main tab and subtab can be reordered (drag along its bar), hidden (👁 on hover; "Show hidden" brings it back) and popped out
+    // (drag it off the panel) into a window on the game page that keeps updating. Kept per browser in sa-layout:
+    // { main: [ids], sub: [ids], hidden: [ids], pop: { id: { x, y, w, h, active } } }, ids "g:<group>" / "t:<tab>".
+    // The admin login (Admin, Dashboard) and Welcome can be reordered but never hidden or popped out.
+    const tabBarEl = panel.querySelector('.sa-tabs'), mainBarEl = panel.querySelector('.sa-maintabs'), bodyEl = panel.querySelector('.sa-body');
+    const LAY_FIXED = ['g:admin', 't:admin', 'g:welcome', 't:welcome'];
+    const LAY_EYE = '<span class="sa-eye" title="Hide this tab (&quot;Show hidden&quot; at the top brings it back)">👁</span>';
+    const tabIdOf = (el) => !el ? null : el.classList.contains('sa-mtab') ? 'g:' + el.dataset.group : el.classList.contains('sa-tab') ? 't:' + el.dataset.tab : null;
+    Array.from(tabBarEl.children).forEach((el, i) => { if (!tabIdOf(el)) el.dataset.lid = 'x:' + i; });
+    const childIdOf = (el) => tabIdOf(el) || el.dataset.lid;
+    const LAY_ORIG = { sub: Array.from(tabBarEl.children).map(childIdOf), main: Array.from(mainBarEl.children).map(childIdOf) };
+    function layLoad() { const l = GM_getValue('sa-layout', null) || {}; return { main: l.main || null, sub: l.sub || null, hidden: Array.isArray(l.hidden) ? l.hidden : [], pop: l.pop && typeof l.pop === 'object' ? l.pop : {} }; }
+    function laySave(l) { GM_setValue('sa-layout', l); }
+    function tabElOf(id) { return id.startsWith('g:') ? mainBarEl.querySelector(`.sa-mtab[data-group="${id.slice(2)}"]`) : tabBarEl.querySelector(`.sa-tab[data-tab="${id.slice(2)}"]`); }
+    function tabLabel(id) { const el = tabElOf(id); return el ? Array.from(el.childNodes).filter(n => !(n.classList && n.classList.contains('sa-eye'))).map(n => n.textContent).join('').trim() : id.slice(2); }
+    function layOrder(bar, saved, orig) {
+        if (!saved) saved = orig;
+        const els = {}; Array.from(bar.children).forEach(el => { els[childIdOf(el)] = el; });
+        const seq = saved.filter(id => els[id]);
+        orig.forEach((id, i) => { if (!seq.includes(id) && els[id]) { const prev = orig.slice(0, i).reverse().find(p => seq.includes(p)); seq.splice(prev ? seq.indexOf(prev) + 1 : 0, 0, id); } });
+        seq.forEach(id => bar.appendChild(els[id]));
+    }
+    // 👁 on every tab that may be hidden
+    panel.querySelectorAll('.sa-mtab, .sa-tab').forEach(el => {
+        if (LAY_FIXED.includes(tabIdOf(el))) return;
+        el.insertAdjacentHTML('beforeend', LAY_EYE);
+    });
+    // 👁 clicks are handled here, so a tab whose label is redrawn (Users' pending badge) keeps working
+    panel.addEventListener('click', (e) => { const eye = e.target.closest && e.target.closest('.sa-eye'); if (!eye) return; e.stopPropagation(); e.preventDefault(); layHide(tabIdOf(eye.closest('.sa-mtab, .sa-tab'))); }, true);
+    function layHide(id) { if (LAY_FIXED.includes(id)) return; const l = layLoad(); if (!l.hidden.includes(id)) l.hidden.push(id); laySave(l); layApply(); }
+    function layShow(id) { const l = layLoad(); l.hidden = id ? l.hidden.filter(x => x !== id) : []; laySave(l); layApply(); }
+    function paneOf(tab) { return panel.querySelector(`.sa-pane[data-pane="${tab}"]`); }
+    function dockPane(p) { if (p && p.parentElement !== bodyEl) { p.classList.remove('sa-win-on'); bodyEl.appendChild(p); } }
+    function layZoom() { try { return uiZoom(); } catch (e) { return 1; } }
+    var winZ = 20;
+    function layWin(id, pos) {
+        let w = panel.querySelector(`.sa-popwin[data-id="${id}"]`);
+        const z = layZoom(), group = id.startsWith('g:') ? id.slice(2) : null;
+        if (!w) {
+            w = document.createElement('div'); w.className = 'sa-popwin'; w.dataset.id = id;
+            w.innerHTML = `<div class="sa-popwin-head"><span class="sa-popwin-title"></span><button class="sa-btn sa-popwin-x" style="margin:0" title="Put it back in the panel">✕</button></div>${
+                group ? '<div class="sa-popwin-tabs"></div>' : ''}<div class="sa-popwin-body"></div>`;
+            panel.appendChild(w);
+            const W = (window.innerWidth || 1200) / z, H = (window.innerHeight || 800) / z;
+            const x = Math.max(0, Math.min(W - 280, pos.x != null ? pos.x : W / 2 - 240)), y = Math.max(0, Math.min(H - 60, pos.y != null ? pos.y : 80));
+            Object.assign(w.style, { left: x + 'px', top: y + 'px', width: (pos.w || 480) + 'px', height: (pos.h || 420) + 'px' });
+            w.querySelector('.sa-popwin-x').addEventListener('click', () => layDock(id));
+            w.addEventListener('mousedown', () => { w.style.zIndex = String(++winZ); });
+            const head = w.querySelector('.sa-popwin-head');
+            head.addEventListener('mousedown', (e) => {
+                if (e.target.closest('button')) return;
+                e.preventDefault();
+                const zz = layZoom(), sx = e.clientX, sy = e.clientY, ox = parseFloat(w.style.left) || 0, oy = parseFloat(w.style.top) || 0;
+                const mv = (ev) => { w.style.left = Math.max(0, ox + (ev.clientX - sx) / zz) + 'px'; w.style.top = Math.max(0, oy + (ev.clientY - sy) / zz) + 'px'; };
+                const up = () => { document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', up); laySavePos(id, w); };
+                document.addEventListener('mousemove', mv); document.addEventListener('mouseup', up);
+            });
+            let rzT = null;
+            try { new ResizeObserver(() => { clearTimeout(rzT); rzT = setTimeout(() => { if (w.isConnected) laySavePos(id, w); }, 400); }).observe(w); } catch (e) {}
+        }
+        w.querySelector('.sa-popwin-title').textContent = tabLabel(id);
+        const wb = w.querySelector('.sa-popwin-body');
+        if (!group) {
+            const p = paneOf(id.slice(2)); if (p && p.parentElement !== wb) wb.appendChild(p);
+            if (p) p.classList.add('sa-win-on');
+            try { onTabShown(id.slice(2)); } catch (e) {}
+        } else {
+            const l = layLoad();
+            const tabs = TAB_GROUPS[group].filter(t => !l.pop['t:' + t]);
+            tabs.forEach(t => { const p = paneOf(t); if (p && p.parentElement !== wb) wb.appendChild(p); });
+            const shown = tabs.filter(t => !l.hidden.includes('t:' + t));
+            const act = shown.includes(pos.active) ? pos.active : shown[0];
+            const bar = w.querySelector('.sa-popwin-tabs');
+            bar.innerHTML = shown.length > 1 ? shown.map(t => `<button class="sa-btn${t === act ? ' active' : ''}" data-wtab="${t}" style="margin:0">${escapeHtml(tabLabel('t:' + t))}</button>`).join('') : '';
+            bar.style.display = shown.length > 1 ? '' : 'none';
+            bar.querySelectorAll('[data-wtab]').forEach(b => b.addEventListener('click', () => layWinTab(group, b.dataset.wtab)));
+            tabs.forEach(t => { const p = paneOf(t); if (p) p.classList.toggle('sa-win-on', t === act); });
+            if (act) { try { onTabShown(act); } catch (e) {} }
+        }
+        return w;
+    }
+    function layWinTab(group, tab) { const l = layLoad(), id = 'g:' + group; if (!l.pop[id]) return; l.pop[id].active = tab; laySave(l); layWin(id, l.pop[id]); }
+    function laySavePos(id, w) {
+        const l = layLoad(); if (!l.pop[id]) return;
+        Object.assign(l.pop[id], { x: parseFloat(w.style.left) || 0, y: parseFloat(w.style.top) || 0, w: Math.round(w.offsetWidth), h: Math.round(w.offsetHeight) });
+        laySave(l);
+    }
+    function layPop(id, cx, cy) {
+        if (LAY_FIXED.includes(id)) return;
+        const l = layLoad();
+        if (id.startsWith('t:') && l.pop['g:' + groupOf(id.slice(2))]) return;   // its main tab is already a window
+        const z = layZoom();
+        l.pop[id] = { x: cx != null ? cx / z - 40 : null, y: cy != null ? cy / z - 12 : null, w: id.startsWith('g:') ? 560 : 480, h: 440 };
+        l.hidden = l.hidden.filter(x => x !== id);
+        laySave(l); layApply();
+    }
+    function layDock(id) { const l = layLoad(); delete l.pop[id]; laySave(l); layApply(); }
+    function layApply() {
+        const l = layLoad();
+        layOrder(tabBarEl, l.sub, LAY_ORIG.sub); layOrder(mainBarEl, l.main, LAY_ORIG.main);
+        panel.querySelectorAll('.sa-mtab, .sa-tab').forEach(el => { const id = tabIdOf(el); el.classList.toggle('sa-lay-hidden', !LAY_FIXED.includes(id) && (l.hidden.includes(id) || !!l.pop[id])); });
+        // close windows no longer popped, then open / refresh the rest (main-tab windows after tab windows, so they leave those panes alone)
+        panel.querySelectorAll('.sa-popwin:not(.sa-setwin)').forEach(w => { if (!l.pop[w.dataset.id]) { w.querySelectorAll('.sa-pane').forEach(dockPane); w.remove(); } });
+        Object.keys(l.pop).filter(id => id.startsWith('t:')).forEach(id => { if (tabElOf(id)) layWin(id, l.pop[id]); });
+        Object.keys(l.pop).filter(id => id.startsWith('g:')).forEach(id => { if (tabElOf(id)) layWin(id, l.pop[id]); });
+        renderHiddenBar(l);
+        layFixActive();
+    }
+    // The tab on show in the panel must be one that's still there
+    function layFixActive() {
+        const cur = (typeof myTab !== 'undefined' && myTab) || activeTab, l = layLoad(), g = groupOf(cur);
+        const gone = (t) => l.hidden.includes('t:' + t) || l.pop['t:' + t] || l.hidden.includes('g:' + groupOf(t)) || l.pop['g:' + groupOf(t)];
+        if (cur && cur !== 'welcome' && gone(cur)) {
+            const order = Array.from(mainBarEl.children).map(el => el.dataset.group).filter(x => x && x !== 'welcome');
+            const pick = (TAB_GROUPS[g] || []).find(t => !gone(t)) || order.flatMap(x => TAB_GROUPS[x]).find(t => !gone(t)) || 'admin';
+            switchTab(pick);
+        }
+        // a popped tab's pane must stay in its window even after the panel switched tabs
+        panel.querySelectorAll('.sa-popwin .sa-pane').forEach(p => { if (p.classList.contains('active')) p.classList.remove('active'); });
+    }
+    function renderHiddenBar(l) {
+        const bar = document.getElementById('sa-hidden-bar'); if (!bar) return;
+        l = l || layLoad();
+        const hid = l.hidden.filter(id => tabElOf(id));
+        if (!hid.length) { bar.style.display = 'none'; bar.innerHTML = ''; return; }
+        const open = bar.dataset.open === '1';
+        bar.style.display = '';
+        bar.innerHTML = `<button class="sa-btn" id="sa-hid-toggle" style="margin:0">${open ? '▾' : '▸'} Show hidden (${hid.length})</button>${open ? `<div style="display:flex; flex-wrap:wrap; gap:4px; margin-top:4px">${
+            hid.map(id => `<button class="sa-btn" data-unhide="${escapeHtml(id)}" style="margin:0">👁 ${escapeHtml(id.startsWith('t:') ? tabLabel('g:' + groupOf(id.slice(2))) + ' → ' : '')}${escapeHtml(tabLabel(id))}</button>`).join('')}
+            <button class="sa-btn" id="sa-hid-all" style="margin:0">Show all</button></div>` : ''}`;
+        bar.querySelector('#sa-hid-toggle').addEventListener('click', () => { bar.dataset.open = open ? '' : '1'; renderHiddenBar(); });
+        bar.querySelectorAll('[data-unhide]').forEach(b => b.addEventListener('click', () => layShow(b.dataset.unhide)));
+        bar.querySelector('#sa-hid-all')?.addEventListener('click', () => { bar.dataset.open = ''; layShow(null); });
+    }
+    function layReset() {
+        GM_deleteValue('sa-layout');
+        layApply();
+    }
+    // Dragging a tab: along its bar reorders it; dropped outside the panel it becomes a window. A click without moving still opens it.
+    var layDrag = null, layDragJust = false;
+    function layMarkSkipClick() { layDragJust = true; setTimeout(() => { layDragJust = false; }, 50); }
+    panel.querySelectorAll('.sa-mtab, .sa-tab').forEach(el => el.addEventListener('mousedown', (e) => {
+        if (e.button !== 0 || e.target.closest('.sa-eye')) return;
+        e.preventDefault();
+        layDrag = { el, id: tabIdOf(el), x: e.clientX, y: e.clientY, moved: false, ghost: null };
+    }));
+    document.addEventListener('mousemove', (e) => {
+        const d = layDrag; if (!d) return;
+        if (!d.moved && Math.hypot(e.clientX - d.x, e.clientY - d.y) < 6) return;
+        if (!d.moved) {
+            d.moved = true;
+            const g = document.createElement('div');
+            g.textContent = tabLabel(d.id);
+            g.style.cssText = 'position:fixed; z-index:2147483647; pointer-events:none; padding:4px 10px; border-radius:6px; font:12px sans-serif; background:#1f2937; color:#fbbf24; border:1px solid #fbbf24; opacity:0.92; box-shadow:0 4px 14px rgba(0,0,0,.5)';
+            document.body.appendChild(g); d.ghost = g;
+        }
+        const pr = panel.getBoundingClientRect(), out = e.clientX < pr.left || e.clientX > pr.right || e.clientY < pr.top || e.clientY > pr.bottom;
+        d.ghost.style.left = (e.clientX + 12) + 'px'; d.ghost.style.top = (e.clientY + 8) + 'px';
+        d.ghost.textContent = (out ? (LAY_FIXED.includes(d.id) ? '✕ can\'t pop out ' : '⧉ new window: ') : '↔ ') + tabLabel(d.id);
+    });
+    document.addEventListener('mouseup', (e) => {
+        const d = layDrag; layDrag = null;
+        if (!d || !d.moved) return;
+        if (d.ghost) d.ghost.remove();
+        layMarkSkipClick();
+        const pr = panel.getBoundingClientRect(), out = e.clientX < pr.left || e.clientX > pr.right || e.clientY < pr.top || e.clientY > pr.bottom;
+        if (out) { layPop(d.id, e.clientX, e.clientY); return; }
+        const sel = d.el.classList.contains('sa-mtab') ? '.sa-mtab' : '.sa-tab';
+        const under = (document.elementFromPoint(e.clientX, e.clientY) || { closest: () => null }).closest(sel);
+        if (!under || under === d.el || under.parentElement !== d.el.parentElement) return;
+        if (sel === '.sa-tab' && groupOf(under.dataset.tab) !== groupOf(d.el.dataset.tab)) return;
+        const r = under.getBoundingClientRect();
+        under.parentElement.insertBefore(d.el, e.clientX < r.left + r.width / 2 ? under : under.nextSibling);
+        const l = layLoad(); l.main = Array.from(mainBarEl.children).map(childIdOf); l.sub = Array.from(tabBarEl.children).map(childIdOf); laySave(l);
+    });
+
     switchTab(activeTab);
     panel.querySelectorAll('.sa-tab').forEach(tab => {
-        tab.addEventListener('click', () => switchTab(tab.dataset.tab));
+        tab.addEventListener('click', () => { if (!layDragJust) switchTab(tab.dataset.tab); });
     });
     panel.querySelectorAll('.sa-mtab').forEach(m => {
         m.addEventListener('click', () => {
-            const g = m.dataset.group;
+            if (layDragJust) return;
+            const g = m.dataset.group, l = layLoad();
+            const ok = (t) => !l.hidden.includes('t:' + t) && !l.pop['t:' + t];
             const last = GM_getValue('sa-last-sub-' + g, TAB_GROUPS[g][0]);
-            switchTab(TAB_GROUPS[g].includes(last) ? last : TAB_GROUPS[g][0]);
+            switchTab(TAB_GROUPS[g].includes(last) && ok(last) ? last : TAB_GROUPS[g].find(ok) || TAB_GROUPS[g][0]);
         });
     });
+    // ---------- Settings (⚙ in the header since v3.28.0): the Settings page in a window over the panel ----------
+    function openSettings() {
+        let w = panel.querySelector('.sa-setwin');
+        const p = paneOf('settings');
+        if (!w) {
+            w = document.createElement('div'); w.className = 'sa-popwin sa-setwin'; w.dataset.id = 'settings';
+            w.innerHTML = `<div class="sa-popwin-head"><span class="sa-popwin-title">⚙ Settings</span><button class="sa-btn sa-popwin-x" style="margin:0" title="Close (Esc)">✕</button></div><div class="sa-popwin-body"></div>`;
+            panel.appendChild(w);
+            const z = layZoom(), W = (window.innerWidth || 1200) / z, H = (window.innerHeight || 800) / z;
+            Object.assign(w.style, { width: Math.min(560, W - 20) + 'px', height: Math.min(640, H - 40) + 'px', left: Math.max(0, W / 2 - Math.min(560, W - 20) / 2) + 'px', top: Math.max(10, H / 2 - Math.min(640, H - 40) / 2) + 'px', zIndex: '60' });
+            w.querySelector('.sa-popwin-x').addEventListener('click', closeSettings);
+            const head = w.querySelector('.sa-popwin-head');
+            head.addEventListener('mousedown', (e) => {
+                if (e.target.closest('button')) return; e.preventDefault();
+                const zz = layZoom(), sx = e.clientX, sy = e.clientY, ox = parseFloat(w.style.left) || 0, oy = parseFloat(w.style.top) || 0;
+                const mv = (ev) => { w.style.left = Math.max(0, ox + (ev.clientX - sx) / zz) + 'px'; w.style.top = Math.max(0, oy + (ev.clientY - sy) / zz) + 'px'; };
+                const up = () => { document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', up); };
+                document.addEventListener('mousemove', mv); document.addEventListener('mouseup', up);
+            });
+        }
+        if (p) { w.querySelector('.sa-popwin-body').appendChild(p); p.classList.add('sa-win-on'); }
+        w.style.display = '';
+        try { renderAllViews(); } catch (e) {}
+    }
+    function closeSettings() { const w = panel.querySelector('.sa-setwin'); if (!w) return; dockPane(paneOf('settings')); w.remove(); }
+    function settingsOpen() { return !!panel.querySelector('.sa-setwin'); }
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && settingsOpen()) closeSettings(); });
+    panel.querySelector('#sa-gear')?.addEventListener('click', () => { if (settingsOpen()) closeSettings(); else openSettings(); });
+    layApply();
     // A short message at the top of the panel, instead of jumping to General → Debug (since v3.22.3)
     var flashTimer = null, myTab = null;   // myTab: the tab chosen in this browser tab (another game tab can't change it)
     function flashNote(text) {
@@ -1457,6 +1688,12 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         clearTimeout(flashTimer); flashTimer = setTimeout(() => { el.style.display = 'none'; }, 7000);
     }
     function switchTab(name) {
+        if (name === 'settings') { openSettings(); return; }   // since v3.28.0 Settings is a window (⚙)
+        {   // a tab (or its main tab) that's popped out shows in its window instead (since v3.28.0)
+            const l = layLoad(), g = groupOf(name), wt = panel.querySelector(`.sa-popwin[data-id="t:${name}"]`), wg = panel.querySelector(`.sa-popwin[data-id="g:${g}"]`);
+            if (l.pop['t:' + name] && wt) { wt.style.zIndex = String(++winZ); onTabShown(name); return; }
+            if (l.pop['g:' + g] && wg) { wg.style.zIndex = String(++winZ); layWinTab(g, name); return; }
+        }
         const group = groupOf(name);
         panel.querySelectorAll('.sa-mtab').forEach(m =>
             m.classList.toggle('active', m.dataset.group === group));
@@ -1470,6 +1707,11 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             p.classList.toggle('active', p.dataset.pane === name));
         // Welcome (shown while locked) is never saved as your tab (since v3.22.3), so a page load or unlock always returns to the tab you chose
         if (name !== 'welcome') { myTab = name; GM_setValue('sa-active-tab', name); GM_setValue('sa-last-sub-' + group, name); }
+        onTabShown(name);
+    }
+    // What a tab needs when it comes on screen (in the panel or a window)
+    function onTabShown(name) {
+        const group = groupOf(name);
         if (['factorycalc', 'printer', 'invcreate', 'attack', 'assassin'].includes(name) && typeof sbReady !== 'undefined' && sbReady) { try { renderXc(name); } catch (e) {} }
         if (name === "valueopt" && typeof sbReady !== "undefined" && sbReady) { try { renderValueOpt(); } catch (e) {} }
         if (name === 'bank' && typeof sbReady !== 'undefined' && sbReady) { try { fetchInvestments(false); } catch (e) {} }
@@ -5412,7 +5654,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         box.innerHTML = `<div style="max-width:400px; margin:12px; padding:12px 14px; background:var(--bg, #111827); border:1px solid var(--border); border-radius:8px; font-size:12px">
             <div style="font-weight:700; margin-bottom:6px">Sharing your SharkBot data</div>
             <div style="font-size:11px; line-height:1.45; margin-bottom:6px">SharkBot <b>never sends your data by itself</b>. You can share it with Sharky by clicking <b>Send my data</b>
-                (General → Settings, or when Sharky asks): it shows exactly what goes each time. Opening a player's Profile → Investments offers to send those investments to the
+                (⚙ Settings, or when Sharky asks): it shows exactly what goes each time. Opening a player's Profile → Investments offers to send those investments to the
                 holder lists, also only on a click. Everything in the Data tab works whether you share or not, and you can change this any time in Settings.</div>
             <div style="font-size:10px; color:var(--muted); margin-bottom:8px">Currently: ${sp.share === 'no' ? "don't share" : sp.share === 'yes' ? 'share when I click Send' : 'not chosen'}.</div>
             <label class="sa-check" style="margin:0 0 8px"><input type="checkbox" class="sa-sp-hide"> <span>Don't show this again (for this game account)</span></label>
@@ -5472,7 +5714,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     // ---------- Backup & restore (since v3.26.0) ----------
     // Items never in a backup or touched by an import: registration and install code, admin data, layout and look, data fetched from the game
     // or Sharky's server (VIEW_OWN), plus this browser's profile send list and the admin's open/closed sections
-    function backupSkip(k) { return VIEW_OWN.test(k) || /^sa-(profile-queue|profile-sent|pl-folds|pull-)/.test(k); }
+    function backupSkip(k) { return VIEW_OWN.test(k) || /^sa-(profile-queue|profile-sent|pl-folds|pull-|layout)/.test(k); }
     var bkMsg = '';
     function renderBackup() {
         const box = document.getElementById('sa-backup-box');
@@ -6452,7 +6694,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         const list = adminUsers || [], groups = userGroups(list), pending = groups.filter(g => g.status === 'pending').length;
         // Pending badge (since v3.14.3): "(1)!" on Users and on the Admin tab while players wait for approval
         const badge = (n) => n ? ` <span class="sa-badge" style="color:#fff; background:var(--neg, #d55); border-radius:8px; padding:0 5px; font-weight:700">(${n})!</span>` : '';
-        if (tab) tab.innerHTML = 'Users' + badge(pending);
+        if (tab) tab.innerHTML = 'Users' + badge(pending) + '<span class="sa-eye" title="Hide this tab">👁</span>';
         const mt = document.querySelector(`#${PANEL_ID} .sa-mtab[data-group="admin"]`);
         if (mt) mt.innerHTML = 'Admin' + badge(adminCreds ? pending : 0);
         if (!view) return;
@@ -10662,7 +10904,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
 
     // ---------- Settings: reset all saved data ----------
     // Keeps preferences (theme, collapsed state, open tab).
-    const KEEP_KEYS = ['sa-theme', 'sa-collapsed', 'sa-active-tab', 'sa-tip-facilities-oldview', 'sa-tip-facilities-newview',
+    const KEEP_KEYS = ['sa-theme', 'sa-layout', 'sa-collapsed', 'sa-active-tab', 'sa-tip-facilities-oldview', 'sa-tip-facilities-newview',
                        'sa-last-sub-general', 'sa-last-sub-data', 'sa-last-sub-calculators', 'sa-tutorial-done', 'sa-tutorial-v2-done', 'sa-tutorial-v3-done', 'sa-tour-offer-v3',
                        'sa-autoscan', 'sa-theme-custom', 'sa-cg-assume', 'sa-bd', 'sa-share-on', 'sa-ui-scale', 'sa-size', 'sa-maxed',
                        // Registration: this copy stays the same registered device (since v2.24.4)
@@ -10864,7 +11106,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     const TUTORIAL = [
         { target: '.sa-header', title: 'Welcome to SharkBot',
           text: `SharkBot saves your planets' data while you play and does the math for you: income, upgrades, investments and what your empire is worth.<br><br>
-                 This tour takes a couple of minutes. Use <b>Next</b> and <b>Back</b>, or skip anytime (you can restart it in General → Settings).` },
+                 This tour takes a couple of minutes. Use <b>Next</b> and <b>Back</b>, or skip anytime (you can restart it in ⚙ Settings).` },
         { tab: 'debug', target: '#sa-status', title: "It's already working", live: true,
           text: () => `SharkBot <b>scans automatically</b>: every time a game page opens, it reads the page and saves what's on it for the planet you're on.<br><br>
                  Right now:<br><span style="font-family:monospace; font-size:11px">${
@@ -10881,7 +11123,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
           tip: 'Try it: click Manual Scan.' },
         { target: '#sa-toggle', title: 'The panel',
           text: `Drag the panel by its header to move it. <b>−</b> folds it down to this bar, <b>⤢</b> fills the screen, and the bottom-right corner resizes it.
-                 <b>UI size</b> in General → Settings makes everything bigger or smaller. All text can be selected and copied.` },
+                 <b>UI size</b> in ⚙ Settings makes everything bigger or smaller. All text can be selected and copied.` },
         { target: '.sa-maintabs', title: 'Four main tabs',
           text: `<b>General</b>: status, settings and sharing.<br><b>Data</b>: everything SharkBot has saved.<br><b>Calculators</b>: tools that use that data.<br>
                  <b>Statements</b>: net worth, income, cash flow and equity for your whole empire.<br><br>Each one remembers the subtab you last opened.` },
@@ -10911,8 +11153,8 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         { target: '#sa-update', title: 'Updates',
           text: `<b>Check for update</b> looks for a new version (SharkBot also checks by itself). Click <b>Update</b> in the bar, confirm in Tampermonkey, and come back: the game reloads by itself.<br><br>
                  Install SharkBot only from its link (Welcome page and README). If a red bar says two copies are installed, delete the older one in Tampermonkey.` },
-        { tab: 'settings', target: '#sa-planet-list', title: 'General → Settings',
-          text: `Rename, remove or reorder <b>planets</b> (▲ / ▼), change the <b>UI size</b> and <b>color scheme</b>, turn <b>auto-scan</b> off, manage sharing, replay this tour, or <b>reset all saved data</b>.` },
+        { tab: 'settings', target: '#sa-planet-list', title: '⚙ Settings',
+          text: `<b>⚙</b> in the header opens Settings. Tabs can be moved (drag along the bar), hidden (👁) or dragged off into their own window.<br><br>Rename, remove or reorder <b>planets</b> (▲ / ▼), change the <b>UI size</b> and <b>color scheme</b>, turn <b>auto-scan</b> off, manage sharing, replay this tour, or <b>reset all saved data</b>.` },
         { tab: 'debug', target: '.sa-header', title: 'Your checklist', live: true,
           text: () => `Visit these pages on each planet and SharkBot does the rest:${tutChecklist()}` },
     ];
@@ -10941,6 +11183,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     function renderTutorial() {
         const step = TUTORIAL[tutStep];
         if (tutHl) tutHl.classList.remove('sa-tut-hl');
+        if (step.tab !== 'settings') { try { closeSettings(); } catch (e) {} }
         if (step.tab) switchTab(step.tab);
         tutHl = tutTarget(step);
         if (tutHl) tutHl.classList.add('sa-tut-hl');
@@ -10952,7 +11195,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             <div class="sa-tut-bar"><div style="width:${pct}%"></div></div>
             ${tutConfirm ? `
             <div class="sa-tut-body">Skip the tutorial?<br><br>
-                You can restart it anytime from <b>General → Settings</b>.</div>
+                You can restart it anytime from <b>⚙ Settings</b>.</div>
             <div class="sa-tut-foot"><span style="flex:1"></span>
                 <button class="sa-btn" data-t="keep">Keep going</button>
                 <button class="sa-btn sa-btn-danger" data-t="skip-yes">Skip</button></div>` : `
@@ -11470,7 +11713,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         storage: () => {
             const t = turnStorageCap(); if (!t) return null;
             const tpd = empireTpd();
-            return { badge: 'assumed', badgeNote: 'source not recorded: confirm it to make it Given', uses: [useTpd()],
+            return { badge: 'given', badgeNote: 'confirmed by Sharky against the game (182,900 at level 7,500 with 1,077 brains)', uses: [useTpd()],
                 important: `Most turns you can hold = level × 10 + brains × 100 + 200 = ${hn(t.level)} × 10 + ${hn(t.brains)} × 100 + 200 = <b>${hn(t.cap)} turns</b>.`,
                 steps: [`Level × 10 = ${hn(t.level)} × 10 = ${hn(t.level * 10)}`, `Brains × 100 = ${hn(t.brains)} × 100 = ${hn(t.brains * 100)}`,
                     `Add 200: ${hn(t.level * 10)} + ${hn(t.brains * 100)} + 200 = <b>${hn(t.cap)}</b>`,
