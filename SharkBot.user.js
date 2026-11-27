@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SharkBot
 // @namespace    https://spacealpha.net/
-// @version      3.22.2
+// @version      3.22.3
 // @description  SharkBot for Space Alpha: saves your planets' units, facilities, inventory, research, bank and market prices, and calculates credit generation and Tick Generator upgrade costs.
 // @author       SharkBot
 // @match        https://spacealpha.net/*
@@ -44,7 +44,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     const PANEL_ID = 'sa-helper-panel';
     const SLOT_IDS = 'ABCDEFGHIJ'.split('');   // up to 10 planets
     // Version comes from the @version header so it's never out of sync
-    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.22.2';
+    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.22.3';
     // Two copies installed (usually an update pasted in as a new script): since v3.17.1 every copy writes its version on the
     // page before doing anything, so the second copy always sees the first, even if the first has no panel yet or crashed.
     // The second copy stops and shows a large banner at the top of the page naming the older copy to delete.
@@ -1410,7 +1410,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         admin:       ['admin', 'adminusers', 'plist', 'players', 'viewer', 'fleets', 'admmissions'],
     };
     const groupOf = (tab) => Object.keys(TAB_GROUPS).find(g => TAB_GROUPS[g].includes(tab)) || 'general';
-    if (!Object.values(TAB_GROUPS).flat().includes(activeTab)) activeTab = 'debug';
+    if (!Object.values(TAB_GROUPS).flat().includes(activeTab) || activeTab === 'welcome') activeTab = 'debug';   // Welcome isn't a tab you choose (older versions saved it)
     switchTab(activeTab);
     panel.querySelectorAll('.sa-tab').forEach(tab => {
         tab.addEventListener('click', () => switchTab(tab.dataset.tab));
@@ -1422,6 +1422,20 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             switchTab(TAB_GROUPS[g].includes(last) ? last : TAB_GROUPS[g][0]);
         });
     });
+    // A short message at the top of the panel, instead of jumping to General → Debug (since v3.22.3)
+    var flashTimer = null, myTab = null;   // myTab: the tab chosen in this browser tab (another game tab can't change it)
+    function flashNote(text) {
+        let el = document.getElementById('sa-flash');
+        if (!el) {
+            el = document.createElement('div'); el.id = 'sa-flash';
+            el.style.cssText = 'padding:5px 10px; font-size:11px; border-bottom:1px solid var(--border); background:rgba(255,190,60,0.14); color:var(--text)';
+            const after = document.getElementById('sa-notice-bar') || document.getElementById('sa-update-bar');
+            if (after) after.after(el); else panel.prepend(el);
+        }
+        el.textContent = text + '  (details in General → Debug)';
+        el.style.display = '';
+        clearTimeout(flashTimer); flashTimer = setTimeout(() => { el.style.display = 'none'; }, 7000);
+    }
     function switchTab(name) {
         const group = groupOf(name);
         panel.querySelectorAll('.sa-mtab').forEach(m =>
@@ -1434,8 +1448,8 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             el.classList.toggle('sa-hidden', el.dataset.group !== group));
         panel.querySelectorAll('.sa-pane').forEach(p =>
             p.classList.toggle('active', p.dataset.pane === name));
-        GM_setValue('sa-active-tab', name);
-        GM_setValue('sa-last-sub-' + group, name);
+        // Welcome (shown while locked) is never saved as your tab (since v3.22.3), so a page load or unlock always returns to the tab you chose
+        if (name !== 'welcome') { myTab = name; GM_setValue('sa-active-tab', name); GM_setValue('sa-last-sub-' + group, name); }
         if (['factorycalc', 'printer', 'invcreate', 'attack', 'assassin'].includes(name) && typeof sbReady !== 'undefined' && sbReady) { try { renderXc(name); } catch (e) {} }
         if (name === "valueopt" && typeof sbReady !== "undefined" && sbReady) { try { renderValueOpt(); } catch (e) {} }
         if (name === 'bank' && typeof sbReady !== 'undefined' && sbReady) { try { fetchInvestments(false); } catch (e) {} }
@@ -2471,7 +2485,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             status.textContent = `Save failed on ${pageKey || location.pathname}: ${e.message}`;
             const dump = document.getElementById('sa-dump');
             if (dump) dump.textContent = `Error: ${e.message}\n\n${(e.stack || '').split('\n').slice(0, 6).join('\n')}`;
-            if (!quiet) switchTab('debug');
+            if (!quiet) flashNote(status.textContent);   // no tab change (since v3.22.3)
             console.error('[SharkBot] save error', e);
             return [];
         }
@@ -2484,7 +2498,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         const detected = det.assign ? null : det.slot;
         if (slot && detected && detected !== slot) {
             status.textContent = `Not saved: ${slotLabel(detected)} is open in-game, not ${slotLabel(slot)}.`;
-            switchTab('debug');
+            flashNote(status.textContent);
             return [];
         }
         if (auto) {
@@ -2578,7 +2592,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         const status = document.getElementById('sa-status');
         if (!lastScan || !lastScan.trainUnits || !lastScan.trainUnits.units) {
             status.textContent = 'Save: need a Train Units scan first';
-            switchTab('main');
+            flashNote(status.textContent);
             return;
         }
         const existing = getSlot(id);
@@ -2729,7 +2743,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         const status = document.getElementById('sa-status');
         if (!lastScan || !lastScan.research || !lastScan.research.items) {
             status.textContent = 'Save: need a Research scan first';
-            switchTab('debug');
+            flashNote(status.textContent);
             return;
         }
         const existing = getRSlot(id);
@@ -2920,7 +2934,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         const status = document.getElementById('sa-status');
         if (!lastScan || !lastScan.facilities || !lastScan.facilities.items) {
             status.textContent = 'Save: need a Facilities scan first';
-            switchTab('debug');
+            flashNote(status.textContent);
             return;
         }
         const existing = getFSlot(id);
@@ -6101,10 +6115,11 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         if (!locked) { lockSince = null; clearTimeout(lockTimer); }
         panel.classList.toggle('sa-locked', locked);
         renderLock();
-        const tab = GM_getValue('sa-active-tab', 'debug');
-        // Locked: open Welcome unless Admin is open. Unlocked: Welcome is gone, so go back to where you were (else General → Debug).
-        if (locked && !['welcome', 'admin', 'adminusers', 'players', 'plist'].includes(tab)) { tabBeforeLock = tab; switchTab('welcome'); }
-        if (!locked && tab === 'welcome') { const back = tabBeforeLock; tabBeforeLock = null; switchTab(back && back !== 'welcome' ? back : 'debug'); }
+        const shown = (panel.querySelector('.sa-pane.active') || {}).dataset?.pane || '';
+        const tab = myTab || GM_getValue('sa-active-tab', 'debug');   // the tab you last chose (never Welcome since v3.22.3)
+        // Locked: show Welcome unless Admin is open. Unlocked: back to the tab you last chose.
+        if (locked && !['welcome', 'admin', 'adminusers', 'players', 'plist'].includes(shown)) switchTab('welcome');
+        if (!locked && shown === 'welcome') switchTab(tab && tab !== 'welcome' ? tab : 'debug');
         if (lockWas === true && !locked) {   // just unlocked: bring the panel up to date
             try { renderAllViews(); } catch (e) {}
             try { renderPlayers(); fetchOnline(false); fetchAllianceCfg(true); } catch (e) {}
