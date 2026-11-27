@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SharkBot
 // @namespace    https://spacealpha.net/
-// @version      3.22.3
+// @version      3.25.0
 // @description  SharkBot for Space Alpha: saves your planets' units, facilities, inventory, research, bank and market prices, and calculates credit generation and Tick Generator upgrade costs.
 // @author       SharkBot
 // @match        https://spacealpha.net/*
@@ -44,7 +44,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     const PANEL_ID = 'sa-helper-panel';
     const SLOT_IDS = 'ABCDEFGHIJ'.split('');   // up to 10 planets
     // Version comes from the @version header so it's never out of sync
-    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.22.3';
+    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.25.0';
     // Two copies installed (usually an update pasted in as a new script): since v3.17.1 every copy writes its version on the
     // page before doing anything, so the second copy always sees the first, even if the first has no panel yet or crashed.
     // The second copy stops and shows a large banner at the top of the page naming the older copy to delete.
@@ -155,6 +155,11 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         /* All text can be selected and copied (since v3.21.1), even if the game turns selection off; only the header bar (it drags the panel) can't */
         #${PANEL_ID}, #${PANEL_ID} *, #sa-pull-pop, #sa-pull-pop * { -webkit-user-select: text !important; user-select: text !important; }
         #${PANEL_ID} .sa-header, #${PANEL_ID} .sa-header * { -webkit-user-select: none !important; user-select: none !important; }
+        /* ⓘ beside calculator inputs (since v3.23.0) */
+        #${PANEL_ID} .sa-info-i { display: inline-block; margin-left: 5px; color: var(--accent); cursor: help; font-size: 11px; line-height: 1; vertical-align: middle; opacity: 0.85; }
+        #${PANEL_ID} .sa-info-i:hover { opacity: 1; }
+        #${PANEL_ID} .sa-info-tip { display: none; position: absolute; z-index: 60; background: var(--bg, #111827); border: 1px solid var(--accent); border-radius: 6px;
+            padding: 7px 9px; font-size: 11px; line-height: 1.45; box-shadow: 0 6px 18px rgba(0,0,0,0.5); pointer-events: none; text-transform: none; letter-spacing: normal; }
         /* Sharky's request pop-up (since v3.21.3: readable buttons the game's styles can't change, and it can be dragged by its title) */
         #sa-pull-pop { position: fixed !important; z-index: 2147483646 !important; width: 420px !important; max-width: calc(100vw - 32px) !important; box-sizing: border-box !important;
             background: #111827 !important; color: #e5e7eb !important; border: 1px solid #3b82f6 !important; border-radius: 10px !important; padding: 0 !important; margin: 0 !important;
@@ -2326,7 +2331,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         return c && c !== selfId && planetIds().includes(c) ? c : null;
     }
     function removePlanet(id) {
-        ['sa-unit-slot-', 'sa-facilities-slot-', 'sa-inv-', 'sa-nation-', 'sa-colony-', 'sa-rg-', 'sa-area-', 'sa-turngen-', 'sa-turns-',
+        ['sa-unit-slot-', 'sa-facilities-slot-', 'sa-inv-', 'sa-nation-', 'sa-defense-', 'sa-pollution-', 'sa-colony-', 'sa-rg-', 'sa-area-', 'sa-turngen-', 'sa-turns-',
          'sa-slot-collapsed-', 'sa-fslot-collapsed-'].forEach(k => {
             if (typeof GM_deleteValue === 'function') GM_deleteValue(k + id); else GM_setValue(k + id, null);
         });
@@ -5560,7 +5565,6 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             ${adminSelfNote ? `<div class="sa-slot-meta" style="margin-bottom:6px; color:var(--warn)">${escapeHtml(adminSelfNote)}</div>` : ''}
             ${adminDeletedNote ? `<div class="sa-recommend" style="margin-bottom:6px">${escapeHtml(adminDeletedNote)}</div>` : ''}
             ${pullLine()}
-            <label class="sa-slot-meta" style="display:flex; align-items:center; gap:6px; margin:0 0 6px" title="Show the confirm box before every Admin button. Turned back on whenever you log in or out of Admin."><input type="checkbox" id="sa-adm-askconfirm" ${GM_getValue('sa-admin-noconfirm', false) ? '' : 'checked'}> Ask before admin actions</label>
             <div style="overflow-x:auto"><table class="sa-unit-table sa-traps-table">
                 <thead><tr><th>Player</th><th>Updated</th><th>Version</th><th>Planets</th><th>Assassins</th><th>Turn value</th><th>Turns/min</th><th>Credits</th><th>Bank</th><th title="What the player sees in Bank → Your bank → Invested (managed: typed amounts; unmanaged: share value); the game's figure in grey">Invested</th><th title="Their daily earnings from investments (TRAPs calculator: managed (Earnings − Payment) × invested ÷ equity, unmanaged shares × price change)">Daily interest</th><th title="Credits the player has in NERDs (Bank → NERDs)">NERDs</th></tr></thead>
                 <tbody>${adminData.map(p => { const d = p.data || {}; return `<tr data-player="${escapeHtml(p.player)}" style="cursor:pointer${p.player === pick ? '; background:var(--hover)' : ''}">
@@ -5607,7 +5611,6 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             } catch (er) { adminPullMsg = 'Request not sent: ' + er.message; }
             renderAdmin();
         });
-        view.querySelector('#sa-adm-askconfirm')?.addEventListener('change', (ev) => { if (ev.target.checked) GM_deleteValue('sa-admin-noconfirm'); else GM_setValue('sa-admin-noconfirm', true); });
         view.querySelector('#sa-adm-logout').addEventListener('click', () => { GM_deleteValue('sa-admin-noconfirm'); adminCreds = null; adminData = null; adminUsers = null; allyOpen = {}; plOpen = null; setAdminIn(false); renderAdmin(); renderAdminUsers(); renderPlayers(); });
         if (sel) wireAdminDetail(view, sel);
         wireManagedAdmin(view);
@@ -5966,7 +5969,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     function wireAdminDetail(root, sel) {
         root.querySelector('#sa-adm-reset')?.addEventListener('click', async () => {
             const btn = root.querySelector('#sa-adm-reset'), msg = root.querySelector('#sa-adm-reset-msg'), name = sel.player;
-            if (adminResetArmed !== name) {
+            if (adminResetArmed !== name && adminResetArmed !== '*') {
                 adminResetArmed = name; btn.textContent = `Click again to reset ${name}'s data`;
                 setTimeout(() => { if (adminResetArmed === name) { adminResetArmed = null; renderAdmin(); renderPlayers(); } }, 5000);
                 return;
@@ -6386,22 +6389,28 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         const pane = btn.closest('.sa-pane');
         if (!pane || !ADMIN_PANES.includes(pane.dataset.pane)) return;
         if (btn === sbConfirmOk) { sbConfirmOk = null; return; }
-        if (GM_getValue('sa-admin-noconfirm', false)) return;   // turned off with "Don't ask again" (since v3.18.0)
+        // Since v3.22.4 only dangerous buttons ask, and the box replaces their "click again": Confirm does it straight away
+        const nm = (x) => escapeHtml(String(x || '').trim());
+        let ask = null;
+        if (btn.id === 'sa-adm-clear') { const c = clearCandidates(); ask = { what: `Clear ${c.names.length} players (1-player alliances and players with no alliance) from Players and Alliances for every admin?`, arm: () => { clearArmed = true; } }; }
+        else if (btn.id === 'sa-fl-reset') ask = { what: 'Delete ALL fleet history (every saved fleet, scan and maximum) for every admin? This can\'t be undone.', arm: () => { flResetArmed = true; } };
+        else if (btn.id === 'sa-temp-del') ask = { what: `Delete the temp profile for ${nm(tempPick && tempPick.name)}?`, arm: () => { tempDelArmed = true; } };
+        else if (btn.id === 'sa-adm-reset') ask = { what: 'Reset this player\'s shared data? Their row on your server is deleted; their SharkBot sends fresh data when they next share.', arm: () => { adminResetArmed = '*'; } };
+        else if (btn.classList.contains('sa-adm-del')) ask = { what: `Delete ALL of ${nm(btn.dataset.name)}'s data? Shared data, registration (every device), profile investments and Log entries. This can't be undone.`, arm: () => { adminDeleteArmed = btn.dataset.name; } };
+        else if (btn.hasAttribute('data-deny') || btn.hasAttribute('data-gdeny')) { const row = btn.closest('tr'); ask = { what: `Deny ${nm(row && row.cells[0] ? row.cells[0].textContent.replace(/[▸▾↳]/g, '') : 'this player')}? Their SharkBot locks, and they can register again after 24 hours.`, arm: () => {} }; }
+        if (!ask) return;   // every other Admin button acts straight away
         e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
         panel.querySelector('.sa-confirm')?.remove();
         const box = document.createElement('div');
         box.className = 'sa-confirm';
         box.style.cssText = 'position:absolute; inset:0; z-index:50; display:flex; align-items:center; justify-content:center; background:rgba(0,0,0,0.55)';
-        const label = (btn.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 80);
         box.innerHTML = `<div style="max-width:360px; margin:12px; padding:12px 14px; background:var(--bg, #111827); border:1px solid var(--border); border-radius:8px; font-size:12px">
-            <div style="margin-bottom:6px"><b>These buttons are meant for Sharky, confirm you understand your action.</b></div>
-            <div style="color:var(--muted); margin-bottom:10px">Button: ${escapeHtml(label || 'button')}</div>
-            <label style="display:flex; align-items:center; gap:6px; margin-bottom:10px"><input type="checkbox" class="sa-confirm-skip"> Don't ask again for admin actions</label>
-            <div style="display:flex; gap:6px"><button class="sa-btn sa-confirm-ok" style="margin:0; flex:1">Confirm</button><button class="sa-btn sa-confirm-no" style="margin:0; flex:1">Cancel</button></div></div>`;
+            <div style="margin-bottom:10px"><b>${ask.what}</b></div>
+            <div style="display:flex; gap:6px"><button class="sa-btn sa-btn-danger sa-confirm-ok" style="margin:0; flex:1">Confirm</button><button class="sa-btn sa-confirm-no" style="margin:0; flex:1">Cancel</button></div></div>`;
         panel.appendChild(box);
         box.querySelector('.sa-confirm-no').addEventListener('click', () => box.remove());
         box.addEventListener('click', (ev) => { if (ev.target === box) box.remove(); });
-        box.querySelector('.sa-confirm-ok').addEventListener('click', () => { if (box.querySelector('.sa-confirm-skip').checked) { GM_setValue('sa-admin-noconfirm', true); const a = panel.querySelector('#sa-adm-askconfirm'); if (a) a.checked = false; } box.remove(); if (btn.isConnected) { sbConfirmOk = btn; btn.click(); } });
+        box.querySelector('.sa-confirm-ok').addEventListener('click', () => { box.remove(); if (btn.isConnected) { ask.arm(); sbConfirmOk = btn; btn.click(); } });
     }, true);
     if (sbView) { panel.classList.add('sa-viewing'); renderViewBar(); }
     else if (__SB_GM.list && __SB_GM.del) { try { __SB_GM.list().filter(k => k === 'sa-admin-viewing' || (/^sa-admin-viewing:/.test(k) && Date.now() - new Date((__SB_GM.get(k, {}) || {}).openedAt || 0) > 2 * 86400e3)).forEach(k => __SB_GM.del(k)); } catch (e) {} }
@@ -9948,7 +9957,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         if (!view) return;
         const slots = planetIds().map(id => ({ id, d: GM_getValue('sa-nation-' + id, null) || { fields: [] },
                 c: GM_getValue('sa-colony-' + id, null) }))
-            .filter(x => x.d.fields.length || x.c);
+            .filter(x => x.d.fields.length || x.c || GM_getValue('sa-defense-' + x.id, null) || GM_getValue('sa-pollution-' + x.id, null));
         if (!slots.length) {
             view.innerHTML = `<div class="sa-empty">No nation data yet. Open the Nation page and click Manual Scan.</div>`;
             return;
@@ -9988,9 +9997,110 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             <div class="sa-scroll"><table class="sa-unit-table"><thead>${head}</thead><tbody>${rows}${extra}</tbody></table></div>
             ${defRows ? `<div class="sa-label" style="margin-top:10px">Planet defense</div>
                 <div class="sa-scroll"><table class="sa-unit-table"><thead>${head}</thead><tbody>${defRows}</tbody></table></div>` : ''}
+            ${defFactorsHtml(slots.map(x => x.id), head)}
+            ${pollutionHtml(slots.map(x => x.id), head)}
             <div class="sa-slot-meta" style="margin-top:6px">${slots.map(x =>
                 `${escapeHtml(slotLabel(x.id))}: ${x.d.savedAt ? 'Nation page saved ' + new Date(x.d.savedAt).toLocaleString()
                     : 'Nation page not saved yet'}${x.c ? ' · colony ' + new Date(x.c.savedAt).toLocaleString() : ''}`).join('<br>')}</div>`;
+    }
+    // ---------- Defense factors (since v3.24.0) ----------
+    // Hovering a ❓ in the Nation page's Planet Defense table shows "Planet defense power VS Attacks (Normal)" with a Defense factors
+    // table (Units strength, Spaceships strength, Defense technology, Defense dome, Total). SharkBot reads it when it appears and keeps
+    // it per planet and attack type: sa-defense-<slot> = { attacks: { rows: [{ label, display, value, pct }], heading, at }, assassins, espionage }
+    function readDefenseTip() {
+        if (pageKey !== 'nation' || isLocked() || sbView) return;
+        const tips = Array.from(document.querySelectorAll('body *')).filter(el => !el.closest('#' + PANEL_ID) && !el.children.length && /^defense factors$/i.test((el.textContent || '').trim()) && isVisible(el));
+        tips.forEach(lab => {
+            let box = lab; for (let i = 0; box && i < 6 && !/planet defense power/i.test(box.textContent || ''); i++) box = box.parentElement;
+            const table = lab.closest('table') || (box && box.querySelector('table')); if (!table) return;
+            const head = ((box && box.textContent) || '').match(/planet defense power\s+vs\s+(\w+)\s*(\([^)]*\))?/i);
+            const type = head ? head[1].toLowerCase() : null; if (!type) return;
+            const rows = [];
+            Array.from(table.querySelectorAll('tr')).forEach(tr => {
+                const c = Array.from(tr.children); if (c.length < 2) return;
+                const label = (c[0].textContent || '').replace(/\s+/g, ' ').trim(), display = (c[c.length - 1].textContent || '').replace(/\s+/g, ' ').trim();
+                if (!label || /^defense factors$/i.test(label)) return;
+                const pm = display.match(/^([+-]?[\d.,]+)\s*%$/);
+                rows.push({ label, display, value: pm ? null : parseNumber(display), pct: pm ? parseFloat(pm[1].replace(/,/g, '')) : null });
+            });
+            if (!rows.length) return;
+            const det = detectPlanet(); if (!det || !det.slot || det.assign) return;
+            const key = 'sa-defense-' + det.slot, cur = GM_getValue(key, null) || {};
+            const sig = JSON.stringify(rows);
+            if (cur[type] && JSON.stringify(cur[type].rows) === sig) return;
+            cur[type] = { rows, heading: head[0].trim(), at: new Date().toISOString() };
+            GM_setValue(key, cur);
+            try { renderNation(); } catch (e) {}
+        });
+    }
+    var defTipTimer = null;
+    document.addEventListener('mouseover', (e) => {
+        if (pageKey !== 'nation' || (e.target.closest && e.target.closest('#' + PANEL_ID))) return;
+        clearTimeout(defTipTimer); defTipTimer = setTimeout(() => { try { readDefenseTip(); } catch (er) {} }, 350);
+    }, true);
+    function defFactorsHtml(ids, head) {
+        const data = ids.map(id => GM_getValue('sa-defense-' + id, null) || {});
+        const types = ['attacks', 'assassins', 'espionage'].filter(t => data.some(d => d[t]));
+        if (!types.length) return `<div class="sa-slot-meta" style="margin-top:8px">Defense factors: hover each ❓ in the game's Planet Defense table (Nation page) and SharkBot saves what it shows.</div>`;
+        const body = types.map(t => {
+            const labels = []; data.forEach(d => ((d[t] || {}).rows || []).forEach(r => { if (!labels.includes(r.label)) labels.push(r.label); }));
+            return `<tr class="sa-stmt-head"><td colspan="${ids.length + 1}">VS ${escapeHtml(t[0].toUpperCase() + t.slice(1))}</td></tr>` + labels.map(l => `<tr><td style="padding-left:12px">${escapeHtml(l)}</td>${data.map(d => {
+                const r = ((d[t] || {}).rows || []).find(x => x.label === l);
+                return `<td class="sa-num">${r ? escapeHtml(r.display) : '—'}</td>`; }).join('')}</tr>`).join('');
+        }).join('');
+        const when = ids.map((id, k) => { const ts = types.map(t => data[k][t] && data[k][t].at).filter(Boolean).sort().pop(); return ts ? `${escapeHtml(shortName(id))}: read ${escapeHtml(agoText(ts))}` : ''; }).filter(Boolean).join(' · ');
+        return `<div class="sa-label" style="margin-top:10px">Defense factors</div>
+            <div class="sa-scroll"><table class="sa-unit-table"><thead>${head}</thead><tbody>${body}</tbody></table></div>
+            <div class="sa-slot-meta">From the ❓ hover boxes in the game's Planet Defense table${when ? ' · ' + when : ''}.</div>`;
+    }
+    // ---------- Pollution window (since v3.25.0) ----------
+    // Clicking Pollution on the Nation page opens a window: pollution and forest size, then tables (pollution from workers, from
+    // facilities, from forest, summary), each a title row and "label | value" rows. Saved per planet while it's open:
+    // sa-pollution-<slot> = { pollution, forest, sections: [{ title, rows: [{ label, display, value }] }], at }
+    function readPollutionWindow() {
+        if (isLocked() || sbView) return;
+        const box = Array.from(document.querySelectorAll('.cdk-overlay-container *, body > *')).find(el => !el.closest('#' + PANEL_ID) && el.querySelectorAll && el.querySelectorAll('table').length >= 2 &&
+            /pollution from facilities/i.test(el.textContent || '') && /summary/i.test(el.textContent || '') && isVisible(el) &&
+            !Array.from(el.children).some(c => /pollution from facilities/i.test(c.textContent || '') && /summary/i.test(c.textContent || '') && c.querySelectorAll('table').length >= 2));
+        if (!box) return;
+        const txt = (box.innerText || box.textContent || '').replace(/[ \t]+/g, ' ');
+        const pm = txt.match(/Pollution\s+([\d,.]+)/i), fm = txt.match(/Forest size\s+([\d,.]+)/i);
+        const sections = [];
+        Array.from(box.querySelectorAll('table')).forEach(t => {
+            let title = '', rows = [];
+            Array.from(t.querySelectorAll('tr')).forEach(tr => {
+                const c = Array.from(tr.children).map(x => (x.textContent || '').replace(/\s+/g, ' ').trim());
+                if (c.length === 1 || (c.length >= 1 && !title && !rows.length && c.filter(Boolean).length === 1)) { if (!title) title = c.filter(Boolean)[0] || ''; return; }
+                if (c.length >= 2 && c[0]) { const v = c[c.length - 1]; const num = v.match(/^([+-]?[\d.,]+\s*[A-Za-z]*)/); rows.push({ label: c[0], display: v, value: num ? parseNumber(num[1].trim()) : null }); }
+            });
+            if (!title) { const prev = t.previousElementSibling; title = prev ? (prev.textContent || '').trim().slice(0, 60) : ''; }
+            if (rows.length) sections.push({ title: title || 'Pollution', rows });
+        });
+        if (!sections.length) return;
+        const det = detectPlanet(); if (!det || !det.slot || det.assign) return;
+        const rec = { pollution: pm ? parseNumber(pm[1]) : null, forest: fm ? parseNumber(fm[1]) : null, sections };
+        const key = 'sa-pollution-' + det.slot, cur = GM_getValue(key, null);
+        if (cur && JSON.stringify({ pollution: cur.pollution, forest: cur.forest, sections: cur.sections }) === JSON.stringify(rec)) return;
+        GM_setValue(key, Object.assign(rec, { at: new Date().toISOString() }));
+        try { renderNation(); } catch (e) {}
+    }
+    setInterval(() => { if (pageKey === 'nation') try { readPollutionWindow(); } catch (e) {} }, 2000);
+    function pollutionHtml(ids, head) {
+        const data = ids.map(id => GM_getValue('sa-pollution-' + id, null));
+        if (!data.some(Boolean)) return `<div class="sa-slot-meta" style="margin-top:8px">Pollution: click Pollution on the game's Nation page and SharkBot saves the window's breakdown.</div>`;
+        const titles = []; data.forEach(d => ((d && d.sections) || []).forEach(sec => { if (!titles.includes(sec.title)) titles.push(sec.title); }));
+        const top = `<tr><td>Pollution</td>${data.map(d => `<td class="sa-num">${d && d.pollution != null ? escapeHtml(fmt(d.pollution)) : '—'}</td>`).join('')}</tr>
+            <tr><td>Forest size (trees)</td>${data.map(d => `<td class="sa-num">${d && d.forest != null ? escapeHtml(fmt(d.forest)) : '—'}</td>`).join('')}</tr>`;
+        const body = titles.map(tt => {
+            const labels = []; data.forEach(d => (((d && d.sections) || []).find(x => x.title === tt) || { rows: [] }).rows.forEach(r => { if (!labels.includes(r.label)) labels.push(r.label); }));
+            return `<tr class="sa-stmt-head"><td colspan="${ids.length + 1}">${escapeHtml(tt)}</td></tr>` + labels.map(l => `<tr><td style="padding-left:12px">${escapeHtml(l)}</td>${data.map(d => {
+                const sec = ((d && d.sections) || []).find(x => x.title === tt), r = sec && sec.rows.find(x => x.label === l);
+                return `<td class="sa-num">${r ? escapeHtml(r.display) : '—'}</td>`; }).join('')}</tr>`).join('');
+        }).join('');
+        const when = ids.map((id, k) => data[k] ? `${escapeHtml(shortName(id))}: read ${escapeHtml(agoText(data[k].at))}` : '').filter(Boolean).join(' · ');
+        return `<div class="sa-label" style="margin-top:10px">Pollution</div>
+            <div class="sa-scroll"><table class="sa-unit-table"><thead>${head}</thead><tbody>${top}${body}</tbody></table></div>
+            <div class="sa-slot-meta">From the game's Pollution window (click Pollution on the Nation page)${when ? ' · ' + when : ''}.</div>`;
     }
     renderNation();
 
@@ -11275,6 +11385,210 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     refreshCalcs();
     autoScan();   // and once when the game first loads
     startColonyWatch();
+
+    // ---------- ⓘ on every calculator input (since v3.23.0) ----------
+    // Hover (or click) shows what the input is, where SharkBot gets it (or where to find it in the game), and its state right now.
+    // Keyed "pane|label" first, then "*|label" (labels in lower case). Attack / Assassination: the second side is the defender ("def:").
+    const U_ = 'Data → Units (open the Train Units page on that planet)', F_ = 'Facilities (new view) on that planet', R_ = 'the Research page',
+          N_ = 'the Nation page and the colony status (hover the colony face in the top bar) on that planet', C_ = 'Cards → All Hero cards';
+    const INPUT_INFO = {
+        '*|capital to use': ['How much of your capital (credits on planets and in the bank, plus resources you could sell) plans may spend.', 'Worked out from your saved inventory, bank and market prices.'],
+        '*|set amount': ['An exact budget instead of the slider, e.g. "15 Sx", "5b gold" or "2 T iron + 1.5 Sx".', 'Typed by you.'],
+        '*|brains': ['Count your brains as capital, valued at their Best Spend value.', 'Brains come from ' + R_ + '.'],
+        '*|diamonds': ['Count your diamonds as capital, valued at their Best Spend value.', 'Diamonds come from ' + R_ + '.'],
+        '*|ssb': ['Count your SSB as capital, valued at their Best Spend value.', 'SSB come from ' + R_ + '.'],
+        '*|facilities at 0% count as off': ['A facility whose slider is at 0% in the game gives nothing here. Untick to use its level anyway.', 'Sliders come from ' + F_ + '.'],
+        '*|planet': ['Which of your planets the calculator works on.', 'Planets are added as you scan them.'],
+        'storage|turn storage level': ['Level of the Tick Storage facility; more levels store more turns.', 'From ' + F_ + ' (whichever planet has Tick Storage).'],
+        'storage|brains (empire-wide)': ['Your brains; each adds 100 turns of storage.', 'From ' + R_ + '.'],
+        'area|starting level': ['The Area\'s level now.', 'From ' + F_ + ' (Areas section).'],
+        'area|ending level': ['The level you want to reach.', 'Typed by you (or pick a target size).'],
+        'area|card cost reduction %': ['Your best card that lowers Area upgrade cost.', 'From ' + C_ + '.'],
+        'turns|starting level': ['Your Tick Generator level now.', 'From ' + F_ + ' (whichever planet has the Tick Generator).'],
+        'turns|ending level': ['The level you want to reach.', 'Typed by you (or pick a target turns per minute).'],
+        'training|barracks level': ['Your Barracks level; it sets the base units trained per turn.', 'From ' + U_ + '.'],
+        'training|education research': ['Education research level; adds to every unit trained.', 'From ' + R_ + '.'],
+        'training|tactics research': ['Tactics research level; adds to Majors and Champions.', 'From ' + R_ + '.'],
+        'training|professors': ['Professors on the planet; they speed up training.', 'From ' + U_ + '.'],
+        'training|tacticians': ['Tacticians on the planet; they speed up training of military units.', 'From ' + U_ + '.'],
+        'training|teachers': ['Teachers on the planet; they speed up training.', 'From ' + U_ + '.'],
+        'training|starting barracks': ['Barracks level now, for the upgrade cost.', 'From ' + U_ + '.'],
+        'training|ending barracks': ['The Barracks level you want to reach.', 'Typed by you.'],
+        'rescalc|research speed card': ['Use your best research-speed Hero card in the costs.', 'From ' + C_ + '.'],
+        'rescalc|requirement card': ['Use your best research-requirement Hero card in the costs.', 'From ' + C_ + '.'],
+        'rescalc|brain boost': ['Brain boost lowers research costs and doubles research points while active.', 'Read from ' + R_ + '.'],
+        'energy|solar power level': ['Solar Power facility level (3,000 storage each).', 'From ' + F_ + '.'],
+        'energy|coal power level': ['Coal Power facility level (3,000 each).', 'From ' + F_ + '.'],
+        'energy|wind power level': ['Wind Power facility level (5,000 each).', 'From ' + F_ + '.'],
+        'energy|tritium power level': ['Tritium Power facility level (100,000 each).', 'From ' + F_ + '.'],
+        'energy|tritium accumulator level': ['Tritium Accumulator facility level (10,000 each).', 'From ' + F_ + '.'],
+        'energy|energy core level': ['Energy Core level; multiplies all energy storage.', 'From ' + F_ + '.'],
+        'energy|ssb': ['SSB on the planet (100 storage each).', 'From ' + R_ + '.'],
+        'energy|solar power research': ['Solar power research level (+5% solar each).', 'From ' + R_ + '.'],
+        'energy|energy technology research': ['Energy Technology research level (+1% each).', 'From ' + R_ + '.'],
+        'productivity|doctors': ['Doctors on the planet; they heal sickness.', 'From ' + U_ + '.'],
+        'productivity|medicine research': ['Medicine research level; makes doctors heal more.', 'From ' + R_ + '.'],
+        'productivity|sick units': ['Units sick right now.', 'From ' + N_ + '.'],
+        'productivity|total units (population)': ['Your population.', 'From ' + N_ + '.'],
+        'productivity|happiness %': ['Colony happiness.', 'From ' + N_ + '.'],
+        'productivity|worker ratio': ['Share of the population that works (workers ÷ population).', 'Worked out from Units and Nation; type your own to change it.'],
+        'productivity|work mode happiness': ['Happiness your work mode adds.', 'Typed by you: see the Colony Status window (click the colony face).'],
+        'productivity|pollution': ['Planet pollution.', 'From ' + N_ + '.'],
+        'productivity|reduce-sickness card %': ['Your best card that reduces sickness.', 'From ' + C_ + '.'],
+        'creditgen|industrial workers': ['Workers in your Industrial Area; more workers = more passive credits.', 'From ' + U_ + '.'],
+        'creditgen|commercial workers': ['Workers in your Commercial Area.', 'From ' + U_ + '.'],
+        'creditgen|mine slaves': ['Slaves working the mines.', 'From ' + U_ + '.'],
+        'creditgen|work mode': ['The colony\'s work mode; it changes passive income only.', 'From the Colony Status window: click the colony face in the top bar once.'],
+        'creditgen|income facility lvl': ['Income Facility level; raises credits from workers.', 'From ' + F_ + '. If it stays empty, type it from the game\'s Facilities page.'],
+        'creditgen|economy research': ['Economy research level.', 'From ' + R_ + '.'],
+        'creditgen|productivity %': ['Colony productivity; scales all income.', 'From the colony status: hover the colony face in the top bar on that planet.'],
+        'creditgen|galaxy fee %': ['The galaxy fee taken from printed credits.', 'From Bank → Central bank ("Galaxy fee (spend turns)"): open it and click Manual Scan.'],
+        'creditgen|ticks per day (passive)': ['How many ticks you earn passive income in a day (one a minute = 1,440).', 'A default you can change.'],
+        'creditgen|turns printed per print day': ['Turns you spend printing on a print day.', 'A default you can change (at most 150,000: 50,000 a print, 8-hour cooldown).'],
+        'creditgen|print days per week': ['Days a week you print.', 'A default you can change.'],
+        'creditgen|productivity card (none saved)': ['Multiply productivity by your best productivity Hero card. Untick if the game\'s productivity already includes it.', 'From ' + C_ + '.'],
+        'resgen|productivity %': ['Colony productivity; scales production.', 'From the colony status (hover the colony face).'],
+        'resgen|mine workers': ['Workers in your mines.', 'From ' + U_ + '.'],
+        'resgen|mine slaves': ['Slaves in your mines.', 'From ' + U_ + '.'],
+        'resgen|iron mines lvl': ['Iron Mines facility level.', 'From ' + F_ + '.'],
+        'resgen|gold mines lvl': ['Gold Mines facility level.', 'From ' + F_ + '.'],
+        'resgen|digging': ['Digging research level.', 'From ' + R_ + '.'],
+        'resgen|iron mining': ['Iron mining research level.', 'From ' + R_ + '.'],
+        'resgen|gold mining': ['Gold mining research level.', 'From ' + R_ + '.'],
+        'resgen|coal workers %': ['Coal bonus from your best card.', 'From ' + C_ + ', or type your own.'],
+        'resgen|iron mines %': ['Iron Mines bonus from your best card.', 'From ' + C_ + ', or type your own.'],
+        'resgen|iron workers %': ['Iron workers bonus from your best card.', 'From ' + C_ + ', or type your own.'],
+        'resgen|gold mines %': ['Gold Mines bonus from your best card.', 'From ' + C_ + ', or type your own.'],
+        'resgen|gold workers %': ['Gold workers bonus from your best card.', 'From ' + C_ + ', or type your own.'],
+        'resgen|iron per turn (flat)': ['Flat iron added per turn by a card.', 'From ' + C_ + ', or type your own.'],
+        'resgen|gold per turn (flat)': ['Flat gold added per turn by a card.', 'From ' + C_ + ', or type your own.'],
+        'resgen|turns per day': ['Turns you get a day.', 'From the Tick Generator (Facilities) and Turn Gen; type your own to change it.'],
+        'resgen|value resources at': ['Value resources at the market sell or buy price.', 'Prices come from the Market page.'],
+        'unitvalue|your slave price (optional)': ['Your own price per slave, if you sell above or below market.', 'Typed by you; blank = market price (Market page).'],
+        'unitvalue|your professor price (optional)': ['Your own price per professor.', 'Typed by you; blank = market price (Market page).'],
+        'unitvalue|slave split: % of profit you keep': ['Share of a slave sale you keep (80% after the 20% Gastro tax).', 'A default you can change.'],
+        'unitvalue|slaves sold per day max': ['Most slaves the market takes from you a day.', 'Typed by you; blank = no limit.'],
+        'unitvalue|professors sold per day max': ['Most professors you can sell a day.', 'Typed by you; blank = no limit.'],
+        'unitvalue|passive training (1 turn per tick, free)': ['Every planet trains one turn\'s worth of units each tick for free.', 'Untick to leave free training out.'],
+        'optimizer|income facility: cost of one level': ['What one Income Facility level costs, to compare plans with putting the same credits there.', 'Typed by you: see the Income Facility upgrade cost on the Facilities page.'],
+        'optimizer|brains (have': ['Credit value of one brain, used for capital and plans.', 'Typed by you; count from ' + R_ + '.'],
+        'optimizer|diamonds (have': ['Credit value of one diamond.', 'Typed by you; count from ' + R_ + '.'],
+        'optimizer|ssb (have': ['Credit value of one SSB.', 'Typed by you; count from ' + R_ + '.'],
+        'valueopt|turns to spend per day': ['Turns you spend a day across all planets.', 'From your Tick Generators (Facilities); type your own to change it.'],
+        'valueopt|print credits': ['Let the plan spend turns printing credits.', 'Your choice.'],
+        'valueopt|make resources': ['Let the plan spend turns making resources.', 'Your choice.'],
+        'valueopt|sell slaves': ['Let the plan spend turns training and selling slaves.', 'Your choice.'],
+        'valueopt|sell professors': ['Let the plan spend turns training and selling professors.', 'Your choice.'],
+        'valueopt|use the saving plan (turn storage)': ['Use the Save turns for print days plan in the Income statement and turn value.', 'Turn Storage comes from the Turn Storage calculator.'],
+        'factorycalc|industrial workers': ['Industrial workers on the planet.', 'From ' + U_ + '.'],
+        'factorycalc|factory workers': ['Factory workers on the planet.', 'From ' + U_ + '.'],
+        'factorycalc|engineers': ['Engineers on the planet.', 'From ' + U_ + '.'],
+        'factorycalc|factory level': ['Factory facility level.', 'From ' + F_ + '.'],
+        'factorycalc|giga factory level': ['Giga Factory facility level.', 'From ' + F_ + '.'],
+        'factorycalc|automation research': ['Automation research level (+2% each).', 'From ' + R_ + '.'],
+        'printer|start level': ['Your Money Printer level now.', 'From Bank → Print: open it and click Manual Scan.'],
+        'printer|end level': ['The level you want to reach.', 'Typed by you; blank = one level.'],
+        'invcreate|credits put in': ['Credits you put into the new investment.', 'Typed by you.'],
+        'invcreate|turns put in': ['Turns you put into the new investment.', 'Typed by you.'],
+        'invcreate|volatility': ['The Central bank\'s current volatility.', 'From Bank → Central bank ("Current Volatility"): open it and click Manual Scan.'],
+        'invcreate|card bonus %': ['Your best investment card.', 'From ' + C_ + '.'],
+        'attack|soldiers': ['Your soldiers on the planet.', 'From ' + U_ + '.'], 'attack|corporals': ['Your corporals.', 'From ' + U_ + '.'],
+        'attack|majors': ['Your majors.', 'From ' + U_ + '.'], 'attack|champions': ['Your champions.', 'From ' + U_ + '.'],
+        'attack|invader ships': ['Your invader ships.', 'From ' + U_ + '.'], 'attack|space fighters': ['Your space fighters.', 'From ' + U_ + '.'],
+        'attack|carriers': ['Your carriers.', 'From ' + U_ + '.'],
+        'attack|weapon tech': ['Weapon tech research level (+0.5% each).', 'From ' + R_ + '.'], 'attack|attack card %': ['Your best attack card.', 'From ' + C_ + '.'],
+        'attack|def:soldiers': ['Defender\'s soldiers.', 'Typed by you: from a spy report (Data → Missions) on that planet.'],
+        'attack|def:corporals': ['Defender\'s corporals.', 'Typed by you: from a spy report.'], 'attack|def:majors': ['Defender\'s majors.', 'Typed by you: from a spy report.'],
+        'attack|def:champions': ['Defender\'s champions.', 'Typed by you: from a spy report.'], 'attack|def:invader ships': ['Defender\'s invader ships.', 'Typed by you: from a spy report.'],
+        'attack|def:space fighters': ['Defender\'s space fighters.', 'Typed by you: from a spy report.'], 'attack|def:carriers': ['Defender\'s carriers.', 'Typed by you: from a spy report.'],
+        'attack|def:miner ships (no defense)': ['Defender\'s miner ships; they don\'t count for defense.', 'Typed by you: from a spy report.'],
+        'attack|def:defense tech': ['Defender\'s defense tech level.', 'Typed by you: from a spy report, if it shows it.'], 'attack|def:defense card %': ['Defender\'s defense card.', 'Typed by you, if you know it.'],
+        'assassin|assassins': ['Your assassins.', 'From ' + U_ + '.'], 'assassin|assassin tech': ['Assassin Technology research level.', 'From ' + R_ + '.'],
+        'assassin|assassin card %': ['Your best assassin card.', 'From ' + C_ + '.'],
+        'assassin|def:assassins': ['Defender\'s assassins.', 'Typed by you: from a spy report (Data → Missions).'], 'assassin|def:security officers': ['Defender\'s security officers.', 'Typed by you: from a spy report.'],
+        'assassin|def:targeted unit 1': ['How many of the first targeted unit the defender has.', 'Typed by you: from a spy report.'],
+        'assassin|def:targeted unit 2': ['Second targeted unit.', 'Typed by you: from a spy report.'], 'assassin|def:targeted unit 3': ['Third targeted unit.', 'Typed by you: from a spy report.'],
+        'assassin|def:targeted unit 4': ['Fourth targeted unit.', 'Typed by you: from a spy report.'], 'assassin|def:assassin tech': ['Defender\'s assassin tech.', 'Typed by you, if you know it.'],
+        'assassin|def:card %': ['Defender\'s card.', 'Typed by you, if you know it.'],
+    };
+    const CALC_PANES = ['storage', 'area', 'turns', 'training', 'rescalc', 'energy', 'productivity', 'creditgen', 'resgen', 'unitvalue', 'optimizer', 'valueopt', 'trapcalc', 'factorycalc', 'printer', 'invcreate', 'attack', 'assassin'];
+    function infoFor(pane, label, def) {
+        const l = String(label || '').replace(/\s+/g, ' ').replace(/ⓘ/g, '').trim().toLowerCase(); if (!l) return null;
+        const keys = [pane + '|' + (def ? 'def:' : '') + l, pane + '|' + l, pane + '|def:' + l, '*|' + l];
+        for (const k of keys) if (INPUT_INFO[k]) return INPUT_INFO[k];
+        // labels that carry a count or note, like "Brains (have 1.08 K)" or "Brains 1.08 K"
+        const hit = Object.keys(INPUT_INFO).find(k => { const [p, n] = k.split('|'); return (p === pane || p === '*') && !n.startsWith('def:') && (l.startsWith(n + ' ') || l.startsWith(n + '(') || l === n); });
+        return hit ? INPUT_INFO[hit] : null;
+    }
+    function inputState(inp) {
+        if (inp.type === 'checkbox') return inp.checked ? 'On.' : 'Off.';
+        const mark = inp.nextElementSibling && (inp.nextElementSibling.textContent || '').trim();
+        const v = String(inp.value || '').trim();
+        if (mark === '●') return 'Now: filled from your saved data.';
+        if (v) return mark === '○' ? 'Now: typed by you (clear it to go back to saved data).' : 'Now: ' + (inp.tagName === 'SELECT' ? (inp.selectedOptions[0] || {}).textContent || v : v) + '.';
+        return 'Now: empty, nothing saved for it yet.';
+    }
+    let infoTip = null, infoTipFor = null;
+    function showInfo(icon) {
+        if (!infoTip) { infoTip = document.createElement('div'); infoTip.className = 'sa-info-tip'; panel.appendChild(infoTip); }
+        const inp = icon._sbInput, d = icon._sbInfo;
+        infoTip.innerHTML = `<div style="margin-bottom:4px">${escapeHtml(d[0])}</div><div style="color:var(--muted)">${escapeHtml(d[1])}</div><div style="margin-top:4px; color:var(--accent)">${escapeHtml(inputState(inp))}</div>`;
+        infoTip.style.display = 'block';
+        const pr = panel.getBoundingClientRect(), ir = icon.getBoundingClientRect(), z = uiZoom();
+        const w = Math.min(280, pr.width - 16);
+        infoTip.style.width = (w / z) + 'px';
+        let left = (ir.left - pr.left) / z, top = (ir.bottom - pr.top + 4) / z;
+        left = Math.max(6, Math.min(left, (pr.width - w - 6) / z));
+        infoTip.style.left = left + 'px'; infoTip.style.top = top + 'px';
+        infoTipFor = icon;
+    }
+    function hideInfo() { if (infoTip) infoTip.style.display = 'none'; infoTipFor = null; }
+    function decorateInputs(paneEl) {
+        if (!paneEl) return;
+        const pane = paneEl.dataset.pane, seen = {};
+        paneEl.querySelectorAll('input, select').forEach(inp => {
+            if (inp.closest('.sa-how') || inp.type === 'range' || inp.type === 'hidden') return;
+            let host = null, label = '';
+            const prev = inp.previousElementSibling;
+            if (prev && prev.tagName === 'LABEL') { host = prev; label = prev.textContent; }
+            else if (inp.closest('label')) { host = inp.closest('label'); label = host.textContent; }
+            else if (/sa-amt/.test(inp.className) || inp.classList.contains('sa-amt')) { label = 'set amount'; host = null; }
+            else if (/-slot\b/.test(inp.id || '') || inp.classList.contains('sa-xc-slot')) { label = 'planet'; host = null; }
+            if (!label) return;
+            const key = label.replace(/\s+/g, ' ').replace(/ⓘ/g, '').trim().toLowerCase();
+            seen[key] = (seen[key] || 0) + 1;
+            const d = infoFor(pane, label, seen[key] > 1 && ['attack', 'assassin'].includes(pane));
+            if (!d) return;
+            const target = host || inp.parentElement;
+            if (!target || target.querySelector(':scope > .sa-info-i') || (host === null && inp.nextElementSibling && inp.nextElementSibling.classList && inp.nextElementSibling.classList.contains('sa-info-i'))) return;
+            const icon = document.createElement('span');
+            icon.className = 'sa-info-i'; icon.textContent = 'ⓘ'; icon.setAttribute('role', 'button'); icon.tabIndex = 0;
+            icon._sbInput = inp; icon._sbInfo = d;
+            icon.addEventListener('mouseenter', () => showInfo(icon));
+            icon.addEventListener('mouseleave', () => { if (!icon._sbPinned) hideInfo(); });
+            icon.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); const pin = !icon._sbPinned; panel.querySelectorAll('.sa-info-i').forEach(x => x._sbPinned = false); icon._sbPinned = pin; if (pin) showInfo(icon); else hideInfo(); });
+            if (host) host.appendChild(icon); else inp.insertAdjacentElement('afterend', icon);
+        });
+        // The "Capital to use" heading of the calculator bar
+        paneEl.querySelectorAll('.sa-label').forEach(h => {
+            if (!/^capital to use/i.test((h.textContent || '').trim()) || h.querySelector('.sa-info-i')) return;
+            const inp = paneEl.querySelector('.sa-pct'); if (!inp) return;
+            const icon = document.createElement('span'); icon.className = 'sa-info-i'; icon.textContent = 'ⓘ'; icon.tabIndex = 0;
+            icon._sbInput = inp; icon._sbInfo = INPUT_INFO['*|capital to use'];
+            icon.addEventListener('mouseenter', () => showInfo(icon)); icon.addEventListener('mouseleave', () => { if (!icon._sbPinned) hideInfo(); });
+            icon.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); icon._sbPinned = !icon._sbPinned; if (icon._sbPinned) showInfo(icon); else hideInfo(); });
+            h.appendChild(icon);
+        });
+    }
+    document.addEventListener('click', (e) => { if (infoTipFor && !(e.target.closest && e.target.closest('.sa-info-i, .sa-info-tip'))) { panel.querySelectorAll('.sa-info-i').forEach(x => x._sbPinned = false); hideInfo(); } });
+    // Calculators redraw their inputs, so the icons are added again whenever a calculator pane changes
+    const infoObs = new MutationObserver((muts) => {
+        const panes = new Set();
+        muts.forEach(m => { const p = m.target.closest && m.target.closest('.sa-pane'); if (p && CALC_PANES.includes(p.dataset.pane)) panes.add(p); });
+        if (panes.size) { infoObs.disconnect(); panes.forEach(decorateInputs); infoObs.observe(panel, { childList: true, subtree: true }); }
+    });
+    panel.querySelectorAll('.sa-pane').forEach(p => { if (CALC_PANES.includes(p.dataset.pane)) decorateInputs(p); });
+    infoObs.observe(panel, { childList: true, subtree: true });
 
     console.log(`[SharkBot] v${VERSION} loaded on page: ${pageKey || '(unknown)'}`);
 })();
