@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SharkBot
 // @namespace    https://spacealpha.net/
-// @version      3.15.1
+// @version      3.16.0
 // @description  SharkBot for Space Alpha: saves your planets' units, facilities, inventory, research, bank and market prices, and calculates credit generation and Tick Generator upgrade costs.
 // @author       SharkBot
 // @match        https://spacealpha.net/*
@@ -41,7 +41,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     const PANEL_ID = 'sa-helper-panel';
     const SLOT_IDS = 'ABCDEFGHIJ'.split('');   // up to 10 planets
     // Version comes from the @version header so it's never out of sync
-    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.15.1';
+    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.16.0';
     // Another copy of SharkBot already put its panel on the page: warn and stop,
     // so two installed copies are obvious instead of silently showing the old one.
     const existing = document.getElementById(PANEL_ID);
@@ -4313,7 +4313,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         const econ = 1 + 0.02 * v.economy, fee = v.galaxyFee / 100, A = cgAssumptions();
         const dayMult = work * A.ticksPerDay + (1 - fee) * A.turnsPerDay * A.printDays / 7;
         return { perWorkerDay: { industrial: 8 * base * dayMult, commercial: 30 * base * econ * dayMult },
-                 perTurn: res.perTurn, perDay: res.passiveDay + res.printAvg };
+                 perTurn: res.perTurn, perDay: res.passiveDay + res.printAvg, v, res, work };
     }
 
     // Resource Gen model for a planet (inputs as Resource Gen would fill them)
@@ -4341,7 +4341,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         }
         const val = (y) => { const p = rgProduction(y); return ['Coal', 'Iron', 'Gold'].reduce((t, n) => t + p[n] * tpd * (price(n) ?? 0), 0); };
         const perDay = val(x);
-        return { tpd, perDay, perTurn: perDay / tpd,
+        return { tpd, perDay, perTurn: perDay / tpd, x, price,
                  gainWorkers: (dw) => val(Object.assign({}, x, { mineWorkers: x.mineWorkers + dw })) - perDay,
                  valWith: (o) => val(Object.assign({}, x, o)) };
     }
@@ -10195,9 +10195,277 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     document.querySelectorAll(`#${PANEL_ID} .sa-xc-slot`).forEach(sel => sel.addEventListener('change', () => { GM_setValue('sa-xc-slot-' + sel.dataset.xc, sel.value); renderXc(sel.dataset.xc); }));
     renderXcAll();
 
+    // ---------- How it's calculated (since v3.16.0) ----------
+    // Under every calculator's result: always shown = the formula in plain words with your numbers and whether it's a
+    // Given formula (complete and from the game's players / Sharky) or Assumed (SharkBot's own model or a fill-in);
+    // "More detail" = every input and where it came from, and each step; "Nerdy details" (inside) = exact formulas and edge cases.
+    const HOW_RESULT = { storage: 'sa-ts-result', area: 'sa-ar-result', turns: 'sa-tn-result', training: 'sa-tr-result', rescalc: 'sa-rc-result',
+        energy: 'sa-en-result', productivity: 'sa-pr-result', factorycalc: 'sa-xc-factorycalc-result', printer: 'sa-xc-printer-result',
+        invcreate: 'sa-xc-invcreate-result', creditgen: 'sa-tg-result', resgen: 'sa-rg-result', unitvalue: 'sa-uv-result',
+        optimizer: 'sa-opt-result', valueopt: 'sa-vo-result', trapcalc: 'sa-tc-view', attack: 'sa-xc-attack-result', assassin: 'sa-xc-assassin-result' };
+    var howOpen = {};
+    const HOW_TAG = { given: ['✓ Given formula', 'var(--pos, #4c9)'], assumed: ['≈ Assumed', 'var(--warn, #e0a040)'], mixed: ['✓ Given formula · ≈ some parts assumed', 'var(--accent, #6af)'] };
+    const hf = (v) => v == null || !isFinite(v) ? '—' : escapeHtml(fmt(v));
+    const hn = (v, d = 2) => v == null || !isFinite(v) ? '—' : (Math.abs(v) >= 1e6 ? escapeHtml(fmt(v)) : (+v.toFixed(d)).toLocaleString());
+    // Inputs as the calculator shows them: label, value, and whether it was filled from saved data (●) or typed (○)
+    function howInputs(pane) {
+        const out = [];
+        document.querySelectorAll(`#${PANEL_ID} .sa-pane[data-pane="${pane}"] .sa-form`).forEach(form => {
+            Array.from(form.querySelectorAll('label')).forEach(l => {
+                let el = l.nextElementSibling; if (!el || !/INPUT|SELECT/.test(el.tagName)) return;
+                if (el.type === 'checkbox') return;
+                const src = el.nextElementSibling && el.nextElementSibling.classList.contains('sa-src') ? (el.nextElementSibling.textContent.trim() === '●' ? 'from your saved data' : 'typed by you') : '';
+                const val = el.tagName === 'SELECT' ? (el.selectedOptions[0]?.textContent || el.value) : (el.value || el.placeholder ? (el.value || '(blank)') : '(blank)');
+                out.push([l.textContent.trim(), val, src]);
+            });
+        });
+        return out;
+    }
+    function howBox(pane, h) {
+        const tag = HOW_TAG[h.badge] || HOW_TAG.assumed;
+        const k1 = pane + ':1', k2 = pane + ':2';
+        const inputs = [...(h.inputs || howInputs(pane)), ...(h.uses || []).filter(u => u && u[1] != null)];
+        return `<div class="sa-label" style="margin:0 0 3px">How it's calculated</div>
+            <div style="font-size:11px; line-height:1.45"><span style="color:${tag[1]}; font-weight:700">${tag[0]}</span>${h.badgeNote ? ` <span style="color:var(--muted)">(${h.badgeNote})</span>` : ''}<br>${h.important}</div>
+            <details class="sa-dd sa-how-dd" data-how="${k1}" ${howOpen[k1] ? 'open' : ''} style="margin-top:4px"><summary style="cursor:pointer; font-size:11px; color:var(--muted)">More detail: your numbers, step by step</summary>
+                <div style="font-size:11px; margin:4px 0 0 4px">
+                ${inputs.length ? `<div style="color:var(--muted); margin-bottom:2px">Inputs</div><table class="sa-unit-table" style="font-size:10px; width:auto; min-width:60%"><tbody>${
+                    inputs.map(([l, v, src]) => `<tr><td>${escapeHtml(l)}</td><td class="sa-num">${escapeHtml(String(v))}</td><td style="color:var(--muted)">${escapeHtml(src || '')}</td></tr>`).join('')}</tbody></table>` : ''}
+                ${(h.steps || []).length ? `<div style="color:var(--muted); margin:6px 0 2px">Steps</div><ol style="margin:0; padding-left:18px">${h.steps.map(x => `<li>${x}</li>`).join('')}</ol>` : ''}
+                <details class="sa-dd sa-how-dd" data-how="${k2}" ${howOpen[k2] ? 'open' : ''} style="margin-top:6px"><summary style="cursor:pointer; color:var(--muted)">Nerdy details: exact formulas and edge cases</summary>
+                    <ul style="margin:4px 0 0; padding-left:18px; font-size:10px">${(h.nerdy || []).map(x => `<li>${x}</li>`).join('')}</ul></details>
+                </div></details>`;
+    }
+    function renderHow(pane) {
+        const res = document.getElementById(HOW_RESULT[pane]); if (!res || !HOW[pane]) return;
+        const sec = res.closest('.sa-section') || res.parentElement;
+        let box = sec.parentElement.querySelector(`:scope > .sa-how[data-pane="${pane}"]`);
+        if (!box) { box = document.createElement('div'); box.className = 'sa-section sa-how'; box.dataset.pane = pane; sec.after(box); }
+        let h = null; try { h = HOW[pane](); } catch (e) { h = null; }
+        if (!h) { box.style.display = 'none'; return; }
+        box.style.display = '';
+        box.innerHTML = howBox(pane, h);
+        box.querySelectorAll('details[data-how]').forEach(d => d.addEventListener('toggle', () => { howOpen[d.dataset.how] = d.open; }));
+    }
+    var howTimers = {};
+    function watchHow() {
+        Object.entries(HOW_RESULT).forEach(([pane, id]) => {
+            const el = document.getElementById(id); if (!el || el.dataset.howWatch) return;
+            el.dataset.howWatch = '1';
+            new MutationObserver(() => { clearTimeout(howTimers[pane]); howTimers[pane] = setTimeout(() => renderHow(pane), 150); })
+                .observe(el, { childList: true, characterData: true, subtree: true });
+            renderHow(pane);
+        });
+    }
+    const fieldVals = (sel, attr) => { const v = {}; document.querySelectorAll(sel).forEach(i => v[i.dataset[attr]] = parseNumber(i.value)); return v; };
+    // Numbers one calculator takes from another (since v3.16.0): [what, value, 'from the … calculator']
+    function howTurnValue() { try { const vp = voPlan(); return vp && !vp.error && vp.turns > 0 ? vp.week / 7 / vp.turns : null; } catch (e) { return null; } }
+    const useTpd = () => ['Turns a day', empireTpd() ? hn(empireTpd()) : null, 'from the Turn Gen calculator (your Tick Generator: turns per minute × 1,440)'];
+    const useTurnValue = () => ['Average turn value', howTurnValue() != null ? hf(howTurnValue()) : null, 'from the Value Optimizer calculator'];
+    const useStorage = () => { const t = turnStorageCap(); return ['Turn Storage', t ? hn(t.cap) + ' turns' : null, 'from the Turn Storage calculator']; };
+    const useWorkers = (slot) => { const w = workersPerTurn(slot); return ['Workers trained per turn', w ? hf(w) : null, 'from the Training calculator (Soldiers & workers row)']; };
+    const capNote = 'The <b>All capital here</b> block (at the end of the result) is SharkBot\'s own planning model (≈ Assumed): it spends your capital (credits, bank, sellable resources, and brains / diamonds / SSB if ticked) a slice at a time on whatever adds the most credits a day; see Best Spend for the full explanation.';
+    const HOW = {
+        storage: () => {
+            const t = turnStorageCap(); if (!t) return null;
+            const tpd = empireTpd();
+            return { badge: 'assumed', badgeNote: 'source not recorded: confirm it to make it Given', uses: [useTpd()],
+                important: `Most turns you can hold = level × 10 + brains × 100 + 200 = ${hn(t.level)} × 10 + ${hn(t.brains)} × 100 + 200 = <b>${hn(t.cap)} turns</b>.`,
+                steps: [`Level × 10 = ${hn(t.level)} × 10 = ${hn(t.level * 10)}`, `Brains × 100 = ${hn(t.brains)} × 100 = ${hn(t.brains * 100)}`,
+                    `Add 200: ${hn(t.level * 10)} + ${hn(t.brains * 100)} + 200 = <b>${hn(t.cap)}</b>`,
+                    ...(tpd ? [`Hours to fill = ${hn(t.cap)} ÷ (${hn(tpd)} turns a day ÷ 24) = ${hn(t.cap / (tpd / 24))} h`] : [])],
+                nerdy: ['Storage = TurnStorageLevel × 10 + Brains × 100 + 200.', 'The level is the game\'s Tick Storage facility (or the facility you picked), from whichever planet has it; a facility at 0% counts as level 0 when "Facilities at 0% count as off" is ticked.',
+                    'Turns per day for the fill time come from your Tick Generator(s) (Turn Gen formula).'] };
+        },
+        area: () => {
+            const slot = GM_getValue('sa-area-active', planetIds()[0] || 'A'), d = arLoad(slot), S = parseNumber(d.start), card = parseNumber(d.card) || 0;
+            const tech = techFor(d.area) ? parseNumber(d.tech) || 0 : 0;
+            let E = d.mode === 'size' ? (parseNumber(d.target) != null ? levelForSize(parseNumber(d.target), tech) : null) : parseNumber(d.end);
+            if (S == null || E == null || !(E > S)) return null;
+            const s0 = Math.round(S); E = Math.round(E);
+            const raw = Math.round(40000 * sumPow(s0, E, 1.7)), cost = raw * (1 - card / 100), a = areaSize(s0, tech), b = areaSize(E, tech);
+            return { badge: 'given', uses: [useWorkers(slot), useTurnValue()], important: `Cost = 40,000 × (each level from ${hn(s0)} to ${hn(E)})^1.7 added up, minus your card = <b>${hf(cost)}</b> credits. Size = 2,000 × (level + 1)^1.5 × (1 + 2% × tech): ${hf(a)} → <b>${hf(b)}</b>.`,
+                steps: [`Add up level^1.7 for levels ${hn(s0)} … ${hn(E)} and multiply by 40,000: ${hf(raw)}`, `Card ${card}%: ${hf(raw)} × (1 − ${card}%) = <b>${hf(cost)}</b>`,
+                    `Tech multiplier: 1 + 2% × ${hn(tech)} = ${(1 + 0.02 * tech).toFixed(2)}`, `Start size: 2,000 × (${hn(s0)} + 1)^1.5 × ${(1 + 0.02 * tech).toFixed(2)} = ${hf(a)}`,
+                    `End size: 2,000 × (${hn(E)} + 1)^1.5 × ${(1 + 0.02 * tech).toFixed(2)} = ${hf(b)} (gain ${hf(b - a)})`],
+                nerdy: ['Cost = ROUND(40,000 × Σ k^1.7, k = start … end, both included) × (1 − card%).', 'Size(L) = 2,000 × (L + 1)^1.5 × (1 + 0.02 × tech). Only Industrial Area, Commercial Area and Farms have a tech (Industrialism, Commercialism, Farmialism).',
+                    '"By target size" finds the smallest level whose size reaches the target.', capNote] };
+        },
+        turns: () => {
+            const slot = GM_getValue('sa-turns-active', 'A'), d = tnLoad(slot);
+            const S = d.mode === 'tpm' ? (parseNumber(d.startTpm) != null ? levelForTpm(parseNumber(d.startTpm)) : null) : parseNumber(d.start);
+            let E = d.mode === 'tpm' ? (parseNumber(d.target) != null ? levelForTpm(parseNumber(d.target)) : null) : parseNumber(d.end);
+            if (S == null || E == null || !(E > S)) return null;
+            const c = calcTickUpgrade(Math.round(S), Math.round(E)); if (c.tooBig) return null;
+            const n = Math.round(E) - Math.round(S);
+            return { badge: 'mixed', badgeNote: 'upgrade costs given; turns per minute source not recorded',
+                important: `${hn(n)} upgrades (level ${hn(S)} → ${hn(E)}) cost <b>${hf(c.credits)}</b> credits, ${hf(c.gold)} gold, ${hf(c.iron)} iron and ${hf(c.trit)} tritium; turns per minute go ${tpm(Math.round(S)).toFixed(3)} → <b>${tpm(Math.round(E)).toFixed(3)}</b>.`,
+                steps: [`n = ${hn(E)} − ${hn(S)} = ${hn(n)} upgrades`, `Credits = 800,000,000 × ${hn(n)} + 1,200,000,000 × (each level^2.5 added up) = ${hf(c.credits)}`,
+                    `Gold = ${hn(n)} + 8 × (each level^1.3 added up) = ${hf(c.gold)}`, `Iron = 3 × ${hn(n)} + 10 × (each level^1.5 added up) = ${hf(c.iron)}`,
+                    `Tritium = ${hn(n)} + 10 × (each level^1.3 added up) = ${hf(c.trit)}`, `Turns per minute at level L = 0.38 × L^1.2 ÷ 100 × 0.2 + 0.2 → ${tpm(Math.round(E)).toFixed(3)} at ${hn(E)} (× 1,440 = ${hn(tpm(Math.round(E)) * 1440)} turns a day)`],
+                nerdy: ['Sums run over k = start … end − 1 (the level you upgrade from). Credits = 8e8·n + 1.2e9·Σk^2.5; Gold = n + 8·Σk^1.3; Iron = 3n + 10·Σk^1.5; Tritium = n + 10·Σk^1.3. ✓ Given.',
+                    'TPM(L) = 0.38·L^1.2/100·0.2 + 0.2. ≈ Assumed until confirmed (source not recorded).', '"By TPM" finds the smallest level whose TPM reaches the target (0.0005 tolerance).', capNote] };
+        },
+        training: () => {
+            const v = fieldVals('#sa-tr-form input[data-tr]', 'tr'); if (v.barracks == null) return null;
+            const L = v.barracks, edu = (v.education || 0) * 0.05, w = (50 + 10 * Math.pow(L, 3));
+            return { badge: 'assumed', badgeNote: 'source not recorded: confirm it to make it Given',
+                important: `Each unit type trains a base amount per turn from your Barracks level, + research, + your best card for it. Example, soldiers &amp; workers: (50 + 10 × ${hn(L)}³) = ${hf(w)} base × (1 + Education ${hn(edu * 100)}%) = <b>${hf(w * (1 + edu))}</b> before the card.`,
+                steps: [`Barracks level L = ${hn(L)}; Education +5% a level → +${hn(edu * 100)}%; Tactics +5% a level → +${hn((v.tactics || 0) * 5)}% (Majors, Champions)`,
+                    `Base per turn: Farmers 100 + 20·L³; Soldiers &amp; workers 50 + 10·L³; Slaves 40 + 10·L^2.65; Assassins/Spies 10 + 10·L^2.2; Professors 10 + 5·L^2.2; Doctors/Scientists/Engineers 10 + 10·L^2.3 (+ 9 × √professors); Corporals 0.4 + 0.4·L³ (+ 9 × √tacticians); Majors 0.006 + 0.006·L³ (+ √tacticians); Champions 0.0004 + 0.0004·L^2.8; Teachers 0.02 + 0.01·L³ (+ 3 × √teachers)`,
+                    'Total = (base + staff + Tactics part) × (1 + Education) × (1 + best card for that unit)'],
+                nerdy: ['Barracks upgrade credits = ROUND(1.269^S × (1.269^(E−S) − 1) ÷ 0.269) × 10,000,000 × (1 − cost card); iron = Σ(10 + 10·k^1.5), gold = Σ(1 + k^1.5) for k = S … E−1.',
+                    'Only one Hero card can be active; each unit row uses its own best card.', 'All of this is ≈ Assumed until you confirm it.'] };
+        },
+        rescalc: () => ({ badge: 'mixed', badgeNote: 'research costs given; turns valued with SharkBot\'s turn value', uses: [useTurnValue(), (() => { const c = enStorageFor(rcSlot()); return ['Energy you can store', c ? hf(c.total) : null, 'from the Energy calculator']; })()],
+            important: 'Each research\'s next level shows every cost in credits: credits + iron, gold and tritium at the market buy price + energy (extra SSB storage at buy price, when a level needs more than you can store) + turns × your average turn value. The cheapest total is first.',
+            steps: ['Costs per level come from each research\'s formula (your sheet), at the level being bought (current + 1).', 'Brain boost (from the Research page): costs × 0.75 and research points × 2.',
+                'Cards: research requirement −%, research speed +% (tick boxes).', 'Turns = research points ÷ your scientists\' research per turn; turn value = Value Optimizer\'s credits per turn (≈ Assumed).'],
+            nerdy: ['Research without a known formula shows ???.', 'Energy: when a level needs more energy than the planet stores (Energy calculator), the extra storage is bought as SSB (100 storage each × your multipliers) at the market buy price.', 'Hover a cell for the raw amount.'] }),
+        energy: () => {
+            const v = fieldVals('#sa-en-form input[data-en]', 'en'), c = enCard(), r = energyStorage(v, c ? c.value : 0);
+            return { badge: 'given', important: `Energy storage = (all sources) × Energy Core × Energy Technology × card = ${hf(r.base)} × ${r.core.toFixed(4)} × ${r.et.toFixed(2)} × ${r.card.toFixed(2)} = <b>${hf(r.total)}</b>.`,
+                steps: [...Object.entries(r.parts).map(([k, x]) => `${escapeHtml(k)}: ${hf(x)}`), `Sum of sources = ${hf(r.base)}`,
+                    `Energy Core = 1 + level^1.2 ÷ 5 % = ${r.core.toFixed(4)}`, `Energy Technology = 1 + 1% × level = ${r.et.toFixed(2)}`, `Card = 1 + ${c ? c.value : 0}% = ${r.card.toFixed(2)}`],
+                nerdy: ['Solar 3,000 × level × (1 + 5% × Solar power research); Coal 3,000 × level; Wind 5,000 × level; Tritium Power 100,000 × level; Tritium Accumulator 10,000 × level; SSB × 100.',
+                    'Energy Core multiplier = 1 + round(level^1.2 ÷ 5, 10 decimals) ÷ 100.', 'Facilities at 0% count as level 0 when that tick box is on.'] };
+        },
+        productivity: () => {
+            const v = fieldVals('#sa-pr-form input[data-pr]', 'pr'), r = prRates(v, v.sickness || 0); if (!r) return null;
+            const f = (v.sickness || 0) / v.total;
+            return { badge: 'given', important: `Sickness changes by added − healed each tick = ${hf(r.added)} − ${hf(r.healed)} = <b>${r.net >= 0 ? '+' : '−'}${hf(Math.abs(r.net))}</b> per tick.`,
+                steps: [`Sick share = sick ÷ total = ${hf(v.sickness || 0)} ÷ ${hf(v.total)} = ${(f * 100).toFixed(3)}%`,
+                    `Healed = doctors × (1 + Medicine ÷ 2) × sick share + √happiness ÷ 100 × worker ratio × sick + work-mode happiness ÷ 10 × worker ratio × sick = ${hf(r.healed)}`,
+                    `Added = pollution^1.2 ÷ happiness² × (1 − sick share) + 500 × sick ÷ happiness² × (1 − sick share^0.35) × (1 − card) = ${hf(r.added)}`],
+                nerdy: ['Where sickness settles = the level where added = healed (found by bisection between 0 and total units).', 'Worker ratio defaults to workers ÷ population; work-mode happiness is typed.'] };
+        },
+        factorycalc: () => {
+            const { v } = xcValues('factorycalc'), z = (k) => v[k] || 0;
+            const p = [Math.pow(z('iw'), 0.3), Math.pow(z('fw'), 0.35), Math.pow(z('eng'), 0.4)], mF = Math.pow(z('fac'), 0.62), mG = 1 + Math.pow(z('giga'), 1.14) / 100, mA = 1 + 0.02 * z('auto');
+            const t = (p[0] + p[1] + p[2]) * mF * mG * mA;
+            return { badge: 'given', uses: [['Ticks a day', hn(cgAssumptions().ticksPerDay), 'from your Credit Gen settings']], important: `Production per tick = (workers part) × Factory × Giga Factory × Automation = ${hf(p[0] + p[1] + p[2])} × ${mF.toFixed(3)} × ${mG.toFixed(4)} × ${mA.toFixed(2)} = <b>${hf(t)}</b>.`,
+                steps: [`Industrial workers^0.3 = ${hf(z('iw'))}^0.3 = ${hf(p[0])}`, `Factory workers^0.35 = ${hf(z('fw'))}^0.35 = ${hf(p[1])}`, `Engineers^0.4 = ${hf(z('eng'))}^0.4 = ${hf(p[2])}`,
+                    `Factory^0.62 = ${hn(z('fac'))}^0.62 = ${mF.toFixed(3)}`, `1 + Giga Factory^1.14 ÷ 100 = ${mG.toFixed(4)}`, `1 + 2% × Automation ${hn(z('auto'))} = ${mA.toFixed(2)}`],
+                nerdy: ['Total = (IW^0.3 + FW^0.35 + Eng^0.4) × Factory^0.62 × (1 + Giga^1.14/100) × (1 + 0.02 × Automation).', 'Per day = per tick × ticks per day (Credit Gen setting).', 'What it produces isn\'t named in the formula.'] };
+        },
+        printer: () => {
+            const { v } = xcValues('printer'); if (v.start == null) return null;
+            const a = Math.round(v.start), b = v.end != null ? Math.round(v.end) : a + 1; if (!(b > a)) return null;
+            const c = printerCost(a, b);
+            return { badge: 'mixed', badgeNote: 'below level 10 / 2 the negative part counts as 0 (assumed)',
+                important: `${hn(c.n)} upgrades (level ${hn(a)} → ${hn(b)}) cost <b>${hf(c.credits)}</b> credits, ${hf(c.gold)} gold and ${hf(c.iron)} iron.`,
+                steps: [`Credits = 1,000,000 × (each level⁴ + 1.11^level, added up for levels ${hn(a)} … ${hn(b - 1)}) = ${hf(c.credits)}`,
+                    `Gold = ${hn(c.n)} + (each (level − 2)^1.2 added up) = ${hf(c.gold)}`, `Iron = ${hn(c.n)} + 10 × (each (level − 10)^1.5 added up) = ${hf(c.iron)}`],
+                nerdy: ['Credits = ROUND(1e6 × Σ(L⁴ + 1.11^L)); Gold = n + ROUND(Σ(L − 2)^1.2); Iron = n + ROUND(10 × Σ(L − 10)^1.5), L = start … end − 1. ✓ Given.',
+                    'Your sheet breaks below level 10; SharkBot counts (L − 10) and (L − 2) as 0 when negative. ≈ Assumed.', 'Total in credits: gold and iron you own at the sell price, missing ones at the buy price.'] };
+        },
+        invcreate: () => {
+            const { v } = xcValues('invcreate'); if (!(v.credits > 0) || !(v.turns > 0) || !(v.vol > 0)) return null;
+            const V2 = v.vol * v.vol, a = Math.pow(v.credits / V2, 0.06), b = Math.pow(v.turns / V2, 0.06), r = a * b / 88000 * (1 + (v.card || 0) / 100);
+            return { badge: 'mixed', badgeNote: 'volatility filled from the Central bank as % ÷ 100 (assumed)',
+                important: `Interest per 30 minutes = (credits ÷ volatility²)^0.06 × (turns ÷ volatility²)^0.06 ÷ 88,000 × (1 + card) = <b>${(r * 100).toFixed(4)}%</b>; a day (48 times) = ${((Math.pow(1 + r, 48) - 1) * 100).toFixed(3)}%.`,
+                steps: [`volatility² = ${v.vol} × ${v.vol} = ${hn(V2, 4)}`, `(credits ÷ volatility²)^0.06 = (${hf(v.credits)} ÷ ${hn(V2, 4)})^0.06 = ${a.toFixed(4)}`,
+                    `(turns ÷ volatility²)^0.06 = (${hf(v.turns)} ÷ ${hn(V2, 4)})^0.06 = ${b.toFixed(4)}`, `${a.toFixed(4)} × ${b.toFixed(4)} ÷ 88,000 × (1 + ${v.card || 0}%) = ${(r * 100).toFixed(4)}%`,
+                    `24 h = (1 + rate)^48 − 1; 7 days ^336; 30 days ^1440`],
+                nerdy: ['Rate = (C/V²)^0.06 × (T/V²)^0.06 / 88,000 × (1 + card). ✓ Given.', 'Compounds every 30 minutes.'] };
+        },
+        creditgen: () => {
+            const slot = GM_getValue('sa-turngen-active', 'A'); let m = null; try { m = cgModel(slot); } catch (e) {} if (!m) return null;
+            const v = m.v, r = m.res, fac = 0.4 * Math.pow(v.incomeFac, 1.17) / 100, econ = 1 + 0.02 * v.economy, A = cgAssumptions();
+            return { badge: 'given', uses: [['Galaxy fee', v.galaxyFee + '%', 'from your Bank → Central bank scan'], ['Productivity', v.productivity + '%', 'from your colony status']], important: `Credits per tick = (industrial × 8 + commercial × 30 × Economy + mine slaves × 35) × (1 + Income Facility) × productivity × work mode = <b>${hf(r.passive)}</b>; a turn spent printing gives ${hf(r.perTurn)} after the galaxy fee.`,
+                steps: [`Industrial: ${hf(v.industrial)} × 8 = ${hf(v.industrial * 8)}`, `Commercial: ${hf(v.commercial)} × 30 × Economy ${econ.toFixed(2)} (1 + 2% × ${v.economy}) = ${hf(v.commercial * 30 * econ)}`,
+                    `Mine slaves: ${hf(v.mineSlaves)} × 35 = ${hf(v.mineSlaves * 35)}`, `× (1 + Income Facility ${(fac * 100).toFixed(2)}%) [0.4 × ${hn(v.incomeFac)}^1.17 %] × productivity ${v.productivity}%${prodCard() ? ` × card +${prodCard().value}%` : ''}`,
+                    `Per tick (× work mode ${m.work}) = ${hf(r.passive)}; per day × ${A.ticksPerDay.toLocaleString()} ticks = ${hf(r.passiveDay)}`,
+                    `Printing per turn = same without work mode × (1 − galaxy fee ${v.galaxyFee}%) = ${hf(r.perTurn)}; per print day × ${A.turnsPerDay.toLocaleString()} turns = ${hf(r.printDay)}`],
+                nerdy: ['Each worker group: base × WorkMode × (1 + 0.4·IncomeFac^1.17/100) × Productivity (commercial also × (1 + 0.02·Economy)). Printing: no work mode, × (1 − galaxy fee). ✓ Given.',
+                    'Ticks per day, turns per print day and print days a week are your settings; more than 150,000 turns a day counts as 150,000 (50,000 a print, 8-hour cooldown).', capNote] };
+        },
+        resgen: () => {
+            const slot = GM_getValue('sa-rg-active', planetIds()[0] || 'A'); let m = null; try { m = rgModel(slot); } catch (e) {} if (!m) return null;
+            const x = m.x, pr = rgProduction(x), W = x.mineWorkers + x.mineSlaves;
+            return { badge: 'given', uses: [['Turns a day', hn(m.tpd), 'from the Turn Gen calculator (Tick Generator) unless typed']], important: `Per turn you make ${hf(pr.Coal)} coal, ${hf(pr.Iron)} iron and ${hf(pr.Gold)} gold, worth <b>${hf(m.perTurn)}</b> credits; × ${hn(m.tpd)} turns a day = ${hf(m.perDay)}.`,
+                steps: [`Miners W = mine workers + mine slaves = ${hf(W)}; Digging × ${(1 + 0.05 * x.digging).toFixed(2)}; productivity ${x.productivity}%`,
+                    `Coal = 0.01 × W^0.42 × Digging × productivity × coal card = ${hf(pr.Coal)}`, `Iron = 0.01 × W^0.4 × Digging × productivity × card + 0.3 × 2 × IronMines^1.2 × (1 + 5% × Iron mining) × card = ${hf(pr.Iron)}`,
+                    `Gold = 0.01 × W^0.32 × Digging × cards × productivity + 0.3 × GoldMines^1.2 × (1 + 5% × Gold mining) = ${hf(pr.Gold)}`, `Value = amount × market price (sell or buy, your choice)`],
+                nerdy: ['Exact: Coal = 0.01·W^0.42·(1+0.05·Dig)·P·(1+cCoalW); Iron = 0.01·W^0.4·(1+0.05·Dig)·P·(1+cIronW) + 0.3·(2·IronMines^1.2)·(1+0.05·IronMining)·(1+cIronM) + IronPT; Gold = 0.01·W^0.32·(1+0.05·Dig)·(1+cGoldM)·(1+cGoldW)·P + 0.3·GoldMines^1.2·(1+0.05·GoldMining) + GoldPT. ✓ Given.',
+                    'Cards: your most profitable saved Hero card is used unless you type one (only one can be active).', capNote] };
+        },
+        unitvalue: () => {
+            const slot = uvSlot(), um = untrainedModel(slot), sp = slavesPerTurn(slot), pp = profsPerTurn(slot);
+            return { badge: 'mixed', badgeNote: 'untrained formula given; slave and passive rules not recorded; one untrained per professor assumed',
+                uses: [['Professors per turn', pp ? hf(pp.n) : null, 'from the Training calculator (Professors row)'], useTpd(), useTurnValue()],
+                important: `Untrained per tick = (√(farmers ÷ 3) + 10) × (0.3 × Food Factories^1.18 + 100) ÷ 100 × (1 + card) × productivity = <b>${hf(um.perTick)}</b>.${sp ? ` Slaves per turn = 50% of that = ${hf(sp.n)}.` : ''}${pp ? ` Professors per turn = ${hf(pp.n)}.` : ''}`,
+                steps: [`√(${hf(um.farmers)} ÷ 3) + 10 = ${hf(um.base)}`, `× (0.3 × ${hn(um.food)}^1.18 + 100) ÷ 100 = × ${hn((0.3 * Math.pow(um.food, 1.18) + 100) / 100, 4)}`,
+                    `× (1 + card ${um.card ? um.card.value : 0}%) × productivity ${um.prod ?? 100}% = ${hf(um.perTick)}`,
+                    ...(pp ? [`Professors per turn = (10 + 5 × Barracks ${pp.L}^2.2) × (1 + Education ${hn(pp.edu * 100)}%) × (1 + card ${pp.card || 0}%) = ${hf(pp.n)}`] : []),
+                    'Passive: each planet trains one turn\'s worth per tick for free (unless Passive training is off); daily sell limits are filled by passive first, then by turns.',
+                    'Slave value = slaves × price × your split (80% by default); professor value = price − one untrained at sell price.'],
+                nerdy: ['Untrained: ✓ Given. Slaves = 50% of untrained per tick, passive = 1 turn per tick, 80% split: ≈ Assumed until confirmed (source not recorded).', 'Each professor uses one untrained unit: ≈ Assumed.'] };
+        },
+        optimizer: () => ({ badge: 'assumed', badgeNote: 'SharkBot\'s own model, built on the given formulas',
+            uses: [useWorkers(planetIds()[0] || 'A'), useTurnValue(), useTpd(), ['Area sizes and costs', 'per area', 'from the Area Size calculator'], ['Tick Generator costs and turns', 'per level', 'from the Turn Gen calculator'], ['Credits and resources per worker', 'per planet', 'from the Credit Gen and Resource Gen calculators']],
+            important: 'Your capital is spent a slice at a time (1/120th) on whichever upgrade adds the most credits a day per credit spent, counting the training turns new workers need and that income grows as they are trained. Break-even follows that ramp.',
+            steps: ['Capital = credits on planets + bank + stored resources at the market sell price (+ brains / diamonds / SSB if ticked).', 'Options: Area upgrades (Area Size formula), Tick Generator (Turn Gen formula, extra turns × your turn value) and income research (Research formula).',
+                'Instant cost = credits and materials now (owned materials at sell price, missing at buy price). Future cost = training turns × Value Optimizer\'s turn value, paid over (turns ÷ your turns a day) days.',
+                'Each slice is ranked by credits/day ÷ (instant + future + credits/day × training days ÷ 2).', 'Income Facility comparison: the same credits ÷ the cost per level you typed (each level assumed to cost the same).'],
+            nerdy: ['Area size is taken as worker room, filled with newly trained workers (Training: Soldiers & workers per turn).', 'Break-even: income rises evenly to full over the training days; solved for the day profit reaches 0.', 'Everything here is ≈ Assumed (a planning model).'] }),
+        valueopt: () => {
+            const vp = voPlan(); if (!vp || vp.error) return null;
+            return { badge: 'assumed', badgeNote: 'SharkBot\'s own model, built on Credit Gen, Resource Gen and Unit Value',
+                uses: [useTpd(), useStorage(), ['Credits per turn printing', vp.ranked.find(m => m.kind === 'print') ? hf(vp.ranked.find(m => m.kind === 'print').perTurn) : null, 'from the Credit Gen calculator'],
+                    ['Credits per turn on resources', vp.ranked.find(m => m.kind === 'res') ? hf(vp.ranked.find(m => m.kind === 'res').perTurn) : null, 'from the Resource Gen calculator'],
+                    ['Slaves / professors per turn', vp.ranked.find(m => m.kind === 'units') ? 'see Unit Value' : null, 'from the Unit Value calculator']],
+                important: `Your ${hn(vp.turns)} turns a day go to the method that earns most per turn first (${escapeHtml(vp.ranked[0].label)}: ${hf(vp.ranked[0].perTurn)} a turn), then the next, until they run out: <b>${hf(vp.weekBase)}</b> a week.`,
+                steps: ['Value per turn: printing = Credit Gen per turn; resources = Resource Gen per turn; slaves and professors = Unit Value per turn.', `Printing is capped at ${vp.A.turnsPerDay.toLocaleString()} turns per print day and only on ${vp.A.printDays} days a week; unit sales stop at the daily sell limits.`,
+                    `Week = print day × ${vp.A.printDays} + non-print day × ${7 - vp.A.printDays}.`, ...(vp.save && vp.save.ts ? [`Saving: up to Turn Storage ${hn(vp.save.ts.cap)} turns from the non-print days are printed later where the print cap has room (${hn(vp.save.spare)} a print day).`] : [])],
+                nerdy: ['Turns are pooled across planets.', 'The saving plan tries 40 amounts up to the most that fits and keeps the best week.', 'Average turn value (used elsewhere) = week ÷ 7 ÷ turns a day.'] };
+        },
+        trapcalc: () => {
+            const rows = (() => { try { return trapCalcRows(); } catch (e) { return []; } })(); if (!rows.length) return null;
+            const m = rows.find(x => x.r.managed && x.earn > 0), u = rows.find(x => !x.r.managed && x.dDay != null);
+            const steps = [];
+            if (m) { const eff = m.net / m.earn, real = Math.pow(1 + m.a.turnInterest * eff, 48) - 1;
+                steps.push(`Managed example, ${escapeHtml(m.r.name)}: earnings per 30 min = equity ${hf(m.E)} × ${(m.a.turnInterest * 100).toFixed(4)}% = ${hf(m.earn)}; tax payment = unpaid tax ${hf(m.a.unpaidTax)} × ${m.hi ? '0.1' : '0.05'}% = ${hf(m.pay)}`,
+                    `Efficiency = (${hf(m.earn)} − ${hf(m.pay)}) ÷ ${hf(m.earn)} = ${(eff * 100).toFixed(2)}%; real interest a day = (1 + ${(m.a.turnInterest * 100).toFixed(4)}% × ${(eff * 100).toFixed(2)}%)^48 − 1 = ${(real * 100).toFixed(3)}%`,
+                    `Each holder's profit a day = their invested amount × ${(real * 100).toFixed(3)}%`); }
+            if (u) steps.push(`Unmanaged example, ${escapeHtml(u.r.name)}: price change a day = price now − price 24 hours ago = ${hf(u.dDay)} a share; each holder's profit = shares × that`);
+            return { badge: 'mixed', badgeNote: 'taxes estimate (75% of earnings until measured) assumed',
+                important: 'Share price = equity ÷ total shares × multi × (volatility + 1). Managed investments earn (1 + interest × efficiency)^48 − 1 a day, efficiency = (earnings − tax payment) ÷ earnings; unmanaged ones only gain from the share price: shares × (price now − 24 hours ago).',
+                steps, nerdy: ['Investments pay every 30 minutes (48 times a day); turn_interest is per 30 minutes.', 'The list\'s price history: interval_48 = 24 hours ago, 336 = 7 days, 1440 = 30 days.',
+                    'Taxes = rise of unpaid tax per 30 minutes + payment (shown only); until two refreshes of the list, 75% of earnings (≈ Assumed).', 'Invested is never more than the equity.'] };
+        },
+        attack: () => {
+            const { v } = xcValues('attack'), z = (k) => v[k] || 0;
+            const side = (p, t, c) => AT_UNITS.reduce((s, u) => s + z(p + u[0]) * u[3], 0) * (1 + z(t) * 0.005) * (1 + z(c) / 100);
+            const A = side('a_', 'a_tech', 'a_card'), D = side('d_', 'd_tech', 'd_card'); if (!(A > 0)) return null;
+            const ratio = D > 0 ? A / D : Infinity, aDie = isFinite(ratio) ? 5 / ratio : 0, dDie = 4 * (ratio > 5 ? 4.5 : ratio);
+            return { badge: 'mixed', badgeNote: 'losses capped at the unit count (assumed)',
+                important: `Ratio = your strength ÷ theirs = ${hf(A)} ÷ ${hf(D)} = <b>${isFinite(ratio) ? ratio.toFixed(3) : '∞'}</b>. You lose ${aDie.toFixed(2)}% × √roll of each unit; they lose ${dDie.toFixed(2)}% × √roll.`,
+                steps: [`Strength = soldiers × 10 + corporals × 20 + majors × 60 + champions × 100 + invaders × 200,000 + fighters × 1,000,000 + carriers × 1,200,000`,
+                    `× (1 + tech × 0.5%) × (1 + card): you ${hn(z('a_tech'))} tech, ${hn(z('a_card'))}% card; defender ${hn(z('d_tech'))} tech, ${hn(z('d_card'))}% card`,
+                    `Your losses % = 5 ÷ ratio = ${aDie.toFixed(2)}%; theirs = 4 × ratio (over 5 counts as 4.5) = ${dDie.toFixed(2)}%`,
+                    `Each unit lost = count × rate × √roll (roll ${xcRandom ? 'random' : xcRoll()}); majors × 0.2 attacking / × 0.1 defending, champions × 0.01 / × 0.001, ships × 0.3`],
+                nerdy: ['Miner ships don\'t count for defense (✓ Given) but can still be lost.', 'Ship space = invaders × 12,000 + fighters × 6,000 + carriers × 300,000.', '"Average" uses roll 0.5 (√ = 0.707), as in your sheet.', 'Losses never exceed the count (≈ Assumed).'] };
+        },
+        assassin: () => {
+            const { v } = xcValues('assassin'), z = (k) => v[k] || 0;
+            const A = z('a_ass') * 20 * (1 + z('a_tech') * 0.005) * (1 + z('a_card') / 100), D = (z('d_ass') * 20 + z('d_sec') * 15) * (1 + z('d_tech') * 0.005) * (1 + z('d_card') / 100);
+            if (!(A > 0)) return null;
+            const ratio = D > 0 ? A / D : Infinity;
+            return { badge: 'mixed', badgeNote: 'losses capped at the unit count (assumed)',
+                important: `Ratio = ${hf(A)} ÷ ${hf(D)} = <b>${isFinite(ratio) ? ratio.toFixed(3) : '∞'}</b>. Your assassins lose ${isFinite(ratio) ? (10 / ratio).toFixed(2) : '0'}% × √roll; targets lose ${(8 * (ratio > 5 ? 4.5 : ratio)).toFixed(2)}% × √roll.`,
+                steps: [`Your strength = assassins ${hf(z('a_ass'))} × 20 × (1 + ${hn(z('a_tech'))} × 0.5%) × (1 + ${hn(z('a_card'))}%) = ${hf(A)}`,
+                    `Their strength = (assassins ${hf(z('d_ass'))} × 20 + security ${hf(z('d_sec'))} × 15) × (1 + ${hn(z('d_tech'))} × 0.5%) × (1 + ${hn(z('d_card'))}%) = ${hf(D)}`,
+                    'Your losses % = 10 ÷ ratio; targets\' = 8 × ratio (over 5 counts as 4.5); each × √roll'],
+                nerdy: ['From your sheet (✓ Given). Losses never exceed the count (≈ Assumed).'] };
+        },
+    };
+    watchHow();
     // ---------- Expand all / Collapse all (since v3.12.0) ----------
     // At the top of every subtab with parts that open and close. Display only: nothing new is loaded.
-    const EA_PANES = ['units', 'research', 'facilities', 'bank', 'trapcalc', 'cards', 'admin', 'adminusers', 'players', 'plist', 'fleets'];
+    const EA_PANES = ['units', 'research', 'facilities', 'bank', 'trapcalc', 'cards', 'admin', 'adminusers', 'players', 'plist', 'fleets',
+        // calculators: open or close the "How it's calculated" drop-downs (since v3.16.0)
+        'storage', 'area', 'turns', 'training', 'rescalc', 'energy', 'productivity', 'factorycalc', 'printer', 'invcreate', 'creditgen', 'resgen', 'unitvalue', 'optimizer', 'valueopt', 'attack', 'assassin'];
     function eaApply(name, open) {
         const root = document.querySelector(`#${PANEL_ID} .sa-pane[data-pane="${name}"]`);
         if (!root) return;
