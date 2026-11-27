@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SharkBot
 // @namespace    https://spacealpha.net/
-// @version      3.19.0
+// @version      3.19.2
 // @description  SharkBot for Space Alpha: saves your planets' units, facilities, inventory, research, bank and market prices, and calculates credit generation and Tick Generator upgrade costs.
 // @author       SharkBot
 // @match        https://spacealpha.net/*
@@ -41,7 +41,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     const PANEL_ID = 'sa-helper-panel';
     const SLOT_IDS = 'ABCDEFGHIJ'.split('');   // up to 10 planets
     // Version comes from the @version header so it's never out of sync
-    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.19.0';
+    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.19.2';
     // Two copies installed (usually an update pasted in as a new script): since v3.17.1 every copy writes its version on the
     // page before doing anything, so the second copy always sees the first, even if the first has no panel yet or crashed.
     // The second copy stops and shows a large banner at the top of the page naming the older copy to delete.
@@ -5163,13 +5163,32 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         bar.innerHTML = !need && !avail ? `<span style="flex:1">${escapeHtml(updMsg)}</span>${updGhFail && /GitHub/.test(updMsg) ? `<button class="sa-btn" id="sa-update-open" style="margin:0">Open update page</button>` : ''}`
             : `<span style="flex:1">${need ? `<b>Update required:</b> Sharky's server needs SharkBot v${escapeHtml(u.min || u.latest || '?')} or newer` : `<b>SharkBot v${escapeHtml(u.latest)}</b> is available`} (you have v${escapeHtml(VERSION)}).${
                 url ? '' : ' Ask Sharky for the new file.'}</span>${url ? `<button class="sa-btn" id="sa-update-go" style="margin:0">Update</button>` : ''}`;
-        bar.querySelector('#sa-update-open')?.addEventListener('click', () => { window.open(url, '_blank'); updMsg = 'If Tampermonkey shows an Update or Reinstall page, click it, then reload the game.'; updGhFail = false; renderUpdateBar(); });
+        bar.querySelector('#sa-update-open')?.addEventListener('click', () => { armUpdateReload(); window.open(url, '_blank'); updMsg = 'If Tampermonkey shows an Update or Reinstall page, click it, then come back here: the game reloads by itself.'; updGhFail = false; renderUpdateBar(); });
         bar.querySelector('#sa-update-go')?.addEventListener('click', () => {
-            window.open(url, '_blank');
-            updMsg = 'Tampermonkey opens its Update page: click Update there, then reload the game.'; renderUpdateBar();
+            armUpdateReload(); window.open(url, '_blank');
+            updMsg = 'Tampermonkey opens its Update page: click Update there, then come back here. The game reloads by itself.'; renderUpdateBar();
         });
         if (updMsg && (need || avail)) bar.insertAdjacentHTML('beforeend', `<span style="width:100%; color:var(--muted)">${escapeHtml(updMsg)}</span>`);
     }
+    // Reload after updating (since v3.19.1): a running copy can't replace itself, so clicking Update (or Open update page) arms
+    // a reload of this tab. Coming back to the tab within 10 minutes checks GitHub and, if a newer version than this one is out
+    // (or GitHub can't be reached), reloads the page once, so the new version starts without a manual refresh.
+    var updReloadAt = 0, updReloading = false;
+    function armUpdateReload() { updReloadAt = Date.now(); }
+    async function maybeUpdateReload() {
+        if (!updReloadAt || updReloading || sbView || document.visibilityState !== 'visible') return;
+        const age = Date.now() - updReloadAt;
+        if (age < 1500) return;   // the click itself
+        if (age > 10 * 60e3) { updReloadAt = 0; return; }
+        updReloading = true;
+        const gv = await fetchGistVersion();
+        if (gv && !verLess(VERSION, gv)) { updReloading = false; return; }   // nothing newer than this copy yet: stay armed
+        updReloadAt = 0;
+        updMsg = 'Reloading to start the new version…'; renderUpdateBar();
+        setTimeout(() => location.reload(), 300);
+    }
+    document.addEventListener('visibilitychange', () => { maybeUpdateReload(); });
+    window.addEventListener('focus', () => { maybeUpdateReload(); });
     function fullStore() {
         if (!__SB_GM.list) return null;
         const o = {};
@@ -7881,6 +7900,8 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         if (pageKey !== 'bank') return null;
         const root = document.querySelector('main') || document.body;
         const t = (root.innerText || root.textContent || '');
+        // The Central bank's own headings come first (since v3.19.2): its page can mention money printers too, and was taken for Print
+        if (/central\s*bank\s*statistics|current\s*volatility|player\s*investments\s*stats/i.test(t)) return 'central';
         if (isNerdsView()) return 'nerds';   // same table as TRAPs (since v3.11.0)
         if (/money\s*printer/i.test(t)) return 'print';   // Bank → Print: the Money Printer's level (since v3.14.0)
         if (findTrapsTable()) return 'traps';
@@ -8458,7 +8479,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         const labels = Array.from(root.querySelectorAll('*')).filter(el => {
             if (el.closest(`#${PANEL_ID}`)) return false;
             const t = (el.textContent || '').replace(/\s+/g, ' ').trim();
-            return t.length < 60 && /balance/i.test(t) &&
+            return t.length < 60 && /balance/i.test(t) && !/\btotal\b/i.test(t) &&   // never "Total planets balance" etc. (since v3.19.2)
                 !Array.from(el.children).some(c => /balance/i.test(c.textContent || ''));
         });
         for (const lab of labels) {
@@ -8496,7 +8517,8 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     }
     // Before v2.4.2 the balance could be read off the Central bank tab by mistake, so an
     // old reading (no view mark) isn't trusted: visit your bank tab once to refresh it.
-    function bankLoad() { const b = GM_getValue('sa-bank', null); return b && b.view === 'player' ? b : null; }
+    // A balance read off a "Total … balance" line (Central bank mistaken for another tab, before v3.19.2) isn't yours
+    function bankLoad() { const b = GM_getValue('sa-bank', null); return b && b.view === 'player' && !/\btotal\b/i.test(b.label || '') ? b : null; }
     function bankStale() { const b = GM_getValue('sa-bank', null); return !!(b && b.view !== 'player'); }
 
     function saveInventory(slot) {
