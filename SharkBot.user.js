@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SharkBot
 // @namespace    https://spacealpha.net/
-// @version      3.18.0
+// @version      3.19.0
 // @description  SharkBot for Space Alpha: saves your planets' units, facilities, inventory, research, bank and market prices, and calculates credit generation and Tick Generator upgrade costs.
 // @author       SharkBot
 // @match        https://spacealpha.net/*
@@ -41,7 +41,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     const PANEL_ID = 'sa-helper-panel';
     const SLOT_IDS = 'ABCDEFGHIJ'.split('');   // up to 10 planets
     // Version comes from the @version header so it's never out of sync
-    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.18.0';
+    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.19.0';
     // Two copies installed (usually an update pasted in as a new script): since v3.17.1 every copy writes its version on the
     // page before doing anything, so the second copy always sees the first, even if the first has no panel yet or crashed.
     // The second copy stops and shows a large banner at the top of the page naming the older copy to delete.
@@ -330,7 +330,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             align-items: center; font-size: 11px;
         }
         #${PANEL_ID} .sa-form label { color: var(--soft); }
-        #${PANEL_ID} .sa-form input, #${PANEL_ID} input.sa-amt, #${PANEL_ID} input#sa-invest-tpd, #${PANEL_ID} input.sa-inv-amt, #${PANEL_ID} #sa-admin-view input, #${PANEL_ID} .sa-form select, #${PANEL_ID} select.sa-select {
+        #${PANEL_ID} .sa-form input, #${PANEL_ID} input.sa-amt, #${PANEL_ID} input#sa-invest-tpd, #${PANEL_ID} input.sa-inv-amt, #${PANEL_ID} input.sa-nw-in, #${PANEL_ID} #sa-nw-import-text, #${PANEL_ID} #sa-admin-view input, #${PANEL_ID} .sa-form select, #${PANEL_ID} select.sa-select {
             background: var(--inset); border: 1px solid var(--border); color: var(--text);
             border-radius: 3px; padding: 2px 6px; font-size: 11px; width: 100%;
             box-sizing: border-box; font-family: "SF Mono", Menlo, monospace;
@@ -542,7 +542,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             <div class="sa-tab-label sa-tier" data-group="calculators" title="Military: battle simulators">⚔</div>
             <div class="sa-tab" data-tab="attack">Attack</div>
             <div class="sa-tab" data-tab="assassin">Assassination</div>
-            <div class="sa-tab" data-tab="stbalance">Balance</div>
+            <div class="sa-tab" data-tab="stbalance">Net Worth</div>
             <div class="sa-tab" data-tab="stincome">Income</div>
             <div class="sa-tab" data-tab="stcash">Cash Flow</div>
             <div class="sa-tab" data-tab="stholder">Stockholder</div>
@@ -987,13 +987,14 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             </div>
             <div class="sa-pane" data-pane="stbalance">
                 <div style="display:flex; gap:4px; margin-bottom:6px" id="sa-bal-switch">
-                    <button class="sa-btn" data-bal="sheet" style="flex:1; margin:0">Balance Sheet</button>
+                    <button class="sa-btn" data-bal="sheet" style="flex:1; margin:0">Net Worth</button>
                     <button class="sa-btn" data-bal="debt" style="flex:1; margin:0">Debt</button>
                 </div>
                 <div data-balview="sheet">
                 <div class="sa-section">
-                    <div class="sa-label">Balance sheet</div>
-                    <div style="font-size: 10px; color: var(--muted); margin-bottom: 6px;">What your empire holds right now: credits, bank, resources at market price, TRAPs and other currencies.</div>
+                    <div class="sa-label">Net Worth</div>
+                    <div style="font-size: 10px; color: var(--muted); margin-bottom: 6px;">Everything you own minus everything you owe, in Q (Quintillion, 10¹⁸ credits): Net Worth = Sum Value − Sum Debt, with the
+                        V-D (value ÷ debt), I-D (invested ÷ debt) and I-V (invested ÷ value) ratios, and a history you can save or import from your own tracker.</div>
                 </div>
                 <div id="sa-stbalance-view"></div>
                 </div>
@@ -1002,7 +1003,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                     <div class="sa-label">Debt</div>
                     <div style="font-size: 10px; color: var(--muted); margin-bottom: 6px;">What you owe, in credits or in resources. Each debt: who lent it, the currency,
                         % interest per day, the amount transferred, interest added so far and what you've paid back, as of the update date. Interest then compounds
-                        daily until today. Debts show as liabilities on the Balance Sheet (valued in credits), as interest on the Income Statement, and lower your equity.
+                        daily until today. Debts count in Sum Debt on Net Worth (valued in credits), as interest on the Income Statement, and lower your equity.
                         Amounts take "9,500,000,000", "9.5b" or "79,524 Qi".</div>
                     <div id="sa-debt-editor"></div>
                     <button class="sa-btn" id="sa-debt-add" style="width:100%; margin:6px 0 0">+ Add debt</button>
@@ -2194,7 +2195,47 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         return !!((getSlot(id)?.units || []).length || (getFSlot(id)?.items || []).length ||
             GM_getValue('sa-inv-' + id, null) || GM_getValue('sa-nation-' + id, null));
     }
-    function planetIds() { return SLOT_IDS.filter(id => planetNameOf(id) || slotHasData(id)); }
+    // Planets are listed in the game's order (since v3.19.0): the order of the planet picker in the top bar (main planet first),
+    // or the order set by hand with ▲ / ▼ in Settings → Planets (sa-planet-manual, slot ids), which wins. Planets the game's list
+    // doesn't have (not read yet, or abandoned) come last, in the order they were first scanned.
+    function planetIds() {
+        const ids = SLOT_IDS.filter(id => planetNameOf(id) || slotHasData(id));
+        const manual = GM_getValue('sa-planet-manual', null);
+        const game = ((GM_getValue('sa-planet-order', null) || {}).names || []).map(n => String(n).toLowerCase());
+        const rank = (id) => {
+            if (Array.isArray(manual) && manual.length) { const i = manual.indexOf(id); return i < 0 ? 1000 + SLOT_IDS.indexOf(id) : i; }
+            const i = game.indexOf(planetNameOf(id).toLowerCase()); return i < 0 ? 1000 + SLOT_IDS.indexOf(id) : i;
+        };
+        return ids.sort((a, b) => rank(a) - rank(b));
+    }
+    // Read the game's planet order from the planet picker (a list on the page, or one opened in a pop-up)
+    function readGameOrder() {
+        if (sbView) return null;
+        let names = null;
+        try {
+            const pick = topPlanetPicker();
+            const sel = pick && pick.querySelector('select');
+            if (sel && sel.options.length) names = Array.from(sel.options).map(o => topName(o.textContent)).filter(nameLike);
+            if (!names || !names.length) {
+                // An opened picker list (e.g. a pop-up under the top bar): every short line in it, if the open planet is one of them
+                const cur = (readTopPlanet() || '').toLowerCase();
+                const lists = Array.from(document.querySelectorAll('.cdk-overlay-container [role="listbox"], .cdk-overlay-container mat-option, ' +
+                    '#upperbarContent ul, #upperbarContent [role="listbox"]'));
+                for (const l of lists) {
+                    const box = l.matches('mat-option') ? l.parentElement : l;
+                    const items = Array.from(box.querySelectorAll('[role="option"], mat-option, li')).map(o => topName(o.textContent)).filter(nameLike);
+                    if (items.length >= 2 && items.length <= 30 && cur && items.some(t => t.toLowerCase() === cur)) { names = items; break; }
+                }
+            }
+        } catch (e) {}
+        if (!names || !names.length) return null;
+        const old = GM_getValue('sa-planet-order', null);
+        if (!old || JSON.stringify(old.names) !== JSON.stringify(names)) {
+            GM_setValue('sa-planet-order', { names, savedAt: new Date().toISOString() });
+            if (typeof refreshPlanetLists === 'function') try { refreshPlanetLists(); } catch (e) {}
+        }
+        return names;
+    }
     function shortName(id) { return planetNameOf(id) || `Planet ${id}`; }
     function compareId(selfId) {
         const c = GM_getValue('sa-compare', '');
@@ -2244,14 +2285,43 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         if (!names.length) return null;
         const main = document.querySelector('main');
         const hits = new Set();
+        // Never the Profile box: a planet named after its player matched the username there (fixed in v3.18.1)
+        const me = (pageUsername() || '').toLowerCase();
+        const profile = xpAt('//*[@id="upperbarContent"]/table[6]') || null;
         document.querySelectorAll('body *').forEach(el => {
             if (el.closest(`#${PANEL_ID}`) || (main && main.contains(el))) return;
+            if (profile && profile.contains(el)) return;
             if (['SCRIPT', 'STYLE', 'OPTION'].includes(el.tagName)) return;
             const t = (el.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
-            if (!t || t.length > 40) return;
+            if (!t || t.length > 40 || (me && t === me)) return;
             names.forEach(n => { if (t === n.name.toLowerCase() && isVisible(el)) hits.add(n.id); });
         });
         return hits.size === 1 ? [...hits][0] : null;
+    }
+
+    function xpAt(xp) { try { return document.evaluate(xp, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue; } catch (e) { return null; } }
+    // The game's planet box, first in the top bar (since v3.18.1): its title row is the open planet's name, and
+    // //*[@id="upperbarContent"]/table/tr[2]/td[2] holds the planet picker
+    function topPlanetPicker() {
+        return xpAt('//*[@id="upperbarContent"]/table/tr[2]/td[2]') || xpAt('//*[@id="upperbarContent"]/table/tbody/tr[2]/td[2]');
+    }
+    function topPlanetBox() { const p = topPlanetPicker(); return p ? p.closest('table') : null; }
+    function topName(t) { return String(t || '').replace(/\s+/g, ' ').replace(/[▾▼⌄]+/g, '').trim(); }
+    function nameLike(t) { return  t.length >= 1 && t.length <= 40 && /[^\d\s.,%()\-+]/.test(t) && parseNumber(t) == null; }
+    function readTopPlanet() {
+        try {
+            const pick = topPlanetPicker();
+            const sel = pick && pick.querySelector('select');
+            if (sel && sel.selectedIndex >= 0 && sel.options[sel.selectedIndex]) {
+                const t = topName(sel.options[sel.selectedIndex].textContent);
+                if (nameLike(t)) return t;
+            }
+            const box = topPlanetBox();
+            const row = box && box.rows && box.rows[0];
+            const t = topName(row && row.textContent);
+            if (t && nameLike(t) && !/planet inventory/i.test(t)) return t;
+        } catch (e) {}
+        return null;
     }
 
     // Read the open planet's name from the game: the box beside "Planet Inventory".
@@ -2277,10 +2347,15 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     // Which slot is the open planet? Can name an empty slot after it.
     // Returns { slot, name, assign, full }.
     function detectPlanet() {
+        readGameOrder();
         const names = slotNames();
-        const byText = detectSlot();
-        const read = readPlanetName();
-        if (byText) return { slot: byText, name: read || names.find(n => n.id === byText).name };
+        // The name the game shows decides (since v3.18.1); matching text anywhere on the page is only a fallback
+        const head = pageText().match(/Planet:\s*(.+?)\s+Temperature:/);
+        const read = (head && head[1].trim()) || readTopPlanet() || readPlanetName();
+        if (!read) {
+            const byText = detectSlot();
+            if (byText) return { slot: byText, name: names.find(n => n.id === byText).name };
+        }
         if (read) {
             const hit = names.find(n => n.name.toLowerCase() === read.toLowerCase());
             if (hit) return { slot: hit.id, name: read };
@@ -6047,7 +6122,8 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     setInterval(() => { const was = panel.classList.contains('sa-locked'); if (was !== isLocked()) applyLock(); }, 3000);
     // Your Profile → Investments window is a pop-up (no page change), so look for it every few seconds
     setInterval(() => { try { checkProfileInvest(false); } catch (e) {} }, 4000);
-    setInterval(() => { if (!sbView) checkUpdate(false, 15 * 60e3); }, 15 * 60e3);   // every 15 minutes (since v3.14.1)
+    setInterval(() => { if (!sbView) checkUpdate(false, 15 * 60e3); }, 15 * 60e3);
+    setInterval(() => { try { readGameOrder(); } catch (e) {} }, 3000);   // the game's planet order, also from a picker list opened later (since v3.19.0)   // every 15 minutes (since v3.14.1)
 
     // ---------- Players (/openapi/online_users) ----------
     // The API lists only who is online now: { user_id, user_name, alliance? }. Every player seen is kept:
@@ -8878,7 +8954,8 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         const debt = debtTotals(debts);
         totals.liabilities = debt.total;
         totals.equity = totals.assets - debt.total;
-        return { assets, totals, income, it, vp, debts, debt, missingCg: planetIds().length - income.passive.length };
+        let nwm = null; try { nwm = nwModel(); } catch (e) {}
+        return { assets, totals, income, it, vp, debts, debt, nw: nwm, missingCg: planetIds().length - income.passive.length };
     }
 
     // Keep a snapshot of the balance sheet at most once an hour (last 200)
@@ -8888,7 +8965,8 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         const bankV = (d.assets.cash.find(x => x[0] === 'Bank balance') || [0, 0])[1];
         const snap = { t: new Date().toISOString(), cash: d.totals.cash, credits: d.totals.cash - bankV, bank: bankV, inventory: d.totals.inventory,
                        investments: d.totals.investments, other: d.totals.other, total: d.totals.assets, net: d.it.net,
-                       debtCur: d.debt.current, debtLong: d.debt.long, debt: d.debt.total };
+                       debtCur: d.debt.current, debtLong: d.debt.long, debt: d.debt.total,
+                       nw: d.nw ? d.nw.nw : null, sumValue: d.nw ? d.nw.sumValue : null };   // Net Worth (since v3.19.0)
         if (!(d.totals.assets > 0)) return h;
         if (last && Date.now() - new Date(last.t) < 3600e3) h[h.length - 1] = Object.assign(snap, { t: last.t, updated: snap.t });
         else h.push(snap);
@@ -8924,69 +9002,239 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         const n = GM_getValue('sa-profile-name', '');
         return n ? `${n}'s Empire` : 'Empire';
     }
-    // Classic balance sheet: everything summed across planets, this snapshot next to an earlier one
-    function balanceSheetHtml(d, h) {
-        const bank = (d.assets.cash.find(x => x[0] === 'Bank balance') || [0, 0])[1];
-        const now = { credits: d.totals.cash - bank, bank, inventory: d.totals.inventory, investments: d.totals.investments, other: d.totals.other,
-                      debtCur: d.debt.current, debtLong: d.debt.long };
-        const older = h.filter(x => Date.now() - new Date(x.updated || x.t) > 20 * 3600e3);
-        const p0 = older.length ? older[older.length - 1] : (h.length > 1 ? h[0] : null);
-        const prev = p0 ? { credits: p0.credits ?? p0.cash, bank: p0.bank ?? 0, inventory: p0.inventory, investments: p0.investments, other: p0.other || 0,
-                       debtCur: p0.debtCur || 0, debtLong: p0.debtLong || 0 } : null;
-        const calc = (x) => {
-            const cur = x.credits + x.bank + x.inventory, nonCur = x.investments + x.other, assets = cur + nonCur;
-            const liab = x.debtCur + x.debtLong;
-            return Object.assign({ cur, nonCur, assets, liab, equity: assets - liab }, x);
-        };
-        const A = calc(now), B = prev ? calc(prev) : null;
-        const opening = h.length ? h[0].total - (h[0].debt || 0) : A.equity;
-        const eq = (x) => ({ contributed: opening, retained: x.equity - opening });
-        const EA = eq(A), EB = B ? eq(B) : null;
-        const n = (v) => v == null ? '' : v < 0 ? `(${escapeHtml(fmt(-v))})` : escapeHtml(fmt(v));
-        const line = (label, a, b, cls = '', indent = 1) => `<tr class="${cls}"><td style="padding-left:${6 + indent * 12}px">${label}</td>
-            <td class="sa-num">${n(a)}</td>${B ? `<td class="sa-num" style="color:var(--muted)">${n(b)}</td>` : ''}</tr>`;
-        const head = (label) => `<tr class="sa-stmt-head"><td colspan="${B ? 3 : 2}">${label}</td></tr>`;
-        const sub = (label) => `<tr><td colspan="${B ? 3 : 2}" style="padding-left:12px; font-style:italic; color:var(--muted)">${label}</td></tr>`;
-        const dt = (t) => new Date(t).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
-        return `<div style="text-align:center; margin:4px 0 8px">
-                <div style="font-weight:700">${escapeHtml(profileName())}</div>
-                <div>Balance Sheet</div>
-                <div style="color:var(--muted); font-size:10px">As of ${dt(Date.now())} · all planets combined · in credits</div></div>
-            <table class="sa-unit-table sa-stmt sa-bs">
-            <thead><tr><th></th><th style="text-align:right">${dt(Date.now())}</th>${B ? `<th style="text-align:right">${dt(p0.updated || p0.t)}</th>` : ''}</tr></thead>
-            <tbody>
-            ${head('ASSETS')}
-            ${sub('Current assets')}
-            ${line('Cash on planets', A.credits, B && B.credits, '', 2)}
-            ${line('Bank deposits', A.bank, B && B.bank, '', 2)}
-            ${line('Inventory (resources, at market)', A.inventory, B && B.inventory, '', 2)}
-            ${line('Total current assets', A.cur, B && B.cur, 'sa-stmt-sub')}
-            ${sub('Non-current assets')}
-            ${line('Long-term investments (TRAPs + NERDs)', A.investments, B && B.investments, '', 2)}
-            ${line('Other assets (brains, diamonds, SSB)', A.other, B && B.other, '', 2)}
-            ${line('Total non-current assets', A.nonCur, B && B.nonCur, 'sa-stmt-sub')}
-            ${line('<b>TOTAL ASSETS</b>', A.assets, B && B.assets, 'sa-stmt-total sa-bs-dbl', 0)}
-            ${head("LIABILITIES AND STOCKHOLDERS' EQUITY")}
-            ${sub('Liabilities')}
-            ${line('Current debt (due within 7 days)', A.debtCur, B && B.debtCur, '', 2)}
-            ${line('Long-term debt', A.debtLong, B && B.debtLong, '', 2)}
-            ${line('Total liabilities', A.liab, B && B.liab, 'sa-stmt-sub')}
-            ${sub("Stockholders' equity")}
-            ${line('Opening capital (first snapshot)', EA.contributed, EB && EB.contributed, '', 2)}
-            ${line('Retained earnings', EA.retained, EB && EB.retained, '', 2)}
-            ${line("Total stockholders' equity", A.equity, B && B.equity, 'sa-stmt-sub')}
-            ${line("<b>TOTAL LIABILITIES AND EQUITY</b>", A.assets, B && B.assets, 'sa-stmt-total sa-bs-dbl', 0)}
-            </tbody></table>
-            <div class="sa-slot-meta" style="margin-top:6px">${B ? 'Right column: the latest snapshot at least a day old. ' : 'A comparison column appears once there is an earlier snapshot. '}
-                Negative numbers in (brackets). Debts come from the Debt tab${
-                d.debts.some(r => r.err) ? ' (some amounts can\'t be read and count as 0)' : ''}. Inventory and other assets at market sell price / Best Spend value${
-                d.assets.inventory.some(x => x[1] == null) ? '; some resources have no market price' : ''}.</div>`;
+    // ---------- Net Worth (since v3.19.0; replaces the Balance Sheet) ----------
+    // Laid out like a player's net worth tracker. Every amount × price is a value in Q (Quintillion, 10^18 credits; q = Quadrillion, 10^15):
+    // Net Worth = Sum Value − Sum Debt; Credits = Bank + Planets + Market + Invested; Sum Value = Credits + BV + DV + PV + SSBV + CV + IV + TV + SV + GV;
+    // Sum Debt = Credit Debt + Dia Debt + Iron Debt + Gold Debt (+ any other resource owed); V-D = Sum Value ÷ Sum Debt, I-D = Invested ÷ Sum Debt,
+    // I-V = Invested ÷ Sum Value. sa-nw = { amt: { key: typed }, price: { key: typed } }; history in sa-nw-history (saved and imported rows only).
+    const NW_Q = 1e18;
+    const NW_CREDIT = [
+        { k: 'bank', l: 'Bank balance', col: 'Bank Balance' }, { k: 'planets', l: 'Planets (credits on every planet)', col: 'Planets (Q)' },
+        { k: 'market', l: 'Market (typed)', col: 'Market (Q)' }, { k: 'invested', l: 'Invested (TRAPs + NERDs)', col: 'Invested (Q)' },
+    ];
+    const NW_ITEMS = [
+        { k: 'brains', l: 'Brains', v: 'BV', a: 'Brains', p: 'Brain Value (Q)', au: 1, pu: 1e18, debt: 'brains' },
+        { k: 'diamonds', l: 'Diamonds', v: 'DV', a: 'Diamonds', p: 'Dia Value (Q)', au: 1, pu: 1e18, debt: 'diamonds' },
+        { k: 'profs', l: 'Professors', v: 'PV', a: 'Profs (B)', p: 'Prof Value (B)', au: 1e9, pu: 1e9, re: /professor/i },
+        { k: 'ssb', l: 'SSB', v: 'SSBV', a: 'SSB', p: 'SSB Value (q)', au: 1, pu: 1e15, debt: 'ssb' },
+        { k: 'coal', l: 'Coal', v: 'CV', a: 'Coal (M)', p: 'Coal Value (B)', au: 1e6, pu: 1e9, re: /^coal/i },
+        { k: 'iron', l: 'Iron', v: 'IV', a: 'Iron (M)', p: 'Iron Value (T)', au: 1e6, pu: 1e12, re: /^iron/i },
+        { k: 'trit', l: 'Tritium', v: 'TV', a: 'Trit (M)', p: 'Trit Value (T)', au: 1e6, pu: 1e12, re: /^trit/i },
+        { k: 'steel', l: 'Steel', v: 'SV', a: 'Steel (M)', p: 'Steel Value (T)', au: 1e6, pu: 1e12, re: /^steel/i },
+        { k: 'gold', l: 'Gold', v: 'GV', a: 'Gold (M)', p: 'Gold Value (T)', au: 1e6, pu: 1e12, re: /^gold/i },
+    ];
+    function nwLoad() { const s = GM_getValue('sa-nw', null) || {}; return { amt: s.amt || {}, price: s.price || {} }; }
+    function nwSave(s) { GM_setValue('sa-nw', s); }
+    function nwAuto(k) {
+        const ids = planetIds();
+        if (k === 'bank') return { value: bankLoad()?.value ?? 0, src: bankLoad() ? 'Bank scan' : 'no bank scan' };
+        if (k === 'planets') return { value: ids.reduce((s, id) => s + (invLoad(id)?.items || []).filter(i => /credit|money|cash/i.test(i.name) && i.value != null).reduce((a, i) => a + i.value, 0), 0), src: 'inventory of every planet' };
+        if (k === 'market') return { value: 0, src: 'type it in' };
+        if (k === 'invested') {
+            let t = 0; try { t += investRows().reduce((s, r) => s + (r.mine > 0 ? r.mine : 0), 0); } catch (e) {}
+            t += (nerdsLoad()?.items || []).reduce((s, x) => s + (x.invested > 0 ? x.invested : 0), 0);
+            return { value: t, src: 'Data → Bank (TRAPs + NERDs)' };
+        }
+        const it = NW_ITEMS.find(x => x.k === k);
+        if (['brains', 'diamonds', 'ssb'].includes(k)) { const c = bdCounts(); return { value: c && c[k] ? c[k].value : 0, src: 'Research page' }; }
+        if (k === 'profs') return { value: ids.reduce((s, id) => s + (getSlot(id)?.units || []).filter(u => it.re.test(u.name)).reduce((a, u) => a + (u.count || 0), 0), 0), src: 'Units of every planet' };
+        return { value: ids.reduce((s, id) => s + (invLoad(id)?.items || []).filter(i => i.value != null && it.re.test(i.name.replace(/ #\d+$/, ''))).reduce((a, i) => a + i.value, 0), 0), src: 'inventory of every planet' };
     }
-    var STMT_TABS = { stbalance: 'Balance Sheet', stdebt: 'Debt Schedule', stincome: 'Income Statement', stcash: 'Cash Flow Statement', stholder: "Stockholders' Equity" };
+    function nwAutoPrice(k) {
+        if (['brains', 'diamonds', 'ssb'].includes(k)) { const u = bdUnitValue(k); return u ? { value: u.value, src: u.source === 'typed' ? 'Best Spend value' : 'market sell' } : null; }
+        const it = NW_ITEMS.find(x => x.k === k), m = marketRes(it.re);
+        return m && (m.sellPrice ?? m.buyPrice) != null ? { value: m.sellPrice ?? m.buyPrice, src: m.sellPrice != null ? 'market sell' : 'market buy' } : null;
+    }
+    function nwModel() {
+        const s = nwLoad();
+        const typed = (o, k) => { const t = String(o[k] ?? '').trim(); return t ? parseNumber(t) : null; };
+        const credit = NW_CREDIT.map(c => { const a = nwAuto(c.k), t = typed(s.amt, c.k); return Object.assign({}, c, { auto: a.value, src: t != null ? 'typed' : a.src, value: t != null ? t : a.value }); });
+        const items = NW_ITEMS.map(it => {
+            const a = nwAuto(it.k), ta = typed(s.amt, it.k), ap = nwAutoPrice(it.k), tp = typed(s.price, it.k);
+            const amount = ta != null ? ta : a.value, price = tp != null ? tp : ap ? ap.value : null;
+            return Object.assign({}, it, { auto: a.value, amount, amountSrc: ta != null ? 'typed' : a.src, autoPrice: ap ? ap.value : null,
+                price, priceSrc: tp != null ? 'typed' : ap ? ap.src : 'no price', value: price != null ? amount * price : 0 });
+        });
+        const priceOf = (cur) => { const it = items.find(i => i.l.toLowerCase() === String(cur).toLowerCase() || (i.debt && i.debt === String(cur).toLowerCase())); return it && it.price != null ? it.price : null; };
+        const debtsBy = {};
+        let debtErr = false;
+        (debtRows() || []).forEach(r => {
+            const credits = r.cur === 'credits' || r.cur === 'mixed';
+            const key = credits ? 'credits' : String(r.cur).toLowerCase();
+            const price = credits ? 1 : (priceOf(r.cur) ?? r.price);
+            if (r.err || price == null) debtErr = true;
+            const o = debtsBy[key] || (debtsBy[key] = { cur: credits ? 'Credits' : r.cur, units: 0, price, value: 0 });
+            o.units += r.units || 0; o.value += price != null ? (r.units || 0) * price : 0;
+        });
+        const debts = Object.values(debtsBy).sort((a, b) => (a.cur === 'Credits' ? -1 : b.cur === 'Credits' ? 1 : 0));
+        const credits = credit.reduce((t, c) => t + (c.value || 0), 0);
+        const sumValue = credits + items.reduce((t, i) => t + i.value, 0);
+        const sumDebt = debts.reduce((t, d) => t + d.value, 0);
+        const invested = credit.find(c => c.k === 'invested').value;
+        return { credit, items, debts, debtErr, credits, sumValue, sumDebt, nw: sumValue - sumDebt, invested,
+                 vd: sumDebt > 0 ? sumValue / sumDebt : null, id: sumDebt > 0 ? invested / sumDebt : null, iv: sumValue > 0 ? invested / sumValue : null };
+    }
+    // History columns, in the tracker's order and units
+    const NW_COLS = ['V-D Ratio', 'I-D Ratio', 'I-V', 'Net Worth', 'Sum Value', 'Sum Debt', 'Credits', 'BV', 'DV', 'PV', 'SSBV', 'CV', 'IV', 'TV', 'SV', 'GV',
+        'Credit Debt', 'Dia Debt', 'Iron Debt', 'Gold Debt', 'Other Debt', 'Bank Balance', 'Planets (Q)', 'Market (Q)', 'Invested (Q)', 'Brains', 'Diamonds', 'Profs (B)', 'SSB',
+        'Coal (M)', 'Iron (M)', 'Trit (M)', 'Steel (M)', 'Gold (M)', 'SB™ (Q)', 'Dia Debt (count)', 'Iron Debt (M)', 'Gold Debt (M)',
+        'Brain Value (Q)', 'Dia Value (Q)', 'Prof Value (B)', 'SSB Value (q)', 'Coal Value (B)', 'Iron Value (T)', 'Trit Value (T)', 'Steel Value (T)', 'Gold Value (T)'];
+    function nwRow(m) {
+        const r = { 'V-D Ratio': m.vd, 'I-D Ratio': m.id, 'I-V': m.iv != null ? m.iv * 100 : null, 'Net Worth': m.nw / NW_Q, 'Sum Value': m.sumValue / NW_Q,
+            'Sum Debt': m.sumDebt / NW_Q, 'Credits': m.credits / NW_Q };
+        m.credit.forEach(c => { r[c.col] = c.value / NW_Q; });
+        m.items.forEach(i => { r[i.v] = i.value / NW_Q; r[i.a] = i.amount / i.au; r[i.p] = i.price != null ? i.price / i.pu : null; });
+        const d = (k) => m.debts.find(x => x.cur.toLowerCase() === k) || { units: 0, value: 0 };
+        r['Credit Debt'] = d('credits').value / NW_Q; r['SB™ (Q)'] = d('credits').units / NW_Q;
+        r['Dia Debt'] = d('diamonds').value / NW_Q; r['Dia Debt (count)'] = d('diamonds').units;
+        r['Iron Debt'] = d('iron').value / NW_Q; r['Iron Debt (M)'] = d('iron').units / 1e6;
+        r['Gold Debt'] = d('gold').value / NW_Q; r['Gold Debt (M)'] = d('gold').units / 1e6;
+        r['Other Debt'] = m.debts.filter(x => !['credits', 'diamonds', 'iron', 'gold'].includes(x.cur.toLowerCase())).reduce((t, x) => t + x.value, 0) / NW_Q;
+        return r;
+    }
+    function nwHist() { return (GM_getValue('sa-nw-history', []) || []).slice().sort((a, b) => new Date(b.t) - new Date(a.t)); }
+    function nwHistSave(h) { GM_setValue('sa-nw-history', h.slice().sort((a, b) => new Date(a.t) - new Date(b.t)).slice(-1000)); }
+    // Import rows copied from the tracker (tab-separated, with or without the header row). Dates may be m/d/yy or d/m/yy:
+    // read in order, a date that would go back in time is read the other way round.
+    function nwImport(text) {
+        const lines = String(text || '').split(/\r?\n/).map(l => l.replace(/\s+$/, '')).filter(l => l.trim());
+        if (!lines.length) return { added: 0, error: 'Nothing pasted' };
+        const split = (l) => l.includes('\t') ? l.split('\t') : l.split(/\s{2,}|,(?=\S)(?!\d{3}\b)/);
+        let cols = ['Date', 'Time'].concat(NW_COLS.filter(c => c !== 'Other Debt'));
+        let start = 0;
+        if (/date/i.test(lines[0]) && /time/i.test(lines[0])) {
+            const seen = {};
+            cols = split(lines[0]).map(h => { h = h.trim(); seen[h] = (seen[h] || 0) + 1; return h === 'Dia Debt' && seen[h] > 1 ? 'Dia Debt (count)' : h; });
+            start = 1;
+        }
+        const num = (v) => { const t = String(v ?? '').replace(/[,%\s]/g, ''); if (!t) return null; const n = Number(t); return isFinite(n) ? n : parseNumber(v); };
+        const h = GM_getValue('sa-nw-history', []) || [];
+        let prev = null, prevFmt = 'md', added = 0, replaced = 0; const skipped = [], mine = new Set();
+        for (let i = start; i < lines.length; i++) {
+            const cells = split(lines[i]), row = {};
+            cols.forEach((c, j) => { row[c] = cells[j]; });
+            const dm = String(row.Date || '').trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+            if (!dm) { skipped.push(i + 1); continue; }
+            const y = dm[3].length === 2 ? 2000 + Number(dm[3]) : Number(dm[3]);
+            const tm = String(row.Time || '').trim().match(/^(\d{1,2}):(\d{2})\s*([AP]M)?$/i);
+            let hh = tm ? Number(tm[1]) % 12 + (tm[3] && /p/i.test(tm[3]) ? 12 : tm[3] ? 0 : Number(tm[1]) - Number(tm[1]) % 12) : 0;
+            const mi = tm ? Number(tm[2]) : 0;
+            const mk = (mo, d) => { if (mo < 1 || mo > 12 || d < 1 || d > 31) return null; const x = new Date(y, mo - 1, d, hh, mi); return x.getMonth() === mo - 1 ? x : null; };
+            const md = mk(Number(dm[1]), Number(dm[2])), dmy = mk(Number(dm[2]), Number(dm[1]));
+            // Both readings work: one going back in time loses; otherwise keep the previous row's format
+            let when = md && dmy ? (prev && md < prev && dmy >= prev ? dmy : prev && dmy < prev && md >= prev ? md : prevFmt === 'dm' ? dmy : md) : (md || dmy);
+            if (when) prevFmt = when === dmy && when !== md ? 'dm' : when === md && when !== dmy ? 'md' : prevFmt;
+            if (!when) { skipped.push(i + 1); continue; }
+            prev = when;
+            const out = { t: when.toISOString(), src: 'imported' };
+            NW_COLS.forEach(c => { if (c in row) out[c] = num(row[c]); });
+            // The same date and time from an earlier import is replaced; rows of this paste are all kept
+            const at = h.findIndex((x, n) => x.t === out.t && x.src === 'imported' && !mine.has(n));
+            if (at >= 0) { h[at] = out; replaced++; mine.add(at); } else { h.push(out); mine.add(h.length - 1); added++; }
+        }
+        nwHistSave(h);
+        return { added, replaced, skipped };
+    }
+    function nwFmt(v, dp) {
+        if (v == null || !isFinite(v)) return '—';
+        const a = Math.abs(v);
+        const d = dp != null ? dp : a >= 1000 ? 0 : a >= 10 ? 1 : a >= 1 ? 2 : a > 0 ? 3 : 0;
+        return v.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: d });
+    }
+    const nwRatio = (v) => v == null ? '—' : v.toFixed(2);
+    function nwHtml(m, interactive) {
+        const s = nwLoad();
+        const inp = (kind, k, ph) => interactive
+            ? `<input class="sa-nw-in" data-kind="${kind}" data-k="${k}" value="${escapeHtml(s[kind][k] || '')}" placeholder="${escapeHtml(ph)}" style="min-width:70px; text-align:right">`
+            : escapeHtml(s[kind][k] || ph);
+        const card = (label, v, cls = '') => `<div style="flex:1; min-width:90px; padding:6px 8px; border:1px solid var(--border); border-radius:6px">
+            <div style="font-size:10px; color:var(--muted)">${label}</div><div class="${cls}" style="font-size:14px; font-weight:700">${v}</div></div>`;
+        const qcell = (v) => `<td class="sa-num">${escapeHtml(nwFmt(v / NW_Q))}</td>`;
+        return `<div style="text-align:center; margin:4px 0 8px"><div style="font-weight:700">${escapeHtml(profileName())}</div><div>Net Worth</div>
+                <div style="color:var(--muted); font-size:10px">As of ${new Date().toLocaleString()} · all planets combined · values in Q (Quintillion, 10¹⁸ credits)</div></div>
+            <div style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:8px">
+                ${card('Net Worth (Q)', escapeHtml(nwFmt(m.nw / NW_Q)), m.nw >= 0 ? 'sa-diff-pos' : 'sa-diff-neg')}${card('Sum Value (Q)', escapeHtml(nwFmt(m.sumValue / NW_Q)))}
+                ${card('Sum Debt (Q)', escapeHtml(nwFmt(m.sumDebt / NW_Q)))}${card('V-D Ratio', nwRatio(m.vd))}${card('I-D Ratio', nwRatio(m.id))}${card('I-V', m.iv == null ? '—' : (m.iv * 100).toFixed(1) + '%')}
+            </div>
+            <div class="sa-label">Value</div>
+            <div style="overflow-x:auto"><table class="sa-unit-table sa-stmt" data-sort-id="nw-value">
+                <thead><tr><th>Item</th><th style="text-align:right">Amount</th><th style="text-align:right">Price (credits each)</th><th style="text-align:right">Value (Q)</th><th>From</th></tr></thead>
+                <tbody>
+                ${m.credit.map(c => `<tr><td>${escapeHtml(c.l)}</td><td class="sa-num">${inp('amt', c.k, fmt(c.auto))}</td><td class="sa-num" style="color:var(--dim)">credits</td>${qcell(c.value)}<td style="font-size:10px; color:var(--muted)">${escapeHtml(c.src)}</td></tr>`).join('')}
+                <tr class="sa-stmt-sub"><td>Credits</td><td></td><td></td>${qcell(m.credits)}<td></td></tr>
+                ${m.items.map(i => `<tr><td>${escapeHtml(i.l)}</td><td class="sa-num">${inp('amt', i.k, fmt(i.auto))}</td><td class="sa-num">${inp('price', i.k, i.autoPrice != null ? fmt(i.autoPrice) : 'type a price')}</td>${qcell(i.value)}
+                    <td style="font-size:10px; color:var(--muted)">${escapeHtml(i.amountSrc)} · ${escapeHtml(i.priceSrc)}</td></tr>`).join('')}
+                <tr class="sa-stmt-total"><td>Sum Value</td><td></td><td></td>${qcell(m.sumValue)}<td></td></tr>
+                </tbody></table></div>
+            <div class="sa-label" style="margin-top:8px">Debt</div>
+            ${m.debts.length ? `<div style="overflow-x:auto"><table class="sa-unit-table sa-stmt" data-sort-id="nw-debt">
+                <thead><tr><th>Owed in</th><th style="text-align:right">Amount owed</th><th style="text-align:right">Price (credits each)</th><th style="text-align:right">Value (Q)</th></tr></thead>
+                <tbody>${m.debts.map(d => `<tr><td>${escapeHtml(d.cur)}</td><td class="sa-num">${escapeHtml(fmt(d.units))}</td><td class="sa-num">${d.cur === 'Credits' ? '<span style="color:var(--dim)">credits</span>' : d.price != null ? escapeHtml(fmt(d.price)) : 'no price'}</td>${qcell(d.value)}</tr>`).join('')}
+                <tr class="sa-stmt-total"><td>Sum Debt</td><td></td><td></td>${qcell(m.sumDebt)}</tr></tbody></table></div>` : '<div class="sa-empty">No debts. Add them with the Debt switch above.</div>'}
+            <div class="sa-slot-meta" style="margin-top:6px">Type over any amount or price to use your own (clear the box to go back). Prices: market sell price for resources and professors,
+                Best Spend value for brains, diamonds and SSB. Resource debts use the same price as the Value table. Debts come from the Debt switch, as owed today${m.debtErr ? ' (some can\'t be read or have no price and count as 0)' : ''}.</div>`;
+    }
+    function nwHistHtml(interactive) {
+        const h = nwHist();
+        const cols = ['V-D Ratio', 'I-D Ratio', 'I-V', 'Net Worth', 'Sum Value', 'Sum Debt'].concat(NW_COLS.slice(6));
+        const used = cols.filter(c => c !== 'Other Debt' || h.some(r => r[c]));
+        const cell = (r, c) => { const v = r[c]; if (v == null) return ''; return c === 'I-V' ? v.toFixed(1) + '%' : /Ratio/.test(c) ? v.toFixed(2) : escapeHtml(nwFmt(v)); };
+        const d = (t) => new Date(t);
+        return `<div class="sa-label" style="margin-top:12px">History</div>
+            ${interactive ? `<div style="display:flex; gap:6px; margin-bottom:6px">
+                <button class="sa-btn" id="sa-nw-snap" style="margin:0; flex:1">📸 Save snapshot</button>
+                <button class="sa-btn" id="sa-nw-import-open" style="margin:0; flex:1">⇪ Import from your tracker</button>
+                <button class="sa-btn sa-btn-danger" id="sa-nw-clear" style="margin:0; flex:1" ${h.length ? '' : 'disabled'}>${nwClearArmed ? 'Click again to delete all history' : '🗑 Delete all history'}</button></div>
+                <div id="sa-nw-import" style="display:${nwImportOpen ? '' : 'none'}; margin-bottom:6px">
+                    <div class="sa-slot-meta">Copy the rows from your tracker (with or without the title row) and paste them here. Dates can be m/d/yy or d/m/yy; they're read in order.
+                        Rows with the same date and time replace the earlier import.</div>
+                    <textarea id="sa-nw-import-text" rows="5" style="width:100%; box-sizing:border-box; font-size:10px"></textarea>
+                    <button class="sa-btn" id="sa-nw-import-go" style="width:100%; margin:4px 0 0">Import rows</button></div>
+                ${nwMsg ? `<div class="sa-slot-meta" style="margin-bottom:6px">${escapeHtml(nwMsg)}</div>` : ''}` : ''}
+            ${h.length ? `<div style="overflow-x:auto"><table class="sa-unit-table sa-stmt" data-sort-id="nw-history">
+                <thead><tr><th>Date</th><th>Time</th>${used.map(c => `<th style="text-align:right">${escapeHtml(c)}</th>`).join('')}${interactive ? '<th></th>' : ''}</tr></thead>
+                <tbody>${h.map(r => `<tr><td>${d(r.t).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</td>
+                    <td>${d(r.t).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}${r.src === 'imported' ? ' <span style="color:var(--dim); font-size:9px">imported</span>' : ''}</td>
+                    ${used.map(c => `<td class="sa-num">${cell(r, c)}</td>`).join('')}${interactive ? `<td><button class="sa-btn" data-nw-del="${escapeHtml(r.t)}|${escapeHtml(r.src || '')}" style="margin:0; padding:0 6px" title="Delete this row">✕</button></td>` : ''}</tr>`).join('')}</tbody></table></div>`
+              : '<div class="sa-empty">No history yet. Save a snapshot, or import your tracker.</div>'}`;
+    }
+    var nwMsg = '', nwImportOpen = false, nwClearArmed = false;
+    function renderNetWorth(v) {
+        if (!v) return;
+        if (v.contains(document.activeElement) && /INPUT|TEXTAREA/.test(document.activeElement.tagName)) return;   // don't redraw while typing
+        let m; try { m = nwModel(); } catch (e) { v.innerHTML = `<div class="sa-empty">Net Worth couldn't be worked out: ${escapeHtml(e.message)}</div>`; return; }
+        v.innerHTML = `<button class="sa-btn sa-popout-btn" style="width:100%; margin:0 0 8px">⧉ Open all statements in a new window</button>` + nwHtml(m, true) + nwHistHtml(true);
+        v.querySelectorAll('.sa-nw-in').forEach(el => el.addEventListener('change', () => {
+            const s = nwLoad(); const t = el.value.trim();
+            if (t && parseNumber(t) == null) { nwMsg = `Can't read "${t}"`; el.value = ''; }
+            else { if (t) s[el.dataset.kind][el.dataset.k] = t; else delete s[el.dataset.kind][el.dataset.k]; nwSave(s); nwMsg = ''; }
+            el.blur(); renderStatements();
+        }));
+        v.querySelector('#sa-nw-snap').addEventListener('click', () => {
+            const h = GM_getValue('sa-nw-history', []) || [];
+            h.push(Object.assign({ t: new Date().toISOString(), src: 'saved' }, nwRow(nwModel()))); nwHistSave(h);
+            nwMsg = 'Snapshot saved.'; renderStatements();
+        });
+        v.querySelector('#sa-nw-import-open').addEventListener('click', () => { nwImportOpen = !nwImportOpen; renderStatements(); });
+        v.querySelector('#sa-nw-import-go')?.addEventListener('click', () => {
+            const r = nwImport(v.querySelector('#sa-nw-import-text').value);
+            nwMsg = r.error || `Imported ${r.added} row${r.added === 1 ? '' : 's'}${r.replaced ? `, replaced ${r.replaced}` : ''}${r.skipped.length ? `; skipped line${r.skipped.length > 1 ? 's' : ''} ${r.skipped.join(', ')} (no date)` : ''}.`;
+            if (!r.error) nwImportOpen = false; renderStatements();
+        });
+        v.querySelector('#sa-nw-clear').addEventListener('click', () => {
+            if (!nwClearArmed) { nwClearArmed = true; setTimeout(() => { if (nwClearArmed) { nwClearArmed = false; renderStatements(); } }, 8000); renderStatements(); return; }
+            nwClearArmed = false; GM_setValue('sa-nw-history', []); nwMsg = 'History deleted.'; renderStatements();
+        });
+        v.querySelectorAll('[data-nw-del]').forEach(b => b.addEventListener('click', () => {
+            const [t, src] = b.dataset.nwDel.split('|');
+            nwHistSave((GM_getValue('sa-nw-history', []) || []).filter(r => !(r.t === t && (r.src || '') === src))); renderStatements();
+        }));
+    }
+    var STMT_TABS = { stbalance: 'Net Worth', stdebt: 'Debt Schedule', stincome: 'Income Statement', stcash: 'Cash Flow Statement', stholder: "Stockholders' Equity" };
     function stmtHtml(which, d, h) {
         const sum = (a) => a.reduce((s, x) => s + (x[1] || 0), 0);
         const days = (a, b) => (new Date(b.t) - new Date(a.t)) / 864e5;
-        if (which === 'stbalance') return balanceSheetHtml(d, h);
+        if (which === 'stbalance') return nwHtml(d.nw, false) + nwHistHtml(false);
         if (which === 'stdebt') return debtScheduleHtml(d);
         if (which === 'stincome') return stmtTable([
             { label: 'Revenue', rows: [
@@ -9028,7 +9276,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         // Stockholders' equity
         if (!h.length) return '<div class="sa-empty">No snapshots yet.</div>';
         const first = h[0], last = h[h.length - 1], span = days(first, last);
-        const eqOf = (x) => x.total - (x.debt || 0);
+        const eqOf = (x) => x.nw != null ? x.nw : x.total - (x.debt || 0);   // Net Worth since v3.19.0
         const expected = eqOf(first) + (span > 0 ? d.it.net * span : 0);
         const rows = h.slice(-30).reverse().map((x, i, arr) => {
             const prev = arr[i + 1];
@@ -9134,7 +9382,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             <table class="sa-unit-table sa-stmt" style="margin-top:6px">
                 <tr><td>Current debt (due within 7 days)</td><td class="sa-num">${n(t.current)}</td></tr>
                 <tr><td>Long-term debt</td><td class="sa-num">${n(t.long)}</td></tr>
-                <tr class="sa-stmt-total"><td>Debt ÷ total assets</td><td class="sa-num">${d.totals.assets > 0 ? (t.total / d.totals.assets * 100).toFixed(1) + '%' : '—'}</td></tr>
+                <tr class="sa-stmt-total"><td>Debt ÷ total assets</td><td class="sa-num">${d.nw && d.nw.sumValue > 0 ? (d.nw.sumDebt / d.nw.sumValue * 100).toFixed(1) + '%' : '—'}</td></tr>
                 <tr class="sa-stmt-total"><td>Equity after debt</td><td class="sa-num">${n(d.totals.equity)}</td></tr></table>
             <div class="sa-slot-meta" style="margin-top:6px">Current = transferred + interest; owed now = current − paid, compounded daily at the % from the update date to today.
                 Interest/day = owed now × %. Resources are valued at the price above (your typed price, else market buy price).
@@ -9221,7 +9469,9 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         Object.keys(STMT_TABS).forEach(k => {
             const v = document.getElementById(`sa-${k}-view`);
             if (!v) return;
-            v.innerHTML = `<button class="sa-btn sa-popout-btn" style="width:100%; margin:0 0 8px">⧉ Open all statements in a new window</button>` + stmtHtml(k, d, h);
+            if (k === 'stbalance') renderNetWorth(v);
+            else v.innerHTML = `<button class="sa-btn sa-popout-btn" style="width:100%; margin:0 0 8px">⧉ Open all statements in a new window</button>` + stmtHtml(k, d, h);
+            if (!v.querySelector('.sa-popout-btn')) return;
             v.querySelector('.sa-popout-btn').addEventListener('click', () => popOut('SharkBot · Statements',
                 Object.keys(STMT_TABS).map(x => `<div class="sa-label" style="font-size:13px; margin:14px 0 6px">${STMT_TABS[x]}</div>` + stmtHtml(x, d, h)).join('')));
         });
@@ -9623,13 +9873,25 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             el.innerHTML = `<div class="sa-empty">No planets yet. Click Manual Scan on any game page.</div>`;
             return;
         }
-        el.innerHTML = ids.map(id => `
+        const manual = GM_getValue('sa-planet-manual', null), game = GM_getValue('sa-planet-order', null);
+        el.innerHTML = ids.map((id, i) => `
             <div style="display:flex; gap:4px; align-items:center; margin-bottom:4px">
                 <span style="color:var(--dim); font-size:10px; width:12px">${id}</span>
                 <input class="sa-slot-name" data-planet="${id}" value="${escapeHtml(shortName(id))}" style="flex:1" />
+                <button class="sa-btn" data-move="${id}" data-dir="-1" style="margin:0; padding:2px 6px" title="Move up" ${i ? '' : 'disabled'}>▲</button>
+                <button class="sa-btn" data-move="${id}" data-dir="1" style="margin:0; padding:2px 6px" title="Move down" ${i < ids.length - 1 ? '' : 'disabled'}>▼</button>
                 <button class="sa-btn sa-btn-danger" data-remove="${id}" style="margin:0">Remove</button>
             </div>`).join('') +
-            `<div class="sa-slot-meta">${ids.length} of ${SLOT_IDS.length} planet slots used</div>`;
+            `<div class="sa-slot-meta">${ids.length} of ${SLOT_IDS.length} planet slots used · ${Array.isArray(manual) && manual.length
+                ? `order set by hand <button class="sa-btn" id="sa-planet-gameorder" style="margin:0 0 0 4px; padding:1px 6px">Use the game's order</button>`
+                : game ? `in the game's order (read ${escapeHtml(agoText(game.savedAt))})` : 'in scan order until the game\'s planet list is read'}</div>`;
+        el.querySelectorAll('[data-move]').forEach(b => b.addEventListener('click', () => {
+            const order = planetIds(), i = order.indexOf(b.dataset.move), j = i + Number(b.dataset.dir);
+            if (i < 0 || j < 0 || j >= order.length) return;
+            [order[i], order[j]] = [order[j], order[i]];
+            GM_setValue('sa-planet-manual', order); refreshPlanetLists();
+        }));
+        el.querySelector('#sa-planet-gameorder')?.addEventListener('click', () => { GM_setValue('sa-planet-manual', null); refreshPlanetLists(); });
         el.querySelectorAll('[data-planet]').forEach(inp => inp.addEventListener('change', () => {
             nameSlot(inp.dataset.planet, inp.value.trim() || `Planet ${inp.dataset.planet}`);
             refreshPlanetLists();
@@ -9658,7 +9920,9 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                        // Admin data: kept by name, and anything admin added later by prefix below
                        'sa-admin-copy', 'sa-alliance-cfg',
                        // Column sorts chosen in tables (since v2.25.0)
-                       'sa-sort'];
+                       'sa-sort',
+                       // Net Worth history, including rows imported from a tracker (since v3.19.0)
+                       'sa-nw-history', 'sa-planet-manual'];
     const KEEP_PREFIXES = ['sa-admin', 'sa-adm-', 'sa-players'];
     function resetAllData() {
         if (sbView) return;
