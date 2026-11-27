@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SharkBot
 // @namespace    https://spacealpha.net/
-// @version      3.25.6
+// @version      3.25.7
 // @description  SharkBot for Space Alpha: saves your planets' units, facilities, inventory, research, bank and market prices, and calculates credit generation and Tick Generator upgrade costs.
 // @author       SharkBot
 // @match        https://spacealpha.net/*
@@ -44,7 +44,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     const PANEL_ID = 'sa-helper-panel';
     const SLOT_IDS = 'ABCDEFGHIJ'.split('');   // up to 10 planets
     // Version comes from the @version header so it's never out of sync
-    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.25.6';
+    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.25.7';
     // Two copies installed (usually an update pasted in as a new script): since v3.17.1 every copy writes its version on the
     // page before doing anything, so the second copy always sees the first, even if the first has no panel yet or crashed.
     // The second copy stops and shows a large banner at the top of the page naming the older copy to delete.
@@ -254,7 +254,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             font-size: 8px; letter-spacing: 0.8px; text-transform: uppercase; color: var(--dim);
             background: var(--inset); border-right: 1px solid var(--line); cursor: default;
         }
-        #${PANEL_ID} .sa-body { padding: 10px 12px; max-height: 65vh; overflow-y: auto; }
+        #${PANEL_ID} .sa-body { padding: 10px 12px; max-height: 65vh; overflow-y: auto; overflow-anchor: none; scroll-behavior: auto !important; }
         #${PANEL_ID} .sa-pane { display: none; }
         #${PANEL_ID} .sa-pane.active { display: block; }
         #${PANEL_ID} .sa-section { margin-bottom: 10px; }
@@ -6732,6 +6732,8 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                 const where = tr.dataset.pwhere, name = tr.dataset.pname, before = tr.getBoundingClientRect().top;
                 plOpen = isOpen(where, name) ? null : { where, name };
                 renderPlayers();
+                // Sorted tables are re-sorted a frame after redrawing, which moved the rows again: sort now, then measure (since v3.25.7)
+                root.querySelectorAll('table').forEach(t => { if (sortableTable(t)) try { applySort(t); } catch (e) {} });
                 // Since v3.25.6: the clicked row stays where it was on screen (details closing above it would move it), and only
                 // if it ended up out of view is it scrolled to near the top; the details box itself never pulls the view down
                 const row = Array.from(root.querySelectorAll('tr[data-pname]')).find(r => r.dataset.pwhere === where && r.dataset.pname === name);
