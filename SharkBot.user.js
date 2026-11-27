@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SharkBot
 // @namespace    https://spacealpha.net/
-// @version      3.27.1
+// @version      3.27.3
 // @description  SharkBot for Space Alpha: saves your planets' units, facilities, inventory, research, bank and market prices, and calculates credit generation and Tick Generator upgrade costs.
 // @author       SharkBot
 // @match        https://spacealpha.net/*
@@ -44,7 +44,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     const PANEL_ID = 'sa-helper-panel';
     const SLOT_IDS = 'ABCDEFGHIJ'.split('');   // up to 10 planets
     // Version comes from the @version header so it's never out of sync
-    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.27.1';
+    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.27.3';
     // Two copies installed (usually an update pasted in as a new script): since v3.17.1 every copy writes its version on the
     // page before doing anything, so the second copy always sees the first, even if the first has no panel yet or crashed.
     // The second copy stops and shows a large banner at the top of the page naming the older copy to delete.
@@ -1533,7 +1533,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     function readBarracksLevel() {
         const t = pageText();
         const m = t.match(/level\s*([\d,]+)\s*barracks/i) || t.match(/barracks[^\d]{0,30}?level\s*([\d,]+)/i);
-        return m ? parseNumber(m[1]) : null;
+        return m ? parseGameNumber(m[1]) : null;
     }
     function scanTrainUnits() {
         const base = scanGeneric();
@@ -1575,7 +1575,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                     if (!name) return;
                     const extras = tds.slice(1).map(td => (td.textContent || '').trim());
                     units.push({
-                        name, count: parseNumber(extras[0]), countRaw: extras[0],
+                        name, count: parseGameNumber(extras[0]), countRaw: extras[0],
                         other: extras.slice(1),
                     });
                 });
@@ -1647,7 +1647,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                     const name = (n.textContent || '').trim();
                     const valRaw = (v?.textContent || '').trim();
                     if (!name) continue;
-                    tableItems.push({ name, value: parseNumber(valRaw), valueRaw: valRaw });
+                    tableItems.push({ name, value: parseGameNumber(valRaw), valueRaw: valRaw });
                 }
             } else {
                 // Pattern B: multi-column rows (name, level, cost, ...)
@@ -1658,7 +1658,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                     if (!name) return;
                     const extras = tds.slice(1).map(td => (td.textContent || '').trim());
                     tableItems.push({
-                        name, value: parseNumber(extras[0]), valueRaw: extras[0],
+                        name, value: parseGameNumber(extras[0]), valueRaw: extras[0],
                         other: extras.slice(1),
                     });
                 });
@@ -1718,13 +1718,13 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         // Prefer the span carrying the full-precision title
         const titled = td.querySelector('amount span[title], span[title]');
         if (titled) {
-            const exact = parseNumber(titled.getAttribute('title'));
+            const exact = parseGameNumber(titled.getAttribute('title'));
             const display = (titled.textContent || '').trim();
             if (exact != null) return { value: exact, display: display || fmt(exact), exact };
         }
         // Fall back to visible text
         const txt = (td.textContent || '').replace(/\s+/g, ' ').trim();
-        return { value: parseNumber(txt), display: txt || '???', exact: null };
+        return { value: parseGameNumber(txt), display: txt || '???', exact: null };
     }
 
     function readMarketCardsOnce() {
@@ -1875,7 +1875,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             const full = fl ? fl[1] : ((card.textContent || '').match(/(?:^|[^\d,.])(\d{1,3}(?:\.\d+)?)\s*%\s*Full/i) || [])[1];
             items.push({
                 kind: 'area', name: m[1].trim(), section: 'Areas',
-                value: parseNumber(m[2]), valueDisplay: m[2],
+                value: parseGameNumber(m[2]), valueDisplay: m[2],
                 fullPct: full != null ? parseFloat(full) : null,
                 output: full != null ? `${full}% Full` : '',
             });
@@ -1970,7 +1970,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             const mText = [maint.energy != null ? fmt(maint.energy) + ' energy' : '', maint.credits != null ? fmt(maint.credits) + ' credits' : '',
                 ...Object.entries(maint.other).map(([k, v]) => fmt(v) + ' ' + k)].filter(Boolean).join(' · ');
             items.push({
-                kind: 'facility', name: nvName(card, nameLine), section: '', value: parseNumber(lv), valueDisplay: lv, view: 'new',
+                kind: 'facility', name: nvName(card, nameLine), section: '', value: parseGameNumber(lv), valueDisplay: lv, view: 'new',
                 output: effects.map(e => e.text).join(' · '), effects, engineers: req ? req.value : null, slider,
                 maintenance: mText, maint, _card: card,
             });
@@ -2030,7 +2030,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         if (areaHover !== name) return;
         const tip = Array.from(document.querySelectorAll('body *')).find(el => !el.closest('#' + PANEL_ID) && !el.children.length && /^free space:\s*room for\s+.+\s+units$/i.test(normText(el)));
         if (!tip) return;
-        const v = parseNumber(normText(tip).replace(/^free space:\s*room for\s+/i, '').replace(/\s*units$/i, ''));
+        const v = parseGameNumber(normText(tip).replace(/^free space:\s*room for\s+/i, '').replace(/\s*units$/i, ''));
         if (v == null) return;
         const det = detectPlanet(); if (!det || det.assign || !det.slot) return;
         const f = getFSlot(det.slot); if (!f || !f.items) return;
@@ -2082,7 +2082,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                    || td.querySelector('span');
         if (inner) {
             const raw = (inner.textContent || '').trim();
-            const n = parseNumber(raw);
+            const n = parseGameNumber(raw);
             if (n != null) {
                 return {
                     count: n, raw,
@@ -2098,7 +2098,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         const direct = (clone.textContent || '').trim();
         const full = (td.textContent || '').trim();
         const raw = direct || full;
-        return { count: parseNumber(raw), raw, source: direct ? 'td-direct' : 'td-text' };
+        return { count: parseGameNumber(raw), raw, source: direct ? 'td-direct' : 'td-text' };
     }
 
     function summarizeTrainUnits(info) {
@@ -2127,17 +2127,20 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     // The browser's decimal mark (since v3.26.1). The game writes full numbers the way the browser's language does: in Italian, German,
     // Spanish and others "30.430.000.000" (dots group thousands) and "1,5" (comma is the decimal point)
     const LOC_DEC = (() => { try { const p = new Intl.NumberFormat().formatToParts(1234567.5); return (p.find(x => x.type === 'decimal') || {}).value || '.'; } catch (e) { return '.'; } })();
-    function locNorm(s) {
+    // game: the number was read off a game page. Since v3.27.3 only those follow the browser's language; numbers typed into SharkBot
+    // are read as before v3.26.1 ("85.505" stays 85.505), apart from unambiguous groups like "30.430.000"
+    function locNorm(s, game) {
         let t = String(s).trim();
         // Two or more dot groups ("30.430.000") can only be thousands, in any language; then a comma is the decimal point
         if (/\d\.\d{3}\.\d{3}(?!\d)/.test(t)) return t.replace(/(\d)\.(?=\d{3}(?!\d))/g, '$1').replace(/(\d),(?=\d)/g, '$1.');
-        if (LOC_DEC !== ',' || /\de[+-]?\d+\s*[A-Za-z]*\s*$/i.test(t)) return t;   // scientific notation ("3.043e22") is left alone
+        if (!game || LOC_DEC !== ',' || /\de[+-]?\d+\s*[A-Za-z]*\s*$/i.test(t)) return t;   // scientific notation ("3.043e22") is left alone
         // Comma-decimal languages: dots / spaces between digit groups are thousands, except before a unit ("78.555 T", "1.750 M"
         // keep the game's decimal dot); the comma is the decimal point
         const unit = /\d\s*[A-Za-z]+\s*$/.test(t) && !/\de[+-]?\d+\s*$/i.test(t);
         if (!unit) t = t.replace(/(\d)[.\u00a0\u202f '’](?=\d{3}(?!\d))/g, '$1');
         return t.replace(/(\d),(?=\d)/g, '$1.');
     }
+    function parseGameNumber(s) { return s == null ? null : parseNumber(locNorm(s, true)); }
     function parseNumber(s) {
         if (s == null) return null;
         let str = locNorm(s).replace(/[,$€£%]/g, '').replace(/\s+/g, ' ').trim();
@@ -3348,7 +3351,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     // Prefer a level embedded in the name ("Economy LVL: 19", "Economy (19)")
     function levelFrom(x) {
         const m = String(x.name).match(/LVL:?\s*([\d,.]+)|\(([\d,]+)\)\s*$/i);
-        if (m) return { value: parseNumber(m[1] || m[2]), display: (m[1] || m[2]).trim() };
+        if (m) return { value: parseGameNumber(m[1] || m[2]), display: (m[1] || m[2]).trim() };
         return { value: x.value, display: x.display || String(x.value) };
     }
 
@@ -3531,8 +3534,9 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         // Tolerance so a round target (e.g. 50) accepts 49.99999 at level 10320
         const goal = target - 0.0005;
         let L = Math.ceil(Math.pow((goal - 0.2) * 500 / 0.38, 1 / 1.2));
-        while (L > 1 && tpm(L - 1) >= goal) L--;
-        while (tpm(L) < goal) L++;
+        if (!Number.isFinite(L) || L > 1e9) return null;   // impossibly high target: no answer rather than a frozen page (since v3.27.3)
+        for (let i = 0; i < 1000 && L > 1 && tpm(L - 1) >= goal; i++) L--;
+        for (let i = 0; i < 1000 && tpm(L) < goal; i++) L++;
         return L;
     }
 
@@ -3650,6 +3654,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                 return;
             }
             end = levelForTpm(target);
+            if (end == null) { out.textContent = `Target too high: no Tick Generator level reaches ${target} TPM. Check the number you typed.`; out.classList.add('sa-warn'); return; }
         }
         const S = Math.round(start), E = Math.round(end);
         const c = calcTickUpgrade(S, E);
@@ -4133,8 +4138,9 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         const m = 2000 * (1 + 0.02 * tech);
         if (!(target > 0)) return null;
         let L = Math.max(0, Math.ceil(Math.pow(target / m, 2 / 3) - 1));
-        while (L > 0 && areaSize(L - 1, tech) >= target) L--;
-        while (areaSize(L, tech) < target) L++;
+        if (!Number.isFinite(L) || L > 1e9) return null;   // impossibly high target (since v3.27.3)
+        for (let i = 0; i < 1000 && L > 0 && areaSize(L - 1, tech) >= target; i++) L--;
+        for (let i = 0; i < 1000 && areaSize(L, tech) < target; i++) L++;
         return L;
     }
 
@@ -4254,6 +4260,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         }
         const s0 = Math.round(S);
         if (d.mode === 'size') E = levelForSize(target, tech);
+        if (E == null) { out.textContent = 'Target too high: no area level reaches that size. Check the number you typed.'; out.classList.add('sa-warn'); return; }
         E = Math.round(E);
         const startSize = areaSize(s0, tech), endSize = areaSize(E, tech);
         if (E <= s0) {
@@ -4384,7 +4391,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             const r = readAmountCell(el);
             if (r.value != null) { put(k, r.value, r.display, 'page'); return; }
             const m = (el.textContent || '').replace(/\s+/g, ' ').match(new RegExp(NUM));
-            if (m) put(k, parseNumber(m[0]), m[0].trim(), 'page');
+            if (m) put(k, parseGameNumber(m[0]), m[0].trim(), 'page');
         });
         // 1) rows the research table scanner picked up ("Brains" / "1.2 T")
         (items || []).forEach(i => bdKinds().forEach(([k, , re]) => {
@@ -4411,7 +4418,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             if (out[k] != null) return;
             let m = text.match(new RegExp(`\\b${w}\\b\\s*:?\\s*(${NUM})`, 'i'));
             if (!m) m = text.match(new RegExp(`(${NUM})\\s*${w}\\b`, 'i'));
-            if (m) put(k, parseNumber(m[1]), m[1].trim(), 'text');
+            if (m) put(k, parseGameNumber(m[1]), m[1].trim(), 'text');
         });
         return out;
     }
@@ -4592,7 +4599,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     }
     function areaCardPct(slot, name) {
         const top = GM_getValue('sa-area-' + slot, {}) || {};
-        if (top.area === name && top.cardSource === 'manual') return parseNumber(top.card) || 0;
+        if (top.area === name && top.cardSource === 'manual') return parseGameNumber(top.card) || 0;
         const bc = bestAreaCard(name);
         return bc ? Math.abs(bc.value) : 0;
     }
@@ -5270,7 +5277,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         const gv = await fetchGistVersion();
         updGhFail = !gv;   // since v3.16.1: say so instead of "up to date"
         const cur = updLoad();
-        if (gv) updSave({ gistVersion: gv, latest: [gv, cur.latest].filter(Boolean).sort((a, b) => verLess(a, b) ? 1 : -1)[0], checkedAt: new Date().toISOString() });
+        if (gv) updSave({ gistVersion: gv, latest: [gv, cur.latest].filter(Boolean).sort((a, b) => verLess(a, b) ? 1 : -1)[0], checkedAt: new Date().toISOString(), ghAt: new Date().toISOString() });
         else updSave({ checkedAt: new Date().toISOString() });
         if (manual) {
             const u = updLoad();
@@ -5278,6 +5285,19 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             clearTimeout(updMsgTimer); updMsgTimer = setTimeout(() => { updMsg = ''; renderUpdateBar(); }, updGhFail ? 30000 : 6000);
             renderUpdateBar();
         }
+    }
+    // GitHub on every page load (since v3.27.2): only the newest version number, no server call; skipped if any tab checked in the last
+    // minute, so opening several game tabs at once makes one request. Sharky's server is still checked on its own schedule (15 / 30 minutes).
+    async function ghCheckOnLoad() {
+        if (sbView) return;
+        const u = updLoad();
+        if (u.ghAt && Date.now() - new Date(u.ghAt).getTime() < 60e3) return;
+        updSave({ ghAt: new Date().toISOString() });
+        const gv = await fetchGistVersion();
+        if (!gv) return;
+        const cur = updLoad();
+        updSave({ gistVersion: gv, latest: [gv, cur.latest].filter(Boolean).sort((a, b) => verLess(a, b) ? 1 : -1)[0] });
+        try { renderUpdateBar(); } catch (e) {}
     }
     function renderUpdateBar() {
         const bar = document.getElementById('sa-update-bar');
@@ -6569,7 +6589,9 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     if (sbView) { panel.classList.add('sa-viewing'); renderViewBar(); }
     else if (__SB_GM.list && __SB_GM.del) { try { __SB_GM.list().filter(k => k === 'sa-admin-viewing' || (/^sa-admin-viewing:/.test(k) && Date.now() - new Date((__SB_GM.get(k, {}) || {}).openedAt || 0) > 2 * 86400e3)).forEach(k => __SB_GM.del(k)); } catch (e) {} }
     renderUpdateBar();
-    setTimeout(() => checkUpdate(false, 30 * 60e3), 3000);   // on a page load, if the last check is 30+ minutes old (since v3.14.1)
+    // On a page load: the full check (server + GitHub) if the last one is 30+ minutes old (since v3.14.1), otherwise GitHub alone (since v3.27.2)
+    setTimeout(() => { const last = updLoad().checkedAt, due = !last || Date.now() - new Date(last) >= 30 * 60e3;
+        checkUpdate(false, 30 * 60e3); if (!due) ghCheckOnLoad(); }, 3000);
     // Coming back to the game tab counts like a page load
     document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && !sbView) checkUpdate(false, 30 * 60e3); });
     // Re-check the lock as the game's top bar loads or changes account, and the status on its schedule
@@ -7071,7 +7093,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             const sender = senderEl ? fTxt(senderEl).split('\n')[0].trim() : '';
             const shipsLine = lines.find(l => /ships?\b/i.test(l)) || '';
             const sm = shipsLine.match(/([\d.,]+\s*[kKmMbBtTqQ]?)\s*ships?/i);
-            const ships = sm ? parseNumber(sm[1].replace(/\s+/g, ' ').trim()) : null;
+            const ships = sm ? parseGameNumber(sm[1].replace(/\s+/g, ' ').trim()) : null;
             // The game can put the mission and its timer on one line ("Returning home 104:42 minutes"): split them (since v3.9.4)
             const mline = lines.find(l => MISSION_RE.test(l)) || '';
             const mission = cleanMission(mline);
@@ -7111,7 +7133,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         // Ships: known ship types only; Units / Resources: "used / capacity", then each unit type or resource carried
         const types = namedCounts(lines.slice(si + 1, ui), SHIP_NAMES);
         if (!Object.keys(types).length) return null;
-        const pair = (idx) => { const m = idx >= 0 && lines[idx + 1] && lines[idx + 1].match(/^([^/]+?)\s*\/\s*(.+)$/); return m ? [parseNumber(m[1]), parseNumber(m[2])] : [null, null]; };
+        const pair = (idx) => { const m = idx >= 0 && lines[idx + 1] && lines[idx + 1].match(/^([^/]+?)\s*\/\s*(.+)$/); return m ? [parseGameNumber(m[1]), parseGameNumber(m[2])] : [null, null]; };
         const [units, unitsCap] = pair(ui), [res, resCap] = pair(ri);
         const unitsCarried = namedCounts(lines.slice(ui + 2, ri >= 0 ? ri : undefined), UNIT_NAMES);
         const resCarried = ri >= 0 ? namedCounts(lines.slice(ri + 2), RES_NAMES) : {};
@@ -7130,11 +7152,11 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         const types = {};
         Array.from(fs.querySelectorAll('td')).forEach(td => {
             const amt = td.querySelector('amount span') || td.querySelector('amount'); if (!amt) return;
-            const n = parseNumber(fTxt(amt)); const name = fTxt(td).replace(fTxt(amt), '').replace(/\s+/g, ' ').trim();
+            const n = parseGameNumber(fTxt(amt)); const name = fTxt(td).replace(fTxt(amt), '').replace(/\s+/g, ' ').trim();
             const c = canonName(name, SHIP_NAMES) || (name && !canonName(name, UNIT_NAMES) && !canonName(name, RES_NAMES) ? name : null);
             if (c && n != null) types[c] = (types[c] || 0) + n;
         });
-        const num = (re) => { const l = lines.find(x => re.test(x)); const m = l && l.match(/:\s*([^/]+?)\s*\/\s*(.+)$/); return m ? [parseNumber(m[1]), parseNumber(m[2])] : [null, null]; };
+        const num = (re) => { const l = lines.find(x => re.test(x)); const m = l && l.match(/:\s*([^/]+?)\s*\/\s*(.+)$/); return m ? [parseGameNumber(m[1]), parseGameNumber(m[2])] : [null, null]; };
         const [units, unitsCap] = num(/^Units\s*:/i), [res, resCap] = num(/^Resources\s*:/i);
         const mission = cleanMission(lines.find(l => /^(Mining|Attack|Reinforc|Return|Transport|Spy|Colon|Defend)/i.test(l)) || '');
         const ui = lines.findIndex(l => /^Units\s*:/i.test(l)), ri = lines.findIndex(l => /^Resources\s*:/i.test(l));
@@ -8363,9 +8385,9 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         const used = {};
         amounts.forEach((am, idx) => {
             const titled = am.querySelector('span[title]') || (am.matches('[title]') ? am : null);
-            const exact = titled ? parseNumber(titled.getAttribute('title')) : null;
+            const exact = titled ? parseGameNumber(titled.getAttribute('title')) : null;
             const display = (am.textContent || '').replace(/\s+/g, ' ').trim();
-            const value = exact != null ? exact : parseNumber(display.replace(/\(.*\)/, '').trim());
+            const value = exact != null ? exact : parseGameNumber(display.replace(/\(.*\)/, '').trim());
             if (value == null && !display) return;
             let name = labelForAmount(am) || `Resource ${idx + 1}`;
             used[name] = (used[name] || 0) + 1;
@@ -8432,7 +8454,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             if (seen.has(label.toLowerCase())) return;
             seen.add(label.toLowerCase());
             const isPct = /%$/.test(display);
-            const value = isPct ? parseFloat(display) : parseNumber(display);
+            const value = isPct ? parseFloat(display) : parseGameNumber(display);
             fields.push({ label, display, value, isPct });
         });
         return { fields };
@@ -8981,16 +9003,16 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                 const am = el.querySelector('amount');
                 if (am) {
                     const titled = am.querySelector('span[title]');
-                    const exact = titled ? parseNumber(titled.getAttribute('title')) : null;
+                    const exact = titled ? parseGameNumber(titled.getAttribute('title')) : null;
                     const display = (am.textContent || '').replace(/\s+/g, ' ').trim();
-                    const value = exact ?? parseNumber(display);
+                    const value = exact ?? parseGameNumber(display);
                     if (value != null) return { value, display, label: lab.textContent.trim().slice(0, 40) };
                 }
                 // number in the label's own text, e.g. "Balance: 1.2 T"
                 const m = (el.textContent || '').replace(/\s+/g, ' ')
                     .match(/balance[^\d\-]*(-?[\d.,]+\s*(?:[A-Za-z]+)?)/i);
                 if (m) {
-                    const value = parseNumber(m[1].trim());
+                    const value = parseGameNumber(m[1].trim());
                     if (value != null) return { value, display: m[1].trim(), label: lab.textContent.trim().slice(0, 40) };
                 }
             }
@@ -9136,8 +9158,10 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     }
     function readProfileInvest() { return readProfileInvestAll()[0] || null; }
     function readProfileInvestAll() {
+        const tables = findProfileInvestTables();
+        if (!tables.length) return [];   // names are only looked for when a profile window is open (since v3.27.3)
         const heads = profileHeads();
-        return findProfileInvestTables().map(f => readProfileTable(f, heads)).filter(Boolean);
+        return tables.map(f => readProfileTable(f, heads)).filter(Boolean);
     }
     function readProfileTable(f, heads) {
         const head = Array.from(f.rows[f.hi].children).map(c => (c.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase());
@@ -9151,7 +9175,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             if (!name) return;
             const v = readAmountCell(c[ci.value]);
             const sm = (c[ci.stake]?.textContent || '').replace(/\s+/g, '').match(/([\d.,]+)%/);
-            items.push({ name, shares: parseNumber((c[ci.shares]?.textContent || '').trim()), stake: sm ? parseFloat(sm[1].replace(/,/g, '')) : null,
+            items.push({ name, shares: parseGameNumber((c[ci.shares]?.textContent || '').trim()), stake: sm ? parseFloat(sm[1].replace(/,/g, '')) : null,
                          value: v.value, valueDisplay: v.display });
         });
         return items.length ? { savedAt: new Date().toISOString(), owner: ownerFor(f.el, heads), items } : null;
@@ -9340,7 +9364,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         const t = (root.innerText || root.textContent || '').replace(/\s+/g, ' ');
         const m = t.match(/money\s*printer[^0-9]{0,60}?(?:lvl|level)\.?\s*:?\s*([\d,.]+)/i) || t.match(/(?:lvl|level)\.?\s*:?\s*([\d,.]+)[^0-9]{0,40}money\s*printer/i)
             || t.match(/money\s*printer\s*\(?\s*([\d,]+)\s*\)?/i);
-        const v = m ? parseNumber(m[1]) : null;
+        const v = m ? parseGameNumber(m[1]) : null;
         return { value: v, text: m ? m[0].slice(0, 80) : '' };
     }
     function storeNerds(t) { GM_setValue('sa-nerds', { savedAt: new Date().toISOString(), items: t.items }); }
@@ -10107,7 +10131,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             if (!m) return;
             const display = m[1].trim();
             fields.push({ key: f.key, label: f.label, display,
-                value: parseNumber(display), pct: m[2] != null ? parseFloat(m[2]) : null });
+                value: parseGameNumber(display), pct: m[2] != null ? parseFloat(m[2]) : null });
         });
         const addr = text.match(/Address:\s*#?\(?([\d-]+)\)?/);
         const chestTime = text.match(/Unlocked in ([^\n]+?)(?:\n|$)/i);
@@ -10116,11 +10140,11 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         document.querySelectorAll('main tr, body > * tr').forEach(tr => {
             if (tr.closest(`#${PANEL_ID}`)) return;
             const cells = Array.from(tr.children).map(td => (td.textContent || '').replace(/\s+/g, ' ').trim());
-            if (cells.length >= 3 && /^VS\s+/i.test(cells[0]) && parseNumber(cells[1]) != null &&
+            if (cells.length >= 3 && /^VS\s+/i.test(cells[0]) && parseGameNumber(cells[1]) != null &&
                 !defense.some(d => d.type === cells[0])) {
                 defense.push({ type: cells[0].replace(/\s*\?$/, '').trim(),
-                    units: parseNumber(cells[1]), unitsDisplay: cells[1],
-                    strength: parseNumber(cells[2].replace(/[^\d.,A-Za-z ]/g, '').trim()),
+                    units: parseGameNumber(cells[1]), unitsDisplay: cells[1],
+                    strength: parseGameNumber(cells[2].replace(/[^\d.,A-Za-z ]/g, '').trim()),
                     strengthDisplay: cells[2].replace(/[^\d.,A-Za-z ]/g, '').trim() });
             }
         });
@@ -10309,7 +10333,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                 const label = (c[0].textContent || '').replace(/\s+/g, ' ').trim(), display = (c[c.length - 1].textContent || '').replace(/\s+/g, ' ').trim();
                 if (!label || /^defense factors$/i.test(label)) return;
                 const pm = display.match(/^([+-]?[\d.,]+)\s*%$/);
-                rows.push({ label, display, value: pm ? null : parseNumber(display), pct: pm ? parseFloat(pm[1].replace(/,/g, '')) : null });
+                rows.push({ label, display, value: pm ? null : parseGameNumber(display), pct: pm ? parseFloat(pm[1].replace(/,/g, '')) : null });
             });
             if (!rows.length) return;
             const det = detectPlanet(); if (!det || !det.slot || det.assign) return;
@@ -10380,14 +10404,14 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             Array.from(t.querySelectorAll('tr')).forEach(tr => {
                 const c = Array.from(tr.children).map(x => (x.textContent || '').replace(/\s+/g, ' ').trim());
                 if (c.length === 1 || (c.length >= 1 && !title && !rows.length && c.filter(Boolean).length === 1)) { if (!title) title = c.filter(Boolean)[0] || ''; return; }
-                if (c.length >= 2 && c[0]) { const v = c[c.length - 1]; const num = v.match(/^([+-]?[\d.,]+\s*[A-Za-z]*)/); rows.push({ label: c[0], display: v, value: num ? parseNumber(num[1].trim()) : null }); }
+                if (c.length >= 2 && c[0]) { const v = c[c.length - 1]; const num = v.match(/^([+-]?[\d.,]+\s*[A-Za-z]*)/); rows.push({ label: c[0], display: v, value: num ? parseGameNumber(num[1].trim()) : null }); }
             });
             if (!title) { const prev = t.previousElementSibling; title = prev ? (prev.textContent || '').trim().slice(0, 60) : ''; }
             if (rows.length) sections.push({ title: title || 'Pollution', rows });
         });
         if (!sections.length) return;
         const det = detectPlanet(); if (!det || !det.slot || det.assign) return;
-        const rec = { pollution: pm ? parseNumber(pm[1]) : null, forest: fm ? parseNumber(fm[1]) : null, sections };
+        const rec = { pollution: pm ? parseGameNumber(pm[1]) : null, forest: fm ? parseGameNumber(fm[1]) : null, sections };
         const key = 'sa-pollution-' + det.slot, cur = GM_getValue(key, null);
         if (cur && JSON.stringify({ pollution: cur.pollution, forest: cur.forest, sections: cur.sections }) === JSON.stringify(rec)) return;
         GM_setValue(key, Object.assign(rec, { at: new Date().toISOString() }));
@@ -11272,11 +11296,11 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         for (let i = 0; i < lines.length; i++) {
             const l = lines[i];
             let m = l.match(/^([A-Za-z][A-Za-z .'&()/-]{1,40}?)\s*:?\s*([+\-−]?\d[\d,.]*(?:\s*(?:K|M|B|T|Qa|Qi|Sx|Sp|Oc|No|Dc))?)$/);
-            if (m) { const v = parseNumber(m[2].replace('−', '-')); if (v != null) values[m[1].trim()] = v; continue; }
+            if (m) { const v = parseGameNumber(m[2].replace('−', '-')); if (v != null) values[m[1].trim()] = v; continue; }
             m = l.match(/^([+\-−]?\d[\d,.]*(?:\s*(?:K|M|B|T|Qa|Qi|Sx|Sp|Oc|No|Dc))?)\s+([A-Za-z][A-Za-z .'&()/-]{1,40})$/);
-            if (m) { const v = parseNumber(m[1].replace('−', '-')); if (v != null) values[m[2].trim()] = v; continue; }
+            if (m) { const v = parseGameNumber(m[1].replace('−', '-')); if (v != null) values[m[2].trim()] = v; continue; }
             if (/^[A-Za-z][A-Za-z .'&()/-]{1,40}$/.test(l) && lines[i + 1] && /^[+\-−]?\d[\d,.]*(?:\s*(?:K|M|B|T|Qa|Qi|Sx|Sp|Oc|No|Dc))?$/.test(lines[i + 1])) {
-                const v = parseNumber(lines[i + 1].replace('−', '-')); if (v != null) { values[l] = v; i++; }
+                const v = parseGameNumber(lines[i + 1].replace('−', '-')); if (v != null) { values[l] = v; i++; }
             }
         }
         const coords = ((raw.match(/#\s*\(?\s*\d{1,4}\s*-\s*\d{1,4}\s*\)?/) || raw.match(/\(\s*\d{1,4}\s*-\s*\d{1,4}\s*\)/) || [])[0] || '').replace(/\s+/g, '');
