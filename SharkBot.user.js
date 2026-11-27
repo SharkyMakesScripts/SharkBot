@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SharkBot
 // @namespace    https://spacealpha.net/
-// @version      3.16.0
+// @version      3.16.1
 // @description  SharkBot for Space Alpha: saves your planets' units, facilities, inventory, research, bank and market prices, and calculates credit generation and Tick Generator upgrade costs.
 // @author       SharkBot
 // @match        https://spacealpha.net/*
@@ -41,7 +41,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     const PANEL_ID = 'sa-helper-panel';
     const SLOT_IDS = 'ABCDEFGHIJ'.split('');   // up to 10 planets
     // Version comes from the @version header so it's never out of sync
-    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.16.0';
+    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.16.1';
     // Another copy of SharkBot already put its panel on the page: warn and stop,
     // so two installed copies are obvious instead of silently showing the old one.
     const existing = document.getElementById(PANEL_ID);
@@ -1365,6 +1365,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         GM_setValue('sa-last-sub-' + group, name);
         if (['factorycalc', 'printer', 'invcreate', 'attack', 'assassin'].includes(name) && typeof sbReady !== 'undefined' && sbReady) { try { renderXc(name); } catch (e) {} }
         if (name === "valueopt" && typeof sbReady !== "undefined" && sbReady) { try { renderValueOpt(); } catch (e) {} }
+        if (name === 'bank' && typeof sbReady !== 'undefined' && sbReady) { try { fetchInvestments(false); } catch (e) {} }
         if (name === 'trapcalc' && typeof sbReady !== 'undefined' && sbReady) { try { renderTrapCalc(); fetchInvestments(false); fetchHolders(false); } catch (e) {} }
         if (group === 'statements' && typeof STMT_TABS !== 'undefined' && STMT_TABS) { try { renderStatements(); } catch (e) {} }
         if (name === 'plist' && typeof PLAYERS_READY !== 'undefined' && PLAYERS_READY) { try { renderPlayers(); fetchOnline(false); } catch (e) {} }
@@ -5005,6 +5006,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         updSave({ min: r.minVersion || cur.min, latest, url: r.updateUrl || UPDATE_URL || cur.url || '', serverAt: new Date().toISOString() });
     }
     var updMsg = '', updMsgTimer = null;
+    var updGhFail = false;
     function fetchGistVersion() {
         const url = updLoad().url || UPDATE_URL;
         return new Promise((res) => {
@@ -5025,13 +5027,14 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         if (manual) { updMsg = 'Checking…'; renderUpdateBar(); }
         try { await checkReg(!!manual, manual ? 0 : every); } catch (e) {}
         const gv = await fetchGistVersion();
+        updGhFail = !gv;   // since v3.16.1: say so instead of "up to date"
         const cur = updLoad();
         if (gv) updSave({ gistVersion: gv, latest: [gv, cur.latest].filter(Boolean).sort((a, b) => verLess(a, b) ? 1 : -1)[0], checkedAt: new Date().toISOString() });
         else updSave({ checkedAt: new Date().toISOString() });
         if (manual) {
             const u = updLoad();
-            updMsg = u.latest && verLess(VERSION, u.latest) ? '' : `You're up to date (v${VERSION}).`;
-            clearTimeout(updMsgTimer); updMsgTimer = setTimeout(() => { updMsg = ''; renderUpdateBar(); }, 6000);
+            updMsg = u.latest && verLess(VERSION, u.latest) ? '' : updGhFail ? `Couldn't check GitHub, so SharkBot can't tell whether a newer version is out (you have v${VERSION}).` : `You're up to date (v${VERSION}).`;
+            clearTimeout(updMsgTimer); updMsgTimer = setTimeout(() => { updMsg = ''; renderUpdateBar(); }, updGhFail ? 30000 : 6000);
             renderUpdateBar();
         }
     }
@@ -5043,9 +5046,10 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         if (!need && !avail && !updMsg) { bar.style.display = 'none'; bar.innerHTML = ''; return; }
         bar.style.cssText = `display:flex; gap:6px; align-items:center; flex-wrap:wrap; padding:5px 10px; font-size:11px; border-bottom:1px solid var(--border);
             background:${need ? 'rgba(220,70,70,0.18)' : avail ? 'rgba(80,160,255,0.15)' : 'var(--inset)'}`;
-        bar.innerHTML = !need && !avail ? `<span>${escapeHtml(updMsg)}</span>`
+        bar.innerHTML = !need && !avail ? `<span style="flex:1">${escapeHtml(updMsg)}</span>${updGhFail && /GitHub/.test(updMsg) ? `<button class="sa-btn" id="sa-update-open" style="margin:0">Open update page</button>` : ''}`
             : `<span style="flex:1">${need ? `<b>Update required:</b> Sharky's server needs SharkBot v${escapeHtml(u.min || u.latest || '?')} or newer` : `<b>SharkBot v${escapeHtml(u.latest)}</b> is available`} (you have v${escapeHtml(VERSION)}).${
                 url ? '' : ' Ask Sharky for the new file.'}</span>${url ? `<button class="sa-btn" id="sa-update-go" style="margin:0">Update</button>` : ''}`;
+        bar.querySelector('#sa-update-open')?.addEventListener('click', () => { window.open(url, '_blank'); updMsg = 'If Tampermonkey shows an Update or Reinstall page, click it, then reload the game.'; updGhFail = false; renderUpdateBar(); });
         bar.querySelector('#sa-update-go')?.addEventListener('click', () => {
             window.open(url, '_blank');
             updMsg = 'Tampermonkey opens its Update page: click Update there, then reload the game.'; renderUpdateBar();
@@ -7816,7 +7820,8 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         const tw = view.querySelector('.sa-traps-table')?.parentElement; if (tw) tw.scrollLeft = sx;
         bindInvest(view);
         view.querySelector('#sa-nerds-mine')?.addEventListener('change', (e) => { GM_setValue('sa-nerds-mine', e.target.checked); renderBank(); });
-        fetchInvestments(false);   // refreshes in the background when older than 10 minutes
+        // Only while Data → Bank is open (since v3.16.1), so the game's list isn't fetched in the background; refreshes when older than 10 minutes
+        if (view.closest('.sa-pane')?.classList.contains('active')) fetchInvestments(false);
     }
     // "Invested" on your bank tab (since v3.3.0): SharkBot's total of your invested credits replaces the game's figure:
     // managed = the amounts you type, unmanaged = your share value; each capped at the investment's equity (the You column)
