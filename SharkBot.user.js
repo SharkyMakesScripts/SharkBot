@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SharkBot
 // @namespace    https://spacealpha.net/
-// @version      3.16.1
+// @version      3.17.0
 // @description  SharkBot for Space Alpha: saves your planets' units, facilities, inventory, research, bank and market prices, and calculates credit generation and Tick Generator upgrade costs.
 // @author       SharkBot
 // @match        https://spacealpha.net/*
@@ -41,7 +41,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     const PANEL_ID = 'sa-helper-panel';
     const SLOT_IDS = 'ABCDEFGHIJ'.split('');   // up to 10 planets
     // Version comes from the @version header so it's never out of sync
-    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.16.1';
+    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.17.0';
     // Another copy of SharkBot already put its panel on the page: warn and stop,
     // so two installed copies are obvious instead of silently showing the old one.
     const existing = document.getElementById(PANEL_ID);
@@ -147,7 +147,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         #${PANEL_ID} table td .sa-btn { width: auto !important; min-width: 0 !important; max-width: none !important; display: inline-block !important; flex: none !important; white-space: nowrap; }
         #${PANEL_ID} .sa-btn:disabled { opacity: 0.45; cursor: not-allowed; }
         /* Admin → Users and Players only show while logged in as admin (since v3.0.1) */
-        #${PANEL_ID}:not(.sa-admin-in) .sa-tab[data-tab="adminusers"], #${PANEL_ID}:not(.sa-admin-in) .sa-tab[data-tab="players"], #${PANEL_ID}:not(.sa-admin-in) .sa-tab[data-tab="plist"], #${PANEL_ID}:not(.sa-admin-in) .sa-tab[data-tab="viewer"], #${PANEL_ID}:not(.sa-admin-in) .sa-tab[data-tab="fleets"] { display: none !important; }
+        #${PANEL_ID}:not(.sa-admin-in) .sa-tab[data-tab="adminusers"], #${PANEL_ID}:not(.sa-admin-in) .sa-tab[data-tab="players"], #${PANEL_ID}:not(.sa-admin-in) .sa-tab[data-tab="plist"], #${PANEL_ID}:not(.sa-admin-in) .sa-tab[data-tab="viewer"], #${PANEL_ID}:not(.sa-admin-in) .sa-tab[data-tab="fleets"], #${PANEL_ID}:not(.sa-admin-in) .sa-tab[data-tab="admmissions"] { display: none !important; }
         /* Alliance form and rename box (since v2.25.1): full width, whatever the game page styles inputs as */
         #${PANEL_ID} .sa-ally-form { display: grid; grid-template-columns: auto 1fr; gap: 4px 8px; align-items: center; font-size: 11px; }
         #${PANEL_ID} .sa-ally-form label { color: var(--soft); }
@@ -234,9 +234,9 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         /* Registration lock: only Welcome (with the Register box) and Admin are usable until the copy is accepted.
            Welcome is hidden once the copy is accepted; Admin is always there. */
         #${PANEL_ID}:not(.sa-locked) .sa-mtab[data-group="welcome"] { display: none !important; }
-        #${PANEL_ID}.sa-locked .sa-pane:not([data-pane="welcome"]):not([data-pane="admin"]):not([data-pane="adminusers"]):not([data-pane="players"]):not([data-pane="plist"]):not([data-pane="viewer"]):not([data-pane="fleets"]),
+        #${PANEL_ID}.sa-locked .sa-pane:not([data-pane="welcome"]):not([data-pane="admin"]):not([data-pane="adminusers"]):not([data-pane="players"]):not([data-pane="plist"]):not([data-pane="viewer"]):not([data-pane="fleets"]):not([data-pane="admmissions"]),
         #${PANEL_ID}.sa-locked .sa-mtab:not([data-group="admin"]):not([data-group="welcome"]),
-        #${PANEL_ID}.sa-locked .sa-tab:not([data-tab="admin"]):not([data-tab="adminusers"]):not([data-tab="players"]):not([data-tab="plist"]):not([data-tab="viewer"]):not([data-tab="fleets"]),
+        #${PANEL_ID}.sa-locked .sa-tab:not([data-tab="admin"]):not([data-tab="adminusers"]):not([data-tab="players"]):not([data-tab="plist"]):not([data-tab="viewer"]):not([data-tab="fleets"]):not([data-tab="admmissions"]),
         #${PANEL_ID}.sa-locked .sa-tab-label, #${PANEL_ID}.sa-locked .sa-tab-break,
         #${PANEL_ID}.sa-locked #sa-scan, #${PANEL_ID}.sa-viewing #sa-scan { display: none !important; }
         /* Inside a Viewer box (since v3.5.3): only the panel, filling the box */
@@ -484,6 +484,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             <div class="sa-tab" data-tab="market">Market</div>
             <div class="sa-tab" data-tab="bank">Bank</div>
             <div class="sa-tab" data-tab="cards">Cards</div>
+            <div class="sa-tab" data-tab="missions" title="Your espionage reports">Missions</div>
             <div class="sa-tab-break" data-group="data"></div>
             <div class="sa-tab-label" data-group="data" title="Saved separately for each planet">Planet</div>
             <div class="sa-tab" data-tab="units">Units</div>
@@ -529,6 +530,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             <div class="sa-tab" data-tab="players" title="Alliances, built from the players">Alliances</div>
             <div class="sa-tab" data-tab="viewer">Viewer</div>
             <div class="sa-tab" data-tab="fleets">Fleets</div>
+            <div class="sa-tab" data-tab="admmissions" title="Every admin's espionage reports">Missions</div>
         </div>
         <div class="sa-body">
             <div class="sa-pane" data-pane="welcome">
@@ -873,6 +875,13 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                     <div class="sa-recommend" id="sa-opt-result">—</div>
                 </div>
             </div>
+            <div class="sa-pane" data-pane="missions">
+                <div class="sa-section">
+                    <div class="sa-label">Missions: your espionage reports</div>
+                    <div style="font-size:10px; color:var(--muted)">Open a spy report on the game's <b>Reports</b> page and SharkBot saves it here (once). The target is the defender's planet; the game doesn't say who owns it.</div>
+                </div>
+                <div id="sa-missions-view"></div>
+            </div>
             <div class="sa-pane" data-pane="cards">
                 <div class="sa-section">
                     <div class="sa-label">Hero cards (account-wide)</div>
@@ -1000,6 +1009,13 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                     <div style="font-size: 10px; color: var(--muted); margin-bottom: 6px;">How your total equity has changed over time. A snapshot is taken at most once an hour as you play.</div>
                 </div>
                 <div id="sa-stholder-view"></div>
+            </div>
+            <div class="sa-pane" data-pane="admmissions">
+                <div class="sa-section">
+                    <div class="sa-label">Missions: every admin's espionage reports</div>
+                    <div style="font-size:10px; color:var(--muted)">Spy reports opened by admins on the Reports page, shared by all admins. Grouped by alliance → player → planet using the planet links (shared with Fleets); planets not linked yet are under <b>Undesignated</b>.</div>
+                </div>
+                <div id="sa-admmissions-view"></div>
             </div>
             <div class="sa-pane" data-pane="fleets">
                 <div class="sa-section">
@@ -1331,10 +1347,10 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     const TAB_GROUPS = {
         welcome:     ['welcome'],
         general:     ['debug', 'settings'],
-        data:        ['research', 'market', 'bank', 'cards', 'units', 'facilities', 'inventory', 'nation'],
+        data:        ['research', 'market', 'bank', 'cards', 'missions', 'units', 'facilities', 'inventory', 'nation'],
         calculators: ['storage', 'area', 'turns', 'training', 'rescalc', 'energy', 'productivity', 'creditgen', 'resgen', 'unitvalue', 'optimizer', 'valueopt', 'trapcalc', 'factorycalc', 'printer', 'invcreate', 'attack', 'assassin'],
         statements:  ['stbalance', 'stincome', 'stcash', 'stholder'],
-        admin:       ['admin', 'adminusers', 'plist', 'players', 'viewer', 'fleets'],
+        admin:       ['admin', 'adminusers', 'plist', 'players', 'viewer', 'fleets', 'admmissions'],
     };
     const groupOf = (tab) => Object.keys(TAB_GROUPS).find(g => TAB_GROUPS[g].includes(tab)) || 'general';
     if (!Object.values(TAB_GROUPS).flat().includes(activeTab)) activeTab = 'debug';
@@ -1366,6 +1382,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         if (['factorycalc', 'printer', 'invcreate', 'attack', 'assassin'].includes(name) && typeof sbReady !== 'undefined' && sbReady) { try { renderXc(name); } catch (e) {} }
         if (name === "valueopt" && typeof sbReady !== "undefined" && sbReady) { try { renderValueOpt(); } catch (e) {} }
         if (name === 'bank' && typeof sbReady !== 'undefined' && sbReady) { try { fetchInvestments(false); } catch (e) {} }
+        if ((name === 'missions' || name === 'admmissions') && typeof sbReady !== 'undefined' && sbReady) { try { renderMissions(); } catch (e) {} }
         if (name === 'trapcalc' && typeof sbReady !== 'undefined' && sbReady) { try { renderTrapCalc(); fetchInvestments(false); fetchHolders(false); } catch (e) {} }
         if (group === 'statements' && typeof STMT_TABS !== 'undefined' && STMT_TABS) { try { renderStatements(); } catch (e) {} }
         if (name === 'plist' && typeof PLAYERS_READY !== 'undefined' && PLAYERS_READY) { try { renderPlayers(); fetchOnline(false); } catch (e) {} }
@@ -5486,7 +5503,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         try {
             const f = fleetsLoad();
             const r = await gmPost(shareUrl(), { action: 'adminsync', user: adminCreds.user, pass: adminCreds.pass,
-                players: playersLoad(), fleets: {}, log: f.log || [], links: planetLinks(), tags: GM_getValue('sa-admin-hs-tags', {}) || {}, resets: GM_getValue('sa-admin-resets', {}) || {} });
+                players: playersLoad(), fleets: {}, log: f.log || [], links: planetLinks(), missions: GM_getValue('sa-admin-copy', false) ? missionsLoad().list.slice(0, 300) : [], tags: GM_getValue('sa-admin-hs-tags', {}) || {}, resets: GM_getValue('sa-admin-resets', {}) || {} });
             if (!r || !r.ok) throw new Error((r && r.error) || 'refused');
             const del = r.deleted || {}, clr = r.cleared || {};
             const pl = Object.assign({ players: {}, online: [] }, r.players || {});
@@ -5505,6 +5522,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             GM_setValue('sa-players', pl);
             if (newer) adminSyncSoon();
             if (r.links) GM_setValue('sa-admin-planet-links', r.links);
+            if (Array.isArray(r.missions)) { GM_setValue('sa-admin-missions', r.missions); try { renderMissions(); } catch (e) {} }   // since v3.17.0
             // Remember SharkBot users' planet names, so planets stay linked when logged out
             try { const pm = {}; (adminData || []).forEach(sp => (sp.data && sp.data.planets || []).forEach(p => { if (p.name) pm[String(p.name).trim().toLowerCase()] = sp.player; })); if (Object.keys(pm).length) GM_setValue('sa-admin-planetmap', pm); } catch (e) {}
             let cur = fleetsLoad(); cur.players = {}; if (Array.isArray(r.log)) cur.log = r.log;   // fleet stats per player aren't kept since v3.11.0
@@ -5955,8 +5973,8 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     function setAdminIn(on) {
         panel.classList.toggle('sa-admin-in', !!on);
         if (!on) {
-            if (['adminusers', 'players', 'plist', 'viewer', 'fleets'].includes(GM_getValue('sa-last-sub-admin', ''))) GM_setValue('sa-last-sub-admin', 'admin');
-            if (['adminusers', 'players', 'plist', 'viewer', 'fleets'].includes(GM_getValue('sa-active-tab', ''))) switchTab('admin');
+            if (['adminusers', 'players', 'plist', 'viewer', 'fleets', 'admmissions'].includes(GM_getValue('sa-last-sub-admin', ''))) GM_setValue('sa-last-sub-admin', 'admin');
+            if (['adminusers', 'players', 'plist', 'viewer', 'fleets', 'admmissions'].includes(GM_getValue('sa-active-tab', ''))) switchTab('admin');
         }
     }
     setAdminIn(false);   // never logged in after a page load (the password isn't stored)
@@ -5968,7 +5986,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     else checkReg(false, 30 * 60e3);   // on a page load, if the last check is 30+ minutes old (since v3.14.1)
     panel.querySelector('#sa-update')?.addEventListener('click', () => checkUpdate(true));
     // Admin buttons ask first (since v3.15.0): any button in an Admin subtab shows a confirm box before it acts
-    const ADMIN_PANES = ['admin', 'adminusers', 'plist', 'players', 'viewer', 'fleets'];
+    const ADMIN_PANES = ['admin', 'adminusers', 'plist', 'players', 'viewer', 'fleets', 'admmissions'];
     var sbConfirmOk = null;
     panel.addEventListener('click', (e) => {
         const btn = e.target && e.target.closest ? e.target.closest('button') : null;
@@ -9627,7 +9645,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                 'sa-inv-' + id, 'sa-turngen-' + id, 'sa-turns-' + id,
                 'sa-slot-collapsed-' + id, 'sa-rslot-collapsed-' + id, 'sa-fslot-collapsed-' + id,
                 'sa-nation-' + id, 'sa-colony-' + id));
-            keys.push('sa-market-latest', 'sa-bank', 'sa-player-bank', 'sa-traps', 'sa-nerds', 'sa-print-level', 'sa-invest-api', 'sa-stmt-history', 'sa-galaxy-fee', 'sa-central-bank',
+            keys.push('sa-market-latest', 'sa-bank', 'sa-player-bank', 'sa-traps', 'sa-nerds', 'sa-print-level', 'sa-missions', 'sa-invest-api', 'sa-stmt-history', 'sa-galaxy-fee', 'sa-central-bank',
                       'sa-turngen-active', 'sa-turns-active', 'sa-cards');
         }
         const toDelete = keys.filter(k => k.startsWith('sa-') && !KEEP_KEYS.includes(k) && !KEEP_PREFIXES.some(p => k.startsWith(p)));
@@ -10200,6 +10218,124 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     document.querySelectorAll(`#${PANEL_ID} .sa-xc-slot`).forEach(sel => sel.addEventListener('change', () => { GM_setValue('sa-xc-slot-' + sel.dataset.xc, sel.value); renderXc(sel.dataset.xc); }));
     renderXcAll();
 
+    // ---------- Missions: espionage reports (since v3.17.0) ----------
+    // Read from the spy report pop-up on the Reports page (report-popup → spy-report). The defender's planet name is at
+    // spy-report/table/tr[3]/td/table[2]/tr[2]/td/h4; the rest of the report is read as label → number pairs, plus its text.
+    // Kept separately from your planets and players: sa-missions = { list: [ { key, planet, coords, at, time, outcome, values, raw, spy } ] }
+    function missionsLoad() { return GM_getValue('sa-missions', null) || { list: [] }; }
+    function readSpyReport() {
+        const spy = Array.from(document.querySelectorAll('report-popup spy-report, spy-report')).find(el => !el.closest('#' + PANEL_ID));
+        if (!spy) return null;
+        const xp = (ctx, path) => { try { return document.evaluate(path, ctx, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue; } catch (e) { return null; } };
+        const h4 = xp(spy, './table/tr[3]/td/table[2]/tr[2]/td/h4') || xp(spy, './table/tbody/tr[3]/td/table[2]/tbody/tr[2]/td/h4')
+            || xp(document, '//*[@id="cdk-overlay-0"]/popups-container/report-popup/popuptemplate/div/div/div[2]/div/spy-report/table/tr[3]/td/table[2]/tr[2]/td/h4');
+        const planet = h4 ? normText(h4) : '';
+        const raw = (spy.innerText || spy.textContent || '').replace(/[ \t]+/g, ' ').replace(/\n\s*\n+/g, '\n').trim();
+        if (!raw) return null;
+        // Label → number pairs: "Assassins 1,234", "Assassins: 1.2 M", or a label cell followed by a number cell
+        const values = {}, lines = raw.split('\n').map(l => l.trim()).filter(Boolean);
+        for (let i = 0; i < lines.length; i++) {
+            const l = lines[i];
+            let m = l.match(/^([A-Za-z][A-Za-z .'&()/-]{1,40}?)\s*:?\s*([+\-−]?\d[\d,.]*(?:\s*(?:K|M|B|T|Qa|Qi|Sx|Sp|Oc|No|Dc))?)$/);
+            if (m) { const v = parseNumber(m[2].replace('−', '-')); if (v != null) values[m[1].trim()] = v; continue; }
+            m = l.match(/^([+\-−]?\d[\d,.]*(?:\s*(?:K|M|B|T|Qa|Qi|Sx|Sp|Oc|No|Dc))?)\s+([A-Za-z][A-Za-z .'&()/-]{1,40})$/);
+            if (m) { const v = parseNumber(m[1].replace('−', '-')); if (v != null) values[m[2].trim()] = v; continue; }
+            if (/^[A-Za-z][A-Za-z .'&()/-]{1,40}$/.test(l) && lines[i + 1] && /^[+\-−]?\d[\d,.]*(?:\s*(?:K|M|B|T|Qa|Qi|Sx|Sp|Oc|No|Dc))?$/.test(lines[i + 1])) {
+                const v = parseNumber(lines[i + 1].replace('−', '-')); if (v != null) { values[l] = v; i++; }
+            }
+        }
+        const coords = ((raw.match(/#\s*\(?\s*\d{1,4}\s*-\s*\d{1,4}\s*\)?/) || raw.match(/\(\s*\d{1,4}\s*-\s*\d{1,4}\s*\)/) || [])[0] || '').replace(/\s+/g, '');
+        const time = (raw.match(/\b\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}[ ,T]+\d{1,2}:\d{2}(?::\d{2})?(?:\s*[AP]M)?|\b\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(?::\d{2})?/i) || [])[0] || '';
+        const outcome = /fail|caught|detected|unsuccessful|lost/i.test(raw) ? 'failed' : /success|complete/i.test(raw) ? 'success' : '';
+        let h = 0; for (let i = 0; i < raw.length; i++) h = (h * 31 + raw.charCodeAt(i)) | 0;
+        return { key: (planet || '?').toLowerCase() + '|' + (h >>> 0).toString(36), planet: planet || '(planet not found)', coords, time, outcome, values, raw: raw.slice(0, 4000) };
+    }
+    var missionSeen = '';
+    function checkMissions() {
+        if (sbView || pageKey !== 'reports') return;
+        const r = readSpyReport(); if (!r || r.key === missionSeen) return;
+        missionSeen = r.key;
+        const d = missionsLoad();
+        if (d.list.some(x => x.key === r.key)) return;
+        r.at = new Date().toISOString(); r.spy = pageUsername() || GM_getValue('sa-username', '') || '';
+        d.list.unshift(r); d.list = d.list.slice(0, 300);
+        GM_setValue('sa-missions', d);
+        try { renderMissions(); } catch (e) {}
+        if (GM_getValue('sa-admin-copy', false) && adminCreds) adminSyncSoon();
+    }
+    setInterval(() => { try { checkMissions(); } catch (e) {} }, 2000);
+    var misOpen = {}, misQ = '', misLinkPick = '';
+    function missionDetail(x) {
+        const vals = Object.entries(x.values || {});
+        return `<div style="padding:4px 6px 6px; background:var(--inset); font-size:10px">
+            ${vals.length ? `<table class="sa-unit-table" style="font-size:10px; width:auto; min-width:50%"><tbody>${vals.map(([k, v]) => `<tr><td>${escapeHtml(k)}</td><td class="sa-num">${escapeHtml(fmt(v))}</td></tr>`).join('')}</tbody></table>` : '<div style="color:var(--muted)">No numbers recognised: the report text is below.</div>'}
+            <details style="margin-top:4px"><summary style="cursor:pointer; color:var(--muted)">Full report text</summary><pre style="white-space:pre-wrap; margin:4px 0 0; font-size:10px">${escapeHtml(x.raw || '')}</pre></details></div>`;
+    }
+    function missionRow(x, admin) {
+        const top = Object.entries(x.values || {}).slice(0, 3).map(([k, v]) => `${escapeHtml(k)} ${escapeHtml(fmt(v))}`).join(' · ');
+        return `<tr data-mis="${escapeHtml(x.key)}" style="cursor:pointer"><td>${misOpen[x.key] ? '▾' : '▸'} ${escapeHtml(x.planet)}${x.coords ? ` <span style="color:var(--muted)">${escapeHtml(x.coords)}</span>` : ''}</td>
+            ${admin ? `<td>${escapeHtml(x.spy || '?')}</td>` : ''}<td data-sort="${new Date(x.at).getTime() || ''}">${escapeHtml(x.time || agoText(x.at))}</td>
+            <td style="color:${x.outcome === 'failed' ? 'var(--neg, #e66)' : x.outcome === 'success' ? 'var(--pos)' : 'var(--muted)'}">${escapeHtml(x.outcome || '—')}</td><td style="font-size:10px">${top}</td></tr>${
+            misOpen[x.key] ? `<tr data-child="1"><td colspan="${admin ? 5 : 4}" style="padding:0">${missionDetail(x)}</td></tr>` : ''}`;
+    }
+    function renderMissions() {
+        const f = (q) => (x) => !q || [x.planet, x.spy, x.coords].some(v => String(v || '').toLowerCase().includes(q.toLowerCase()));
+        // Data → Missions: your own reports
+        const mv = document.getElementById('sa-missions-view');
+        if (mv && !mv.contains(document.activeElement)) {
+            const list = missionsLoad().list.filter(f(misQ));
+            mv.innerHTML = `<div style="display:flex; gap:6px; margin-bottom:6px"><input class="sa-mis-q" value="${escapeHtml(misQ)}" placeholder="Search planet" style="flex:1" />
+                    <button class="sa-btn sa-btn-danger sa-mis-clear" style="margin:0">Delete all</button></div>
+                ${list.length ? `<table class="sa-unit-table" data-sort-id="missions"><thead><tr><th>Planet</th><th>When</th><th>Outcome</th><th>Key numbers</th></tr></thead><tbody>${list.map(x => missionRow(x, false)).join('')}</tbody></table>`
+                    : '<div class="sa-empty">No spy reports saved yet. Open one on the game\'s Reports page.</div>'}`;
+            wireMissions(mv, 'sa-missions');
+        }
+        // Admin → Missions: every admin's reports, Alliance → Player → Planet, Undesignated first
+        const av = document.getElementById('sa-admmissions-view');
+        if (av && !av.contains(document.activeElement)) {
+            if (!adminCreds) { av.innerHTML = '<div class="sa-empty">Log in on the <b>Dashboard</b> tab first.</div>'; return; }
+            const all = (GM_getValue('sa-admin-missions', []) || []).filter(f(misQ));
+            const low = (x) => String(x || '').trim().toLowerCase();
+            const pl = playersLoad(), allyOf = {}; Object.values(pl.players || {}).forEach(p => { allyOf[low(p.name)] = p.alliance || ''; });
+            const names = allianceCfg().allianceNames || {};
+            const allyLabel = (a) => !a ? 'No alliance' : names[a] || (String(a).startsWith('tag:') ? String(a).slice(4) : a.slice(0, 8) + '…');
+            const groups = {};
+            all.forEach(x => { const owner = planetOwner(x.planet), a = owner ? allyLabel(allyOf[low(owner)]) : 'Undesignated';
+                const g = groups[a] || (groups[a] = {}); const pk = owner || ''; (g[pk] = g[pk] || []).push(x); });
+            const order = Object.keys(groups).sort((a, b) => (b === 'Undesignated') - (a === 'Undesignated') || a.localeCompare(b));
+            const undesig = [...new Set((groups.Undesignated?.[''] || []).map(x => x.planet))];
+            const pick = undesig.includes(misLinkPick) ? misLinkPick : undesig[0] || '';
+            av.innerHTML = `<div style="display:flex; gap:6px; margin-bottom:6px"><input class="sa-mis-q" value="${escapeHtml(misQ)}" placeholder="Search planet or admin" style="flex:1" /></div>
+                ${undesig.length ? `<div class="sa-section" style="border:1px solid var(--border); border-radius:6px; padding:6px 8px; margin-bottom:6px"><div class="sa-label" style="margin:0 0 4px">Link an undesignated planet to a player</div>
+                    <div style="display:flex; gap:6px; flex-wrap:wrap"><select class="sa-select sa-mis-lp" style="flex:1 1 150px">${undesig.map(n => `<option ${n === pick ? 'selected' : ''}>${escapeHtml(n)}</option>`).join('')}</select>
+                    <input class="sa-mis-lpl" placeholder="player" list="sa-mis-players" style="flex:1 1 120px" /><datalist id="sa-mis-players">${Object.values(pl.players || {}).map(p => `<option value="${escapeHtml(p.name)}">`).join('')}</datalist>
+                    <button class="sa-btn sa-mis-link" style="margin:0">Link</button></div><div class="sa-slot-meta">Links are shared with Admin → Fleets and all admins.</div></div>` : ''}
+                ${all.length ? order.map(a => `<div class="sa-label" style="margin:8px 0 3px">${escapeHtml(a)}</div>${Object.keys(groups[a]).sort().map(owner => `
+                    ${owner ? `<div style="font-size:11px; margin:4px 0 2px"><b>${escapeHtml(owner)}</b></div>` : ''}
+                    <table class="sa-unit-table" style="margin-bottom:4px"><thead><tr><th>Planet</th><th>Admin</th><th>When</th><th>Outcome</th><th>Key numbers</th></tr></thead><tbody>${
+                        groups[a][owner].map(x => missionRow(x, true)).join('')}</tbody></table>`).join('')}`).join('')
+                    : '<div class="sa-empty">No admin spy reports yet. Admins: open a spy report on the game\'s Reports page.</div>'}`;
+            wireMissions(av, null);
+            av.querySelector('.sa-mis-lp')?.addEventListener('change', (e) => { misLinkPick = e.target.value; });
+            av.querySelector('.sa-mis-link')?.addEventListener('click', () => {
+                const planet = av.querySelector('.sa-mis-lp').value, player = av.querySelector('.sa-mis-lpl').value.trim();
+                if (!planet || !player) return;
+                const l = planetLinks(); l[planet.trim().toLowerCase()] = { planet, player, at: new Date().toISOString() };
+                GM_setValue('sa-admin-planet-links', l); adminSyncSoon(); renderMissions(); try { renderFleets(); } catch (e) {}
+            });
+        }
+    }
+    function wireMissions(root, key) {
+        root.querySelectorAll('tr[data-mis]').forEach(tr => tr.addEventListener('click', () => { misOpen[tr.dataset.mis] = !misOpen[tr.dataset.mis]; renderMissions(); }));
+        const q = root.querySelector('.sa-mis-q');
+        q?.addEventListener('input', () => { misQ = q.value; const pos = q.selectionStart; q.blur(); renderMissions(); const n = root.querySelector('.sa-mis-q'); if (n) { n.focus(); n.setSelectionRange(pos, pos); } });
+        let armed = false;
+        root.querySelector('.sa-mis-clear')?.addEventListener('click', (e) => {
+            if (!armed) { armed = true; e.target.textContent = 'Click again to delete all'; setTimeout(() => { armed = false; renderMissions(); }, 6000); return; }
+            GM_setValue('sa-missions', { list: [] }); renderMissions();
+        });
+    }
+    renderMissions();
     // ---------- How it's calculated (since v3.16.0) ----------
     // Under every calculator's result: always shown = the formula in plain words with your numbers and whether it's a
     // Given formula (complete and from the game's players / Sharky) or Assumed (SharkBot's own model or a fill-in);
@@ -10470,7 +10606,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     // At the top of every subtab with parts that open and close. Display only: nothing new is loaded.
     const EA_PANES = ['units', 'research', 'facilities', 'bank', 'trapcalc', 'cards', 'admin', 'adminusers', 'players', 'plist', 'fleets',
         // calculators: open or close the "How it's calculated" drop-downs (since v3.16.0)
-        'storage', 'area', 'turns', 'training', 'rescalc', 'energy', 'productivity', 'factorycalc', 'printer', 'invcreate', 'creditgen', 'resgen', 'unitvalue', 'optimizer', 'valueopt', 'attack', 'assassin'];
+        'missions', 'admmissions', 'storage', 'area', 'turns', 'training', 'rescalc', 'energy', 'productivity', 'factorycalc', 'printer', 'invcreate', 'creditgen', 'resgen', 'unitvalue', 'optimizer', 'valueopt', 'attack', 'assassin'];
     function eaApply(name, open) {
         const root = document.querySelector(`#${PANEL_ID} .sa-pane[data-pane="${name}"]`);
         if (!root) return;
