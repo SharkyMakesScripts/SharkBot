@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SharkBot
 // @namespace    https://spacealpha.net/
-// @version      3.25.4
+// @version      3.25.5
 // @description  SharkBot for Space Alpha: saves your planets' units, facilities, inventory, research, bank and market prices, and calculates credit generation and Tick Generator upgrade costs.
 // @author       SharkBot
 // @match        https://spacealpha.net/*
@@ -44,7 +44,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     const PANEL_ID = 'sa-helper-panel';
     const SLOT_IDS = 'ABCDEFGHIJ'.split('');   // up to 10 planets
     // Version comes from the @version header so it's never out of sync
-    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.25.4';
+    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.25.5';
     // Two copies installed (usually an update pasted in as a new script): since v3.17.1 every copy writes its version on the
     // page before doing anything, so the second copy always sees the first, even if the first has no panel yet or crashed.
     // The second copy stops and shows a large banner at the top of the page naming the older copy to delete.
@@ -262,6 +262,8 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             color: var(--muted); text-transform: uppercase; font-size: 10px;
             letter-spacing: 0.5px; margin-bottom: 2px;
         }
+        #${PANEL_ID} details.sa-fold > summary { cursor: pointer; margin: 0 0 3px; user-select: none; }
+        #${PANEL_ID} details.sa-fold > summary:hover { color: var(--text); }
         #${PANEL_ID} .sa-value {
             font-family: "SF Mono", Menlo, monospace; color: var(--accent);
             white-space: pre-wrap; word-break: break-word;
@@ -6586,11 +6588,11 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         const coin = (n) => invName(n) > 0 ? ' <span title="Has investments">💰</span>' : '';
         const memberRow = (name, on, last, ass) => `<tr data-child="1" data-pname="${escapeHtml(name)}" data-pwhere="alliances" title="Click to ${isOpen('alliances', name) ? 'hide' : 'show'} their shared data"
                     style="background:${isOpen('alliances', name) ? 'var(--hover)' : 'var(--inset)'}; font-size:10px; cursor:pointer">
-                    <td></td><td style="padding-left:16px; white-space:nowrap"><span style="color:${on ? 'var(--pos)' : 'var(--dim)'}">●</span> ${escapeHtml(name)}${coin(name)}</td>
+                    <td></td><td style="padding-left:16px; white-space:nowrap"><span style="color:${on ? 'var(--pos)' : 'var(--dim)'}">●</span> <span style="color:var(--muted)">${isOpen('alliances', name) ? '▾' : '▸'}</span> ${escapeHtml(name)}${coin(name)}</td>
                     <td colspan="2" style="color:var(--muted)">${on ? 'online' : last ? agoText(last) : 'not seen'}</td>
                     <td class="sa-num">${ass != null ? escapeHtml(fmt(ass)) : ''}</td>
                     <td class="sa-num" style="color:var(--muted)">${sharesSet.has(lowK(name)) ? '<span class="sa-diff-pos" title="Shares SharkBot data">✓</span>' : tempSet.has(lowK(name)) ? '<span title="Temp profile noted by an admin">temp</span>' : ''}</td>
-                    <td class="sa-num" data-sort="${invName(name) > 0 ? invName(name) : ''}">${invName(name) > 0 ? escapeHtml(fmt(invName(name))) : ''}</td></tr>`;
+                    <td class="sa-num" data-sort="${invName(name) > 0 ? invName(name) : ''}">${invName(name) > 0 ? escapeHtml(fmt(invName(name))) : ''}</td></tr>${detailRow('alliances', name, 7)}`;
         const hasData = (n) => sharesSet.has(lowK(n)) || tempSet.has(lowK(n)) || !!invBy[lowK(n)];
         const membersOf = (id) => all.filter(p => (p.alliance || '') === id && (!GM_getValue('sa-players-hide-empty', false) || hasData(p.name)))
             .sort((a, b) => onlineSet.has(b.id) - onlineSet.has(a.id) || String(a.name).localeCompare(String(b.name), undefined, { sensitivity: 'base' }))
@@ -6602,16 +6604,20 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             const sp = (adminData || []).find(x => String(x.player).trim().toLowerCase() === plOpen.name.trim().toLowerCase());
             return `<div class="sa-section sa-pl-detail" style="margin-top:6px; border:1px solid var(--border); border-radius:6px; padding:4px 8px 8px">
                 <div style="display:flex; justify-content:flex-end"><button class="sa-btn" id="sa-pl-close" style="margin:0">✕ Close</button></div>
-                ${(() => { const iv = invBy[plOpen.name.trim().toLowerCase()]; return iv && iv.items && iv.items.length ? `<div class="sa-label" style="margin:6px 0 3px">Investments (${escapeHtml(fmt(iv.total))}, seen ${escapeHtml(agoText(iv.seen))})</div>
+                ${(() => { const iv = invBy[plOpen.name.trim().toLowerCase()]; return iv && iv.items && iv.items.length ? plFold('investments', `Investments (${escapeHtml(fmt(iv.total))}, seen ${escapeHtml(agoText(iv.seen))})`, `
                     <table class="sa-unit-table" style="font-size:10px"><thead><tr><th>Name</th><th style="text-align:right">Shares</th><th style="text-align:right">Stake</th><th style="text-align:right">Value</th></tr></thead><tbody>${
-                    iv.items.map(x => `<tr><td>${escapeHtml(x.name)}</td><td class="sa-num">${x.shares != null ? escapeHtml(fmt(x.shares)) : '—'}</td><td class="sa-num">${x.stake != null ? x.stake + '%' : '—'}</td><td class="sa-num">${x.value == null ? '<span style="color:var(--muted)" title="Managed: only typed amounts count">not entered</span>' : escapeHtml(fmt(x.value)) + (x.managed ? ' <span style="color:var(--muted)" title="Managed: typed amount">(typed)</span>' : '')}</td></tr>`).join('')}</tbody></table>` : ''; })()}
+                    iv.items.map(x => `<tr><td>${escapeHtml(x.name)}</td><td class="sa-num">${x.shares != null ? escapeHtml(fmt(x.shares)) : '—'}</td><td class="sa-num">${x.stake != null ? x.stake + '%' : '—'}</td><td class="sa-num">${x.value == null ? '<span style="color:var(--muted)" title="Managed: only typed amounts count">not entered</span>' : escapeHtml(fmt(x.value)) + (x.managed ? ' <span style="color:var(--muted)" title="Managed: typed amount">(typed)</span>' : '')}</td></tr>`).join('')}</tbody></table>`, false) : ''; })()}
                 ${sp ? adminDetail(sp) : Object.keys(GM_getValue('sa-admin-resets', {}) || {}).some(n => n.toLowerCase() === plOpen.name.trim().toLowerCase())
                     ? `<div class="sa-empty"><b>${escapeHtml(plOpen.name)}</b>'s shared data was reset; waiting for their next share (within 15 minutes of their next scan).</div>`
                     : (() => {   // Since v3.14.2: only say they don't share when the Users list shows they aren't accepted
                         const k = plOpen.name.trim().toLowerCase(), acc = adminUsers ? groupsAccepted().some(g => String(g.name).trim().toLowerCase() === k) : null;
-                        return acc === false ? `<div class="sa-empty"><b>${escapeHtml(plOpen.name)}</b> doesn't share data with SharkBot (not registered, or not accepted yet).</div>${deleteBtn(plOpen.name)}`
-                            : `<div class="sa-empty">No shared data loaded for <b>${escapeHtml(plOpen.name)}</b>${adminDataAt ? ` (shared data loaded ${escapeHtml(agoText(new Date(adminDataAt).toISOString()))})` : ''}${acc ? '; they\'re accepted, so they may not have sent yet' : ''}. If they've shared since, click ↻ Refresh.</div>${deleteBtn(plOpen.name)}`; })()}</div>`;
+                        return acc === false ? `<div class="sa-empty"><b>${escapeHtml(plOpen.name)}</b> doesn't share data with SharkBot (not registered, or not accepted yet).</div>${plFold('actions', 'Admin actions', deleteBtn(plOpen.name), false, adminDeleteArmed === plOpen.name)}`
+                            : `<div class="sa-empty">No shared data loaded for <b>${escapeHtml(plOpen.name)}</b>${adminDataAt ? ` (shared data loaded ${escapeHtml(agoText(new Date(adminDataAt).toISOString()))})` : ''}${acc ? '; they\'re accepted, so they may not have sent yet' : ''}. If they've shared since, click ↻ Refresh.</div>${plFold('actions', 'Admin actions', deleteBtn(plOpen.name), false, adminDeleteArmed === plOpen.name)}`; })()}</div>`;
         };
+        // Since v3.25.5 the details open as a full-width row right under the clicked player (data-child keeps it with them when sorting)
+        function detailRow(where, name, cols) {
+            return isOpen(where, name) ? `<tr data-child="1" class="sa-pl-detail-row"><td colspan="${cols}" style="padding:0 0 6px; cursor:default">${detailBox(where)}</td></tr>` : '';
+        }
         const unseen = Object.keys(shared).filter(k => !seenNames.has(k));
         const unseenAss = unseen.reduce((t, k) => t + shared[k], 0);
         const assCells = (o) => `<td class="sa-num" data-sort="${o.sharing ? o.ass : ''}">${o.sharing ? escapeHtml(fmt(o.ass)) : '<span style="color:var(--dim)">—</span>'}</td>
@@ -6678,7 +6684,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                 unseen.length ? `<tr data-pin="1" data-agroup="__unseen" style="cursor:pointer" title="Players who share data but haven't been seen online, so their alliance isn't known. Click to ${allyOpen.__unseen ? 'hide' : 'show'} them">
                     <td></td><td style="color:var(--muted)">${allyOpen.__unseen ? '▾' : '▸'} not seen online</td><td class="sa-num">—</td><td class="sa-num">—</td>
                     <td class="sa-num">${escapeHtml(fmt(unseenAss))}</td><td class="sa-num">${unseen.length}</td><td></td></tr>${allyOpen.__unseen
-                    ? unseen.slice().sort().map(k => memberRow((adminData.find(sp => String(sp.player).trim().toLowerCase() === k) || {}).player || k, false, null, shared[k])).join('') : ''}` : ''}</tbody></table>${detailBox('alliances')}` : '<div class="sa-empty">No alliances seen yet.</div>'}
+                    ? unseen.slice().sort().map(k => memberRow((adminData.find(sp => String(sp.player).trim().toLowerCase() === k) || {}).player || k, false, null, shared[k])).join('') : ''}` : ''}</tbody></table>` : '<div class="sa-empty">No alliances seen yet.</div>'}
             <div class="sa-slot-meta" style="margin-top:4px">Click a shortened alliance ID to copy it and fill the form above.${my ? '' : ' Mark your alliance with ☆ in the Alliances table.'}</div>`;
         // Players tab (since v3.15.0): the same players with no alliance information
         const pview = document.getElementById('sa-plist-view');
@@ -6699,7 +6705,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             ${shown.length ? `<div style="overflow-x:auto"><table class="sa-unit-table" data-sort-id="admin-players"><thead><tr><th title="Online">●</th><th>Name</th><th>Last seen</th><th>First seen</th><th style="text-align:right" title="From their shared data (blank if they don't share)">Assassins</th><th style="text-align:right" title="Credits invested, if their investments are known">Invested</th><th style="text-align:right">NERDs</th><th style="text-align:right" title="✓ shares SharkBot data · temp = temp profile">SharkBot</th><th style="text-align:right">Version</th></tr></thead><tbody>
                 ${shown.map(p => `<tr data-pname="${escapeHtml(p.name)}" data-pwhere="players" title="Click to ${isOpen('players', p.name) ? 'hide' : 'show'} their shared data"
                     style="cursor:pointer${isOpen('players', p.name) ? '; background:var(--hover)' : ''}"><td data-sort="${onlineSet.has(p.id) ? 1 : 0}" style="color:${onlineSet.has(p.id) ? 'var(--pos)' : 'var(--dim)'}" title="${onlineSet.has(p.id) ? 'Online now' : 'Offline'}">●</td>
-                    <td title="User ID ${escapeHtml(p.id)}" data-sort="${escapeHtml((p.name || '').toLowerCase())}" style="white-space:nowrap">${escapeHtml(p.name)}${p.pvp ? ' <span title="PvP mode (from the highscore)" style="font-size:9px; padding:0 4px; border:1px solid var(--warn, #e0b050); border-radius:3px; color:var(--warn, #e0b050)">PvP</span>' : ''}${coin(p.name)}</td>
+                    <td title="User ID ${escapeHtml(p.id)}" data-sort="${escapeHtml((p.name || '').toLowerCase())}" style="white-space:nowrap"><span style="color:var(--muted)">${isOpen('players', p.name) ? '▾' : '▸'}</span> ${escapeHtml(p.name)}${p.pvp ? ' <span title="PvP mode (from the highscore)" style="font-size:9px; padding:0 4px; border:1px solid var(--warn, #e0b050); border-radius:3px; color:var(--warn, #e0b050)">PvP</span>' : ''}${coin(p.name)}</td>
                     <td data-sort="${onlineSet.has(p.id) ? Date.now() : ts(p.last)}">${onlineSet.has(p.id) ? 'online' : p.last ? agoText(p.last) : '<span style="color:var(--dim)">not seen</span>'}</td>
                     <td data-sort="${ts(p.first)}">${dt(p.first)}</td>
                     <td class="sa-num" data-sort="${assOf(p) != null ? assOf(p) : ''}">${assOf(p) != null ? escapeHtml(fmt(assOf(p))) : ''}</td>
@@ -6707,7 +6713,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                     <td class="sa-num" data-sort="${nerdsOf(p.name) ?? ''}">${nerdsOf(p.name) > 0 ? escapeHtml(fmt(nerdsOf(p.name))) : ''}</td>
                     <td class="sa-num" style="color:var(--muted)">${sharesSet.has(lowK(p.name)) ? '<span class="sa-diff-pos" title="Shares SharkBot data">✓</span>' : tempSet.has(lowK(p.name)) ? '<span title="Temp profile">temp</span>' : ''}</td>
                     <td class="sa-num" style="color:var(--muted)">${escapeHtml(verOf(p.name))}</td>
-</tr>`).join('')}</tbody></table></div>${detailBox('players')}`
+</tr>${detailRow('players', p.name, 9)}`).join('')}</tbody></table></div>`
                 : `<div class="sa-empty">${all.length ? 'No players match.' : 'No players seen yet.'}</div>`}
 `;
 
@@ -6730,6 +6736,8 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             }));
             root.querySelector('#sa-pl-close')?.addEventListener('click', () => { plOpen = null; renderPlayers(); });
             const plBox = root.querySelector('.sa-pl-detail');
+            // The details row spans the whole (sideways-scrolling) table: keep the box the width of what's visible, pinned left (since v3.25.5)
+            if (plBox) { const wrap = plBox.closest('table')?.parentElement; if (wrap && wrap.clientWidth) { plBox.style.width = (wrap.clientWidth - 2) + 'px'; plBox.style.boxSizing = 'border-box'; plBox.style.position = 'sticky'; plBox.style.left = '0'; } }
             if (plBox && plOpen) { const sp = (adminData || []).find(x => String(x.player).trim().toLowerCase() === plOpen.name.trim().toLowerCase()); if (sp) wireAdminDetail(plBox, sp); else wireDelete(plBox); }
             root.querySelectorAll('tr[data-agroup]').forEach(tr => tr.addEventListener('click', (e) => {
                 if (e.target.closest('.sa-ally-star, .sa-ally-edit, .sa-ally-id, input, button')) return;
@@ -7310,24 +7318,42 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         if (!rows.length && !(d.traps || []).length) return '';
         const total = rows.reduce((t, x) => t + (x.value || 0), 0);
         const gameOf = (n) => { const k = Object.keys(game).find(g => invMatch(g, n)); return k != null ? game[k] : null; };
-        return `<div class="sa-label" style="margin:8px 0 3px">Invested (as the player sees it)${own ? '' : ' <span style="color:var(--muted); text-transform:none" title="This player\'s SharkBot is older than v3.5.2">· worked out here</span>'}</div>
+        return plFold('invested', `Invested (as the player sees it)${own ? '' : ' <span style="color:var(--muted); text-transform:none" title="This player\'s SharkBot is older than v3.5.2">· worked out here</span>'}`, `
             <table class="sa-unit-table sa-stmt"><tbody>${rows.sort((a, b) => (b.value || 0) - (a.value || 0)).map(x => { const g = gameOf(x.name); return `<tr>
                 <td>${escapeHtml(x.name)} <span style="color:var(--muted); font-size:9px">${x.managed ? 'managed' : 'unmanaged'}</span></td>
                 <td class="sa-num">${x.managed && x.typed == null ? '<span style="color:var(--muted)">not entered</span>' : f(x.value || 0)}${g != null ? `<div style="font-size:9px; color:var(--dim)">game: ${f(g)}</div>` : ''}</td></tr>`; }).join('')}
-                <tr style="font-weight:600"><td>Total</td><td class="sa-num">${f(total)}</td></tr></tbody></table>`;
+                <tr style="font-weight:600"><td>Total</td><td class="sa-num">${f(total)}</td></tr></tbody></table>`, false);
     }
+    // Collapsible section in a player's details (since v3.25.5). Open / closed is remembered per section (sa-pl-folds);
+    // force opens it without changing what's remembered (an armed delete button stays visible)
+    function plFold(key, title, body, defOpen, force) {
+        if (!body) return '';
+        const st = GM_getValue('sa-pl-folds', {}) || {};
+        const open = force || (st[key] != null ? !!st[key] : defOpen);
+        return `<details class="sa-fold" data-fold="${key}"${force ? ' data-forced="1"' : ''}${open ? ' open' : ''} style="margin-top:8px"><summary class="sa-label">${title}</summary>${body}</details>`;
+    }
+    document.addEventListener('toggle', (e) => {
+        const d = e.target;
+        if (!d || !d.matches || !d.matches('details.sa-fold[data-fold]')) return;
+        if (d.dataset.forced) { if (d.open) return; delete d.dataset.forced; }
+        const st = GM_getValue('sa-pl-folds', {}) || {};
+        if (st[d.dataset.fold] === d.open) return;
+        st[d.dataset.fold] = d.open; GM_setValue('sa-pl-folds', st);
+    }, true);
     function adminDetail(p) {
         const d = p.data || {}, f = (v) => v == null ? '—' : escapeHtml(fmt(v));
         const t = (title, rows) => rows.length ? `<div class="sa-label" style="margin:8px 0 3px">${title}</div><table class="sa-unit-table sa-stmt"><tbody>${
             rows.map(r => `<tr><td>${escapeHtml(String(r[0]))}</td><td class="sa-num">${typeof r[1] === 'number' ? f(r[1]) : escapeHtml(String(r[1] ?? '—'))}</td></tr>`).join('')}</tbody></table>` : '';
+        const tb = (rows) => rows.length ? `<table class="sa-unit-table sa-stmt"><tbody>${
+            rows.map(r => `<tr><td>${escapeHtml(String(r[0]))}</td><td class="sa-num">${typeof r[1] === 'number' ? f(r[1]) : escapeHtml(String(r[1] ?? '—'))}</td></tr>`).join('')}</tbody></table>` : '';
         return `<div class="sa-label" style="margin:12px 0 4px; font-size:12px">${escapeHtml(p.player)}</div>
-            <button class="sa-btn sa-btn-danger" id="sa-adm-reset" style="margin:0 0 2px">Reset this player's data</button>
+            ${plFold('actions', 'Admin actions', `<button class="sa-btn sa-btn-danger" id="sa-adm-reset" style="margin:0 0 2px">Reset this player's data</button>
             <span class="sa-slot-meta" id="sa-adm-reset-msg" style="margin-left:6px"></span>
             <div class="sa-slot-meta">Deletes their row of shared data on your server. Their SharkBot isn't touched and sends fresh data within 15 minutes of their next scan.</div>
-            ${deleteBtn(p.player)}
-            ${t('Empire', [['Assassins (all planets)', d.assassins], ['Turn value (Value Optimizer)', d.turnValue],
-                ['Turns per minute', d.tpm != null ? d.tpm.toFixed(2) : null], ['Bank', d.bank], ['Galaxy fee %', d.galaxyFee], ['Brains', d.brains], ['Diamonds', d.diamonds], ['SSB', d.ssb]])}
-            ${t('Research', d.research || [])}
+            ${deleteBtn(p.player)}`, false, adminDeleteArmed === p.player)}
+            ${plFold('empire', 'Empire', tb([['Assassins (all planets)', d.assassins], ['Turn value (Value Optimizer)', d.turnValue],
+                ['Turns per minute', d.tpm != null ? d.tpm.toFixed(2) : null], ['Bank', d.bank], ['Galaxy fee %', d.galaxyFee], ['Brains', d.brains], ['Diamonds', d.diamonds], ['SSB', d.ssb]]), true)}
+            ${plFold('research', 'Research', tb(d.research || []), false)}
             ${(d.planets || []).map(pl => `<details style="margin-top:6px"><summary><b>${escapeHtml(pl.name)}</b></summary>
                 ${t('Units', pl.units || [])}${t('Facilities', (pl.facilities || []).map(x => [x[0], x[1]]))}
                 ${t('Inventory', pl.inventory || [])}${t('Nation', pl.nation || [])}
