@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SharkBot
 // @namespace    https://spacealpha.net/
-// @version      3.25.0
+// @version      3.25.3
 // @description  SharkBot for Space Alpha: saves your planets' units, facilities, inventory, research, bank and market prices, and calculates credit generation and Tick Generator upgrade costs.
 // @author       SharkBot
 // @match        https://spacealpha.net/*
@@ -44,7 +44,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     const PANEL_ID = 'sa-helper-panel';
     const SLOT_IDS = 'ABCDEFGHIJ'.split('');   // up to 10 planets
     // Version comes from the @version header so it's never out of sync
-    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.25.0';
+    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.25.3';
     // Two copies installed (usually an update pasted in as a new script): since v3.17.1 every copy writes its version on the
     // page before doing anything, so the second copy always sees the first, even if the first has no panel yet or crashed.
     // The second copy stops and shows a large banner at the top of the page naming the older copy to delete.
@@ -2440,7 +2440,9 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         const names = slotNames();
         // The name the game shows decides (since v3.18.1); matching text anywhere on the page is only a fallback
         const head = pageText().match(/Planet:\s*(.+?)\s+Temperature:/);
-        const read = (head && head[1].trim()) || readTopPlanet() || readPlanetName();
+        let read = (head && head[1].trim()) || readTopPlanet() || readPlanetName();
+        // "someplanet" is the game's placeholder while a page loads, never a real planet (since v3.25.2)
+        if (read && /^some\s*planet$/i.test(read.trim())) return { slot: null, name: null, loading: true };
         if (!read) {
             const byText = detectSlot();
             if (byText) return { slot: byText, name: names.find(n => n.id === byText).name };
@@ -2467,7 +2469,8 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         if (!el) return;
         const d = detectPlanet();
         el.textContent = d.slot && !d.assign ? `Open planet: ${slotLabel(d.slot)}`
-            : d.assign ? `Open planet: ${d.name} (will be saved to empty slot ${d.slot})`
+            : d.loading ? 'Open planet: the game is still loading (it shows "someplanet" until then)'
+            : d.assign ? `Open planet: ${d.name} (will be added as a new planet)`
             : d.full ? `Open planet: ${d.name}: all ${SLOT_IDS.length} planet slots are used`
             : 'Open planet: could not read the planet name';
     }
@@ -2610,7 +2613,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             barracks: lastScan.trainUnits.barracks ?? existing?.barracks ?? null,
         });
         renderSlots();
-        status.textContent = `Saved scan to Slot ${id}`;
+        status.textContent = `Saved scan to ${slotLabel(id)}`;
     }
 
     function renameSlot(id, name) {
@@ -2660,7 +2663,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                 </div>
                 <div class="sa-slot-body">
                     <div class="sa-slot-meta">
-                        Slot ${id} · saved: ${savedStr}
+                        ${escapeHtml(posLetter(id))} · saved: ${savedStr}
                         ${slot.totalPopulation != null
                             ? ` · pop ${fmt(slot.totalPopulation)}` : ''}${slot.barracks != null ? ` · Barracks lvl ${slot.barracks}` : ''}
                     </div>
@@ -2680,7 +2683,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                 const sid = btn.dataset.slot;
                 if (action === 'save') saveAll(sid);
                 else if (action === 'clear') {
-                    if (confirm(`Clear Slot ${sid}?`)) { clearSlot(sid); renderSlots(); }
+                    if (confirm(`Clear ${slotLabel(sid)}?`)) { clearSlot(sid); renderSlots(); }
                 }
                 else if (action === 'toggle') {
                     const cur = GM_getValue('sa-slot-collapsed-' + sid, false);
@@ -2825,6 +2828,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                     <div class="sa-slot-meta">
                         saved: ${savedStr}
                         ${slot.itemCount != null ? ` · ${slot.itemCount} items` : ''}
+                        ${(() => { const nat = slot.items.filter(x => x.source === 'Nation'); return nat.length ? `<br>From the Nation page's defense boxes (0.5% a level): ${nat.map(x => escapeHtml(cleanName(x.name)) + ' ' + escapeHtml(String(levelFrom(x).value))).join(', ')}` : ''; })()}
                         ${(() => { const have = new Set(slot.items.map(x => cleanName(x.name).toLowerCase()));
                             const miss = ['Education', 'Tactics'].filter(n => !have.has(n.toLowerCase()));
                             return miss.length ? `<br><span style="color:var(--warn, #e0b050)">Not seen yet: ${miss.join(', ')}. Open the part of the Research page that lists ${miss.length > 1 ? 'them' : 'it'} and Scan; saved research is kept, not replaced.</span>` : ''; })()}
@@ -2963,7 +2967,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             surplus: lastScan.facilitiesSurplus || existing?.surplus || null,   // Planet surplus (since v3.11.0)
         });
         renderFacilitiesSlots();
-        status.textContent = `Saved ${scanned.length} ${[...kinds].join(' + ')} item(s) to Slot ${id}`;
+        status.textContent = `Saved ${scanned.length} ${[...kinds].join(' + ')} item(s) to ${slotLabel(id)}`;
     }
 
     function renameFSlot(id, name) {
@@ -3009,7 +3013,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                 </div>
                 <div class="sa-slot-body">
                     <div class="sa-slot-meta">
-                        Slot ${id} · saved: ${savedStr}
+                        ${escapeHtml(posLetter(id))} · saved: ${savedStr}
                         ${slot.itemCount != null ? ` · ${slot.itemCount} items` : ''}
                     </div>
                     ${hasData
@@ -3029,7 +3033,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                 const sid = btn.dataset.slot;
                 if (action === 'fsave') saveAll(sid);
                 else if (action === 'fclear') {
-                    if (confirm(`Clear Facilities Slot ${sid}?`)) { clearFSlot(sid); renderFacilitiesSlots(); }
+                    if (confirm(`Clear facilities of ${slotLabel(sid)}?`)) { clearFSlot(sid); renderFacilitiesSlots(); }
                 }
                 else if (action === 'ftoggle') {
                     const cur = GM_getValue('sa-fslot-collapsed-' + sid, false);
@@ -3290,10 +3294,13 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     function tgLoad(slot) { return GM_getValue(tgKey(slot), { values: {}, sources: {} }); }
     function tgSave(slot, data) { GM_setValue(tgKey(slot), data); }
 
+    // The letter shown for a planet is its place in the planet order (since v3.25.2): first is A, and so on. Where its data is
+    // stored (the slot) doesn't change, so reordering never moves or mixes data.
+    function posLetter(id) { const i = planetIds().indexOf(id); return i >= 0 ? SLOT_IDS[i] : id; }
     function slotLabel(id) {
         const u = getSlot(id), f = getFSlot(id);
         const name = u?.planetName || f?.planetName || `Planet ${id}`;
-        return `${id} · ${name}`;
+        return `${posLetter(id)} · ${name}`;
     }
 
     // Bare name for matching: drops hotkey prefixes "(E)", levels "LVL: 19" / "(19)" / "Level 19",
@@ -4621,6 +4628,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                         return { credits: 8e8 * n + 1.2e9 * s25, mats: { Gold: n + 8 * s13, Iron: 3 * n + 10 * s15, Tritium: n + 10 * s13 } };
                     },
                     turnsGain: (E) => (tpm(E) - tpm(L0)) * 1440,
+                    tpmAt: (E) => tpm(E),   // turns per minute at a level (since v3.25.3, shown as start → end)
                     gain: (E) => (tpm(E) - tpm(L0)) * 1440 * perTurn,
                     hasGain: perTurn > 0,
                 });
@@ -4767,6 +4775,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         ];
     }
 
+    function tpmText(v) { return Number.isFinite(v) ? v.toLocaleString(undefined, { maximumFractionDigits: v < 100 ? 3 : 1 }) : '—'; }
     function planLines(plan, title) {
         const dd = (x) => Number.isFinite(x) ? (x < 10 ? x.toFixed(1) : Math.round(x).toLocaleString()) + ' d' : '—';
         const out = [title];
@@ -4774,6 +4783,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         plan.rows.forEach(r => {
             out.push(`${r.o.label}`);
             out.push(`  Lv ${r.o.L0.toLocaleString()} → ${r.E.toLocaleString()} (+${r.levels.toLocaleString()})`);
+            if (r.o.tpmAt) out.push(`  TPM ${tpmText(r.o.tpmAt(r.o.L0))} → ${tpmText(r.o.tpmAt(r.E))} (+${tpmText(r.o.tpmAt(r.E) - r.o.tpmAt(r.o.L0))})`);
             const extra = r.o.what === 'turns'
                 ? `+${fmt(r.o.turnsGain(r.E))} turns/day`
                 : `+${fmt(r.o.sizeGain(r.E))} ${r.o.what || 'size'}`;
@@ -8036,7 +8046,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         H.push(`<div class="sa-label" style="margin:10px 0 4px">Best split (most credits per day)</div>`);
         if (!plan.rows.length) H.push('<div class="sa-empty">Nothing affordable that adds income.</div>');
         else {
-            const gainOf = (r) => r.o.what === 'turns' ? `+${f(r.o.turnsGain(r.E))} turns/day`
+            const gainOf = (r) => r.o.what === 'turns' ? `+${f(r.o.turnsGain(r.E))} turns/day${r.o.tpmAt ? ` (TPM ${tpmText(r.o.tpmAt(r.o.L0))} → ${tpmText(r.o.tpmAt(r.E))})` : ''}`
                 : r.o.research ? `Lv ${r.o.L0} → ${r.E}${r.o.cum(r.E).energySSB ? ` · +${f(r.o.cum(r.E).energySSB)} SSB` : ''}`
                 : `+${f(r.o.sizeGain(r.E))} ${escapeHtml(r.o.what || 'size')}`;
             H.push(`<div style="overflow-x:auto"><table class="sa-unit-table sa-traps-table">
@@ -8813,7 +8823,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         const bal = readBankBalance();
         if (bal && bal.value != null) storeBank(bal);
         GM_setValue('sa-inv-' + slot, { savedAt: new Date().toISOString(), items: inv.items });
-        if (status) status.textContent = `Saved ${inv.items.length} resources to Slot ${slot}` +
+        if (status) status.textContent = `Saved ${inv.items.length} resources to ${slotLabel(slot)}` +
             (bal && bal.value != null ? ' + bank balance' :
              pageKey === 'bank' ? ' (bank balance not found on page)' : '');
         renderInventory();
@@ -10030,8 +10040,29 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             if (cur[type] && JSON.stringify(cur[type].rows) === sig) return;
             cur[type] = { rows, heading: head[0].trim(), at: new Date().toISOString() };
             GM_setValue(key, cur);
+            try { nationResearch(rows); } catch (e) {}
             try { renderNation(); } catch (e) {}
         });
+    }
+    // Research levels from the defense boxes (since v3.25.1): "Defense technology +9%" etc. are 0.5% a level, and replace the saved
+    // level (it's newer than the last Research page scan; a later Research scan replaces it again). Marked "from Nation" in Data → Research.
+    const NATION_TECH = [[/^defen[cs]e\s*tech/i, /^defen[cs]e\s*tech/i, 'Defense Technology'], [/^espionage\s*tech/i, /^espionage\s*tech/i, 'Espionage Technology'],
+                         [/^assassin\s*tech/i, /^assassin\s*tech/i, 'Assassin Technology']];
+    function nationResearch(rows) {
+        const slot = getRSlot('A') || { planetName: 'Research', savedAt: null, items: [] };
+        let changed = false;
+        rows.forEach(r => {
+            const t = NATION_TECH.find(x => x[0].test(r.label)); if (!t || r.pct == null) return;
+            const lv = Math.round(r.pct / 0.5 * 100) / 100;
+            const it = (slot.items || []).find(i => t[1].test(cleanName(i.name)));
+            if (it) {
+                if (levelFrom(it).value === lv) return;
+                if (/LVL:?\s*[\d,.]+/i.test(it.name)) it.name = it.name.replace(/(LVL:?\s*)[\d,.]+/i, '$1' + lv);
+                it.value = lv; it.valueDisplay = String(lv);
+                it.source = 'Nation'; it.sourceAt = new Date().toISOString(); changed = true;
+            } else { (slot.items = slot.items || []).push({ name: t[2], value: lv, valueDisplay: String(lv), source: 'Nation', sourceAt: new Date().toISOString() }); changed = true; }
+        });
+        if (changed) { setRSlot('A', slot); try { renderResearchSlots(); } catch (e) {} }
     }
     var defTipTimer = null;
     document.addEventListener('mouseover', (e) => {
@@ -10288,7 +10319,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         const manual = GM_getValue('sa-planet-manual', null), game = GM_getValue('sa-planet-order', null);
         el.innerHTML = ids.map((id, i) => `
             <div style="display:flex; gap:4px; align-items:center; margin-bottom:4px">
-                <span style="color:var(--dim); font-size:10px; width:12px">${id}</span>
+                <span style="color:var(--dim); font-size:10px; width:12px">${posLetter(id)}</span>
                 <input class="sa-slot-name" data-planet="${id}" value="${escapeHtml(shortName(id))}" style="flex:1" />
                 <button class="sa-btn" data-move="${id}" data-dir="-1" style="margin:0; padding:2px 6px" title="Move up" ${i ? '' : 'disabled'}>▲</button>
                 <button class="sa-btn" data-move="${id}" data-dir="1" style="margin:0; padding:2px 6px" title="Move down" ${i < ids.length - 1 ? '' : 'disabled'}>▼</button>
