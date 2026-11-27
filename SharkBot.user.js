@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SharkBot
 // @namespace    https://spacealpha.net/
-// @version      3.21.1
+// @version      3.21.2
 // @description  SharkBot for Space Alpha: saves your planets' units, facilities, inventory, research, bank and market prices, and calculates credit generation and Tick Generator upgrade costs.
 // @author       SharkBot
 // @match        https://spacealpha.net/*
@@ -41,7 +41,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     const PANEL_ID = 'sa-helper-panel';
     const SLOT_IDS = 'ABCDEFGHIJ'.split('');   // up to 10 planets
     // Version comes from the @version header so it's never out of sync
-    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.21.1';
+    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.21.2';
     // Two copies installed (usually an update pasted in as a new script): since v3.17.1 every copy writes its version on the
     // page before doing anything, so the second copy always sees the first, even if the first has no panel yet or crashed.
     // The second copy stops and shows a large banner at the top of the page naming the older copy to delete.
@@ -2220,29 +2220,65 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         return ids.sort((a, b) => rank(a) - rank(b));
     }
     // Read the game's planet order from the planet picker (a list on the page, or one opened in a pop-up)
+    // The game's planet picker (since v3.21.2): opening the ▾ under the planet box lists every OTHER planet, in the game's
+    // order. Each opening is kept per open planet (sa-planet-obs = { planet: { cur, list, at } }) and the order is worked out
+    // from all of them. The open planet's own place isn't shown, so it's never assumed (the second planet can look like the
+    // main one): a planet is placed once its name has appeared in the list opened on another planet, until then it goes last.
+    function readPickerList() {
+        const box = topPlanetBox(); if (!box) return null;
+        const cur = readTopPlanet(); if (!cur) return null;
+        const head = box.rows && box.rows[0];
+        const seen = new Set(), list = [];
+        Array.from(box.querySelectorAll('*')).forEach(el => {
+            if (el.closest('#' + PANEL_ID) || (head && head.contains(el)) || el.children.length || !isVisible(el)) return;
+            const t = topName(el.textContent);
+            if (!t || !nameLike(t) || t.toLowerCase() === cur.toLowerCase() || seen.has(t.toLowerCase())) return;
+            seen.add(t.toLowerCase()); list.push(t);
+        });
+        return list.length && list.length <= 30 ? { cur, list } : null;
+    }
+    function planetOrderFrom(obs) {
+        const recs = Object.values(obs || {}).sort((a, b) => new Date(b.at) - new Date(a.at));   // newest first wins a conflict
+        for (let use = recs.length; use > 0; use--) {
+            const part = recs.slice(0, use), nodes = [], first = {}, edges = {}, indeg = {};
+            part.forEach(r => r.list.forEach((n, k) => { const key = n.toLowerCase(); if (!(key in first)) { first[key] = nodes.length * 100 + k; nodes.push(n); edges[key] = new Set(); indeg[key] = 0; } }));
+            part.forEach(r => r.list.forEach((n, k) => { if (!k) return; const a = r.list[k - 1].toLowerCase(), b = n.toLowerCase(); if (!edges[a].has(b)) { edges[a].add(b); indeg[b]++; } }));
+            const out = [], ready = nodes.filter(n => !indeg[n.toLowerCase()]);
+            while (ready.length) {
+                ready.sort((x, y) => first[x.toLowerCase()] - first[y.toLowerCase()]);
+                const n = ready.shift(); out.push(n);
+                edges[n.toLowerCase()].forEach(m => { if (!--indeg[m]) ready.push(nodes.find(z => z.toLowerCase() === m)); });
+            }
+            if (out.length === nodes.length) {
+                // Two neighbours are only known to be in this order if one list shows them both (one opened on a third planet)
+                const both = (a, b) => part.some(r => { const l = r.list.map(x => x.toLowerCase()); return l.includes(a.toLowerCase()) && l.includes(b.toLowerCase()); });
+                out.unsure = []; for (let k = 1; k < out.length; k++) if (!both(out[k - 1], out[k])) out.unsure.push([out[k - 1], out[k]]);
+                return out;
+            }
+        }
+        return [];
+    }
     function readGameOrder() {
         if (sbView) return null;
         let names = null;
         try {
             const pick = topPlanetPicker();
             const sel = pick && pick.querySelector('select');
-            if (sel && sel.options.length) names = Array.from(sel.options).map(o => topName(o.textContent)).filter(nameLike);
+            if (sel && sel.options.length) names = Array.from(sel.options).map(o => topName(o.textContent)).filter(nameLike);   // a full list, if the game ever uses one
             if (!names || !names.length) {
-                // An opened picker list (e.g. a pop-up under the top bar): every short line in it, if the open planet is one of them
-                const cur = (readTopPlanet() || '').toLowerCase();
-                const lists = Array.from(document.querySelectorAll('.cdk-overlay-container [role="listbox"], .cdk-overlay-container mat-option, ' +
-                    '#upperbarContent ul, #upperbarContent [role="listbox"]'));
-                for (const l of lists) {
-                    const box = l.matches('mat-option') ? l.parentElement : l;
-                    const items = Array.from(box.querySelectorAll('[role="option"], mat-option, li')).map(o => topName(o.textContent)).filter(nameLike);
-                    if (items.length >= 2 && items.length <= 30 && cur && items.some(t => t.toLowerCase() === cur)) { names = items; break; }
+                const got = readPickerList();
+                const obs = GM_getValue('sa-planet-obs', null) || {};
+                if (got) {
+                    const k = got.cur.toLowerCase(), prev = obs[k];
+                    if (!prev || JSON.stringify(prev.list) !== JSON.stringify(got.list)) { obs[k] = { cur: got.cur, list: got.list, at: new Date().toISOString() }; GM_setValue('sa-planet-obs', obs); }
                 }
+                names = planetOrderFrom(obs);
             }
         } catch (e) {}
         if (!names || !names.length) return null;
         const old = GM_getValue('sa-planet-order', null);
-        if (!old || JSON.stringify(old.names) !== JSON.stringify(names)) {
-            GM_setValue('sa-planet-order', { names, savedAt: new Date().toISOString() });
+        if (!old || JSON.stringify(old.names) !== JSON.stringify(Array.from(names)) || JSON.stringify(old.unsure || []) !== JSON.stringify(names.unsure || [])) {
+            GM_setValue('sa-planet-order', { names: Array.from(names), unsure: names.unsure || [], savedAt: new Date().toISOString() });
             if (typeof refreshPlanetLists === 'function') try { refreshPlanetLists(); } catch (e) {}
         }
         return names;
@@ -10089,7 +10125,12 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             </div>`).join('') +
             `<div class="sa-slot-meta">${ids.length} of ${SLOT_IDS.length} planet slots used · ${Array.isArray(manual) && manual.length
                 ? `order set by hand <button class="sa-btn" id="sa-planet-gameorder" style="margin:0 0 0 4px; padding:1px 6px">Use the game's order</button>`
-                : game ? `in the game's order (read ${escapeHtml(agoText(game.savedAt))})` : 'in scan order until the game\'s planet list is read'}</div>`;
+                : game ? `in the game's order (read ${escapeHtml(agoText(game.savedAt))})${(() => { const known = (game.names || []).map(n => n.toLowerCase());
+                    const miss = ids.filter(id => !known.includes(planetNameOf(id).toLowerCase())).map(shortName);
+                    const un = (game.unsure || []).map(p => `${p[0]} / ${p[1]}`);
+                    return (miss.length ? `. Place not known yet for ${escapeHtml(miss.join(', '))} (shown last): switch to another planet and open the game's planet list (▾ under the planet picture) once` : '') +
+                        (un.length ? `. Not sure which comes first: ${escapeHtml(un.join(', '))}: open the planet list on a different planet to check, or use ▲ / ▼` : ''); })()}`
+                : 'in scan order until you open the game\'s planet list (▾ under the planet picture)'}</div>`;
         el.querySelectorAll('[data-move]').forEach(b => b.addEventListener('click', () => {
             const order = planetIds(), i = order.indexOf(b.dataset.move), j = i + Number(b.dataset.dir);
             if (i < 0 || j < 0 || j >= order.length) return;
@@ -10127,7 +10168,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                        // Column sorts chosen in tables (since v2.25.0)
                        'sa-sort',
                        // Net Worth history, including rows imported from a tracker (since v3.19.0)
-                       'sa-nw-history', 'sa-planet-manual'];
+                       'sa-nw-history', 'sa-planet-manual', 'sa-planet-obs'];
     const KEEP_PREFIXES = ['sa-admin', 'sa-adm-', 'sa-players'];
     function resetAllData() {
         if (sbView) return;
