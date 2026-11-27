@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SharkBot
 // @namespace    https://spacealpha.net/
-// @version      3.12.0
+// @version      3.14.0
 // @description  SharkBot for Space Alpha: saves your planets' units, facilities, inventory, research, bank and market prices, and calculates credit generation and Tick Generator upgrade costs.
 // @author       SharkBot
 // @match        https://spacealpha.net/*
@@ -41,7 +41,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     const PANEL_ID = 'sa-helper-panel';
     const SLOT_IDS = 'ABCDEFGHIJ'.split('');   // up to 10 planets
     // Version comes from the @version header so it's never out of sync
-    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.12.0';
+    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.14.0';
     // Another copy of SharkBot already put its panel on the page: warn and stop,
     // so two installed copies are obvious instead of silently showing the old one.
     const existing = document.getElementById(PANEL_ID);
@@ -74,8 +74,13 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             // Your own bank and the Central bank are two tabs on /bank: only read the one that's open
             const view = bankView();
             let bal = null, fee = null, cb = null, pb = null, traps = null;
-            let nerds = null;
-            if (view === 'nerds') {
+            let nerds = null, printer = null;
+            if (view === 'print') {
+                printer = readPrintLevel();
+                if (printer && printer.value != null) GM_setValue('sa-print-level', { value: printer.value, savedAt: new Date().toISOString() });
+                bal = readBankBalance();
+                if (bal && bal.value != null) storeBank(bal);
+            } else if (view === 'nerds') {
                 nerds = readTraps();
                 if (nerds.items.length) storeNerds(nerds);
                 bal = readBankBalance();
@@ -96,7 +101,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                 pb = readCentralBank();   // same "label: value" reader, for your own bank's lines
                 if (pb && pb.fields.length) GM_setValue('sa-player-bank', { savedAt: new Date().toISOString(), fields: pb.fields });
             }
-            return Object.assign(scanGeneric(), { bankView: view, bank: bal, playerBank: pb, galaxyFee: fee, centralBank: cb, traps, nerds });
+            return Object.assign(scanGeneric(), { bankView: view, bank: bal, playerBank: pb, galaxyFee: fee, centralBank: cb, traps, nerds, printer });
         } },
         'market':         { label: 'Market',        scan: scanMarket },
         'highscore':      { label: 'Highscore',     scan: scanGeneric },
@@ -496,6 +501,11 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             <div class="sa-tab" data-tab="energy">Energy</div>
             <div class="sa-tab" data-tab="productivity">Productivity</div>
             <div class="sa-tab-break" data-group="calculators"></div>
+            <div class="sa-tab-label sa-tier" data-group="calculators" title="Tier I: one formula">I</div>
+            <div class="sa-tab" data-tab="factorycalc">Factory</div>
+            <div class="sa-tab" data-tab="printer">Money Printer</div>
+            <div class="sa-tab" data-tab="invcreate" title="Interest of an investment you create">Invest Create</div>
+            <div class="sa-tab-break" data-group="calculators"></div>
             <div class="sa-tab-label sa-tier" data-group="calculators" title="Tier II: income models built from many saved values">II</div>
             <div class="sa-tab" data-tab="creditgen">Credit Gen</div>
             <div class="sa-tab" data-tab="resgen">Resource Gen</div>
@@ -505,6 +515,10 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             <div class="sa-tab" data-tab="optimizer">Best Spend</div>
             <div class="sa-tab" data-tab="valueopt">Value Optimizer</div>
             <div class="sa-tab" data-tab="trapcalc" title="Total invested and profit per turn and per day for every investment">TRAPs</div>
+            <div class="sa-tab-break" data-group="calculators"></div>
+            <div class="sa-tab-label sa-tier" data-group="calculators" title="Military: battle simulators">⚔</div>
+            <div class="sa-tab" data-tab="attack">Attack</div>
+            <div class="sa-tab" data-tab="assassin">Assassination</div>
             <div class="sa-tab" data-tab="stbalance">Balance</div>
             <div class="sa-tab" data-tab="stincome">Income</div>
             <div class="sa-tab" data-tab="stcash">Cash Flow</div>
@@ -739,6 +753,46 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                 </div>
                 <div class="sa-section"><div class="sa-label">Result</div><div class="sa-recommend" id="sa-en-result">—</div></div>
             </div>
+            <div class="sa-pane" data-pane="factorycalc">
+                <div class="sa-section">
+                    <div class="sa-label">Factory production</div>
+                    <div style="font-size:10px; color:var(--muted)">Production per tick = (industrial workers^0.3 + factory workers^0.35 + engineers^0.4) × Factory^0.62 × (1 + Giga Factory^1.14 ÷ 100) × (1 + 2% × Automation). ● filled from saved data, ○ typed (clear a box to go back).</div>
+                </div>
+                <div class="sa-section"><div class="sa-label">Planet</div><select class="sa-select sa-xc-slot" data-xc="factorycalc" style="margin-bottom:6px"></select><div class="sa-form" id="sa-xc-factorycalc-form"></div></div>
+                <div class="sa-section"><div class="sa-label">Result</div><div class="sa-recommend" id="sa-xc-factorycalc-result" style="white-space:normal">—</div></div>
+            </div>
+            <div class="sa-pane" data-pane="printer">
+                <div class="sa-section">
+                    <div class="sa-label">Money Printer upgrade cost</div>
+                    <div style="font-size:10px; color:var(--muted)">Each level L costs 1,000,000 × (L⁴ + 1.11^L) credits, 1 + (L − 2)^1.2 gold and 1 + 10 × (L − 10)^1.5 iron. Your level is read from Bank → Print. ● filled from saved data, ○ typed (clear a box to go back).</div>
+                </div>
+                <div class="sa-section"><div class="sa-form" id="sa-xc-printer-form"></div></div>
+                <div class="sa-section"><div class="sa-label">Result</div><div class="sa-recommend" id="sa-xc-printer-result" style="white-space:normal">—</div></div>
+            </div>
+            <div class="sa-pane" data-pane="invcreate">
+                <div class="sa-section">
+                    <div class="sa-label">Invest Create: interest of a new investment</div>
+                    <div style="font-size:10px; color:var(--muted)">Interest per 30 minutes = (credits ÷ volatility²)^0.06 × (turns ÷ volatility²)^0.06 ÷ 88,000 × (1 + card). ● filled from saved data, ○ typed (clear a box to go back).</div>
+                </div>
+                <div class="sa-section"><div class="sa-form" id="sa-xc-invcreate-form"></div></div>
+                <div class="sa-section"><div class="sa-label">Result</div><div class="sa-recommend" id="sa-xc-invcreate-result" style="white-space:normal">—</div></div>
+            </div>
+            <div class="sa-pane" data-pane="attack">
+                <div class="sa-section">
+                    <div class="sa-label">Attack simulator</div>
+                    <div style="font-size:10px; color:var(--muted)">Strength = soldiers × 10 + corporals × 20 + majors × 60 + champions × 100 + invaders × 200,000 + fighters × 1,000,000 + carriers × 1,200,000, × (1 + tech × 0.5%) × (1 + card). Miner ships don't count for defense. Defender numbers are typed. ● filled from saved data, ○ typed (clear a box to go back).</div>
+                </div>
+                <div class="sa-section"><div class="sa-label">Planet</div><select class="sa-select sa-xc-slot" data-xc="attack" style="margin-bottom:6px"></select><div class="sa-xc-roll" style="margin-bottom:6px"></div><div class="sa-form" id="sa-xc-attack-form"></div></div>
+                <div class="sa-section"><div class="sa-label">Result</div><div class="sa-recommend" id="sa-xc-attack-result" style="white-space:normal">—</div></div>
+            </div>
+            <div class="sa-pane" data-pane="assassin">
+                <div class="sa-section">
+                    <div class="sa-label">Assassination simulator</div>
+                    <div style="font-size:10px; color:var(--muted)">Strength: attacker = assassins × 20; defender = assassins × 20 + security officers × 15; each × (1 + tech × 0.5%) × (1 + card). Defender numbers are typed. ● filled from saved data, ○ typed (clear a box to go back).</div>
+                </div>
+                <div class="sa-section"><div class="sa-label">Planet</div><select class="sa-select sa-xc-slot" data-xc="assassin" style="margin-bottom:6px"></select><div class="sa-xc-roll" style="margin-bottom:6px"></div><div class="sa-form" id="sa-xc-assassin-form"></div></div>
+                <div class="sa-section"><div class="sa-label">Result</div><div class="sa-recommend" id="sa-xc-assassin-result" style="white-space:normal">—</div></div>
+            </div>
             <div class="sa-pane" data-pane="storage">
                 <div class="sa-section">
                     <div class="sa-label">Turn storage</div>
@@ -783,6 +837,9 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                 <div class="sa-section">
                     <div class="sa-form"><label>Turns to spend per day</label>
                         <input id="sa-vo-turns" placeholder="blank = Tick Generator turns/day" /></div>
+                    <div class="sa-label" style="margin-top:6px">Methods</div>
+                    <div id="sa-vo-methods" style="display:flex; gap:12px; flex-wrap:wrap"></div>
+                    <label class="sa-check" style="margin-top:4px" title="Use the plan that stores turns made on non-print days in Turn Storage and prints them on print days, in the Income statement and turn value"><input type="checkbox" id="sa-vo-usesave" /><span>Use the saving plan (Turn Storage)</span></label>
                 </div>
                 <div class="sa-section">
                     <div class="sa-label">Result</div>
@@ -798,6 +855,10 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                     </div>
                 </div>
                 <div class="sa-section sa-bd-bar"></div>
+                <div class="sa-section">
+                    <div class="sa-form"><label title="Used to compare plans with putting the same credits into the Income Facility. Each level is taken to cost the same (an estimate until its cost formula is known)">Income Facility: cost of one level</label>
+                        <input id="sa-if-cost" placeholder="credits, e.g. 5 Sx" /><span></span></div>
+                </div>
                 <div class="sa-section">
                     <div class="sa-label">Credit value of brains, diamonds &amp; SSB</div>
                     <div class="sa-form" id="sa-bd-form"></div>
@@ -1262,7 +1323,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         welcome:     ['welcome'],
         general:     ['debug', 'settings'],
         data:        ['research', 'market', 'bank', 'cards', 'units', 'facilities', 'inventory', 'nation'],
-        calculators: ['storage', 'area', 'turns', 'training', 'rescalc', 'energy', 'productivity', 'creditgen', 'resgen', 'unitvalue', 'optimizer', 'valueopt', 'trapcalc'],
+        calculators: ['storage', 'area', 'turns', 'training', 'rescalc', 'energy', 'productivity', 'creditgen', 'resgen', 'unitvalue', 'optimizer', 'valueopt', 'trapcalc', 'factorycalc', 'printer', 'invcreate', 'attack', 'assassin'],
         statements:  ['stbalance', 'stincome', 'stcash', 'stholder'],
         admin:       ['admin', 'adminusers', 'players', 'viewer', 'fleets'],
     };
@@ -1293,6 +1354,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             p.classList.toggle('active', p.dataset.pane === name));
         GM_setValue('sa-active-tab', name);
         GM_setValue('sa-last-sub-' + group, name);
+        if (['factorycalc', 'printer', 'invcreate', 'attack', 'assassin'].includes(name) && typeof sbReady !== 'undefined' && sbReady) { try { renderXc(name); } catch (e) {} }
         if (name === "valueopt" && typeof sbReady !== "undefined" && sbReady) { try { renderValueOpt(); } catch (e) {} }
         if (name === 'trapcalc' && typeof sbReady !== 'undefined' && sbReady) { try { renderTrapCalc(); fetchInvestments(false); fetchHolders(false); } catch (e) {} }
         if (group === 'statements' && typeof STMT_TABS !== 'undefined' && STMT_TABS) { try { renderStatements(); } catch (e) {} }
@@ -4212,6 +4274,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         if (!sbReady) return;
         if (!keepForm) renderBdBars();
         updateTurnGenResult(); updateTurns(); updateResGen(); updateArea(); renderOptimizer(); renderValueOpt(); renderTraining(); renderTurnStorage(); renderResearchCalc(); renderEnergy(); renderProductivity(); renderUnitValue();
+        try { renderXcAll(); } catch (e) {}
     }
 
     // ---------- Best spend: what all your capital could buy ----------
@@ -4351,6 +4414,54 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         return opts;
     }
 
+    // ---------- Instant vs future cost (since v3.13.0) ----------
+    // Instant = credits and materials spent now. Future = turns to train the workers that fill new room, paid over the
+    // days it takes (all your turns go to training), each turn worth the Value Optimizer turn. Income grows as workers are
+    // trained, so break-even follows that ramp instead of total cost ÷ full income.
+    function trainTpd() {
+        try { const vp = voPlan(); if (vp && !vp.error && vp.turns > 0) return vp.turns; } catch (e) {}
+        return empireTpd() || null;
+    }
+    // Days to break even: income G/day once full after D days (rising evenly until then), instant cost I, future cost TV
+    function rampBreakeven(I, TV, G, D) {
+        if (!(G > 0)) return Infinity;
+        if (!(D > 0)) return (I + TV) / G;
+        if (G * D / 2 >= I + TV) {   // inside the ramp: G t²/(2D) − (TV/D) t − I = 0
+            const a = G / (2 * D), b = -TV / D, c = -I;
+            return (-b + Math.sqrt(b * b - 4 * a * c)) / (2 * a);
+        }
+        return D + (I + TV - G * D / 2) / G;
+    }
+    // Profit after t days (income minus instant and the training turns spent so far)
+    function rampProfit(I, TV, G, D, t) {
+        if (!(D > 0)) return G * t - I - TV;
+        if (t <= D) return G * t * t / (2 * D) - TV * t / D - I;
+        return G * D / 2 - TV - I + G * (t - D);
+    }
+    // Income Facility levels for the same credits (cost per level typed in Best Spend; an estimate until its formula is known)
+    function incomeFacCompare(slot, spend) {
+        const cost = parseNumber(GM_getValue('sa-if-cost', ''));
+        const fac = (getFSlot(slot)?.items || []).find(i => i.kind !== 'area' && /income\s*facilit/i.test(cleanName(i.name)) && i.value != null);
+        let cg = null; try { cg = cgModel(slot); } catch (e) {}
+        if (!fac || !cg) return { error: !fac ? 'Income Facility level not saved (scan Facilities)' : 'fill Credit Gen first' };
+        if (!(cost > 0)) return { error: 'type the cost of one Income Facility level in Best Spend to compare' };
+        const L0 = Math.round(levelFrom(fac).value), n = Math.floor(spend / cost);
+        const f = (L) => 0.4 * Math.pow(L, 1.17) / 100;
+        const gain = cg.perDay * ((1 + f(L0 + n)) / (1 + f(L0)) - 1);
+        return { L0, n, cost, spent: n * cost, gain, off: facIsOff(fac) || (fac.slider === 0) };
+    }
+    function incomeFacLines(slot, spend, planGain, planProfit30) {
+        const c = incomeFacCompare(slot, spend);
+        const out = ['', 'COMPARED WITH INCOME FACILITY (same credits)'];
+        if (c.error) return [...out, `  ${c.error}`];
+        const sg = (v) => (v >= 0 ? '+' : '−') + fmt(Math.abs(v));
+        out.push(`  Lv ${c.L0.toLocaleString()} → ${(c.L0 + c.n).toLocaleString()} (+${c.n.toLocaleString()}) · spend ${fmt(c.spent)} (estimate: ${fmt(c.cost)} a level)`);
+        out.push(`  +${fmt(c.gain)} credits/day from day 0 · pays back ${c.gain > 0 ? (c.spent / c.gain).toFixed(1) + ' d' : '—'}`);
+        out.push(`  Difference (plan − Income Facility): ${sg(planGain - c.gain)}/day once full · ${sg(planProfit30 - (c.gain * 30 - c.spent))} after 30 days`);
+        if (c.off) out.push('  Its slider is at 0% in the game: these levels give nothing until you turn it on (shown as if on).');
+        return out;
+    }
+
     // Split the capital between options, a slice at a time, always buying where the next
     // slice earns the most credits per day per credit. Materials you own are valued at
     // their sell price (you give up selling them); materials you lack at the buy price.
@@ -4383,7 +4494,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             }
             return b.credits - a.credits + dm;
         };
-        const N = 120;
+        const N = 120, tpdT = trainTpd();
         let pool = 0, spent = 0;
         const step = (budget) => {
             let best = null;
@@ -4396,7 +4507,10 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                 while (hi - lo > 1) { const mid = Math.floor((lo + hi) / 2); if (costTo(s, mid) <= budget) lo = mid; else hi = mid; }
                 const c = costTo(s, lo), g = s.o.hasGain ? s.o.gain(lo) - s.o.gain(s.E) : lo - s.E;
                 const tc = s.o.trainCost ? s.o.trainCost(lo) - s.o.trainCost(s.E) : 0;   // training turns, in credits
-                if (g > 0 && c > 0 && (!best || g / (c + tc) > best.r)) best = { s, E: lo, c, r: g / (c + tc) };
+                // The ramp (since v3.13.0): income arrives as workers are trained, about half a training stretch later
+                const dt = s.o.trainTurns && tpdT ? (s.o.trainTurns(lo) - s.o.trainTurns(s.E)) / tpdT : 0;
+                const r = g / (c + tc + g * dt / 2);
+                if (g > 0 && c > 0 && (!best || r > best.r)) best = { s, E: lo, c, r };
             });
             if (!best) return 0;
             const s = best.s, a = s.o.cum(s.E), b = s.o.cum(best.E);
@@ -4414,8 +4528,11 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             mats: s.o.cum(s.E).mats,
             tTurns: s.o.trainTurns ? s.o.trainTurns(s.E) : 0, tCost: s.o.trainCost ? s.o.trainCost(s.E) : 0,
         }));
-        return { rows, spent, left: capital - spent, gain: rows.reduce((t, r) => t + r.gain, 0), used,
-                 tTurns: rows.reduce((t, r) => t + r.tTurns, 0), tCost: rows.reduce((t, r) => t + r.tCost, 0) };
+        rows.forEach(r => { r.tDays = tpdT && r.tTurns > 0 ? r.tTurns / tpdT : 0; r.be = rampBreakeven(r.spent, r.tCost, r.gain, r.tDays); r.p30 = rampProfit(r.spent, r.tCost, r.gain, r.tDays, 30); });
+        const tTurns = rows.reduce((t, r) => t + r.tTurns, 0), tCost = rows.reduce((t, r) => t + r.tCost, 0), gain = rows.reduce((t, r) => t + r.gain, 0);
+        const tDays = tpdT && tTurns > 0 ? tTurns / tpdT : 0;   // training happens one after another
+        return { rows, spent, left: capital - spent, gain, used, tTurns, tCost, tDays, tpdT,
+                 be: rampBreakeven(spent, tCost, gain, tDays), p30: rampProfit(spent, tCost, gain, tDays, 30) };
     }
 
     function capitalLines(cap) {
@@ -4436,7 +4553,6 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     }
 
     function planLines(plan, title) {
-        const days = (r) => r.gain > 0 ? (r.spent + (r.tCost || 0)) / r.gain : Infinity;
         const dd = (x) => Number.isFinite(x) ? (x < 10 ? x.toFixed(1) : Math.round(x).toLocaleString()) + ' d' : '—';
         const out = [title];
         if (!plan.rows.length) { out.push('Nothing affordable that adds income.'); return out; }
@@ -4446,12 +4562,13 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             const extra = r.o.what === 'turns'
                 ? `+${fmt(r.o.turnsGain(r.E))} turns/day`
                 : `+${fmt(r.o.sizeGain(r.E))} ${r.o.what || 'size'}`;
-            out.push(`  Spend ${fmt(r.spent)} · ${extra}`);
-            if (r.tTurns > 0) out.push(`  Training: ${fmt(r.tTurns)} turns${r.tCost > 0 ? ` (worth ${fmt(r.tCost)})` : ''}`);
-            if (r.o.hasGain) out.push(`  +${fmt(r.gain)} credits/day · pays back ${dd(days(r))}`);
+            out.push(`  Instant: spend ${fmt(r.spent)} now · ${extra}`);
+            if (r.tTurns > 0) out.push(`  Future: train ${fmt(r.tTurns)} turns${r.tDays ? ` = ${dd(r.tDays)} of your turns` : ''}${r.tCost > 0 ? ` (worth ${fmt(r.tCost)})` : ''}`,
+                `  Total cost: ${fmt(r.spent + (r.tCost || 0))}`);
+            if (r.o.hasGain) out.push(`  +${fmt(r.gain)} credits/day${r.tDays ? ` once trained (full after ${dd(r.tDays)})` : ''} · breaks even after ${dd(r.be)}`);
         });
-        if (plan.rows.length > 1) out.push(`Total: spend ${fmt(plan.spent)}` + (plan.tTurns > 0 ? ` + ${fmt(plan.tTurns)} training turns${plan.tCost > 0 ? ` (worth ${fmt(plan.tCost)})` : ''}` : ''),
-            `  +${fmt(plan.gain)} credits/day` + (plan.gain > 0 ? ` · pays back ${dd((plan.spent + plan.tCost) / plan.gain)}` : ''));
+        if (plan.rows.length > 1) out.push(`Total: instant ${fmt(plan.spent)}` + (plan.tTurns > 0 ? ` · future ${fmt(plan.tTurns)} training turns${plan.tDays ? ` (${dd(plan.tDays)})` : ''}${plan.tCost > 0 ? `, worth ${fmt(plan.tCost)}` : ''}` : ''),
+            `  +${fmt(plan.gain)} credits/day` + (plan.gain > 0 ? ` · breaks even after ${dd(plan.be)}` : ''));
         if (plan.left > 0) out.push(`Left over: ${fmt(plan.left)}`);
         return out;
     }
@@ -4466,7 +4583,8 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         if (!opts.length) return [...out, title, ...(notes.length ? notes : [emptyMsg || 'No saved data to plan with yet.'])];
         // One option (Turn Gen, Area): buy as many levels as the capital allows
         const plan = planSpend(opts, cap.available, opts.length === 1);
-        return [...out, ...planLines(plan, title), ...(notes.length ? ['', ...notes] : []),
+        const ifc = use.cg && plan.rows.length && plan.gain > 0 && !plan.rows.some(r => /income\s*facilit/i.test(r.o.label)) ? incomeFacLines(slot, plan.spent, plan.gain, plan.p30) : [];
+        return [...out, ...planLines(plan, title), ...ifc, ...(notes.length ? ['', ...notes] : []),
             '', 'Each calculator assumes all capital goes here. Best Spend splits it.'];
     }
 
@@ -4684,8 +4802,19 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         out.textContent = lines.join('\n');
     }
     // The Value Optimizer plan, shared with the Income statement
+    // Value Optimizer methods on or off (since v3.13.0), for every planet
+    const VO_KINDS = [['print', 'Print credits'], ['res', 'Make resources'], ['slaves', 'Sell slaves'], ['profs', 'Sell professors']];
+    function voMethods() { return Object.assign({ print: true, res: true, slaves: true, profs: true }, GM_getValue('sa-vo-methods', {}) || {}); }
+    // Most turns you can hold (Turn Storage calculator: level × 10 + brains × 100 + 200), using the numbers typed there
+    function turnStorageCap() {
+        const slot = tsSlot(), saved = GM_getValue('sa-ts-' + slot, {}) || {}, auto = tsAuto(slot);
+        const val = (k) => { const t = saved[k] != null && String(saved[k]).trim() !== ''; return t ? parseNumber(saved[k]) : auto[k]; };
+        const L = val('level'), B = val('brains');
+        if (L == null) return null;
+        return { cap: L * 10 + (B || 0) * 100 + 200, level: L, brains: B || 0 };
+    }
     function voPlan() {
-        const A = cgAssumptions();
+        const A = cgAssumptions(), on = voMethods();
         const typed = parseNumber(GM_getValue('sa-vo-turns', ''));
         const n0 = (v) => Math.round(v).toLocaleString();
         // Every planet × every method, valued per turn
@@ -4696,10 +4825,10 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             let cg = null, rg = null;
             try { cg = cgModel(id); } catch (e) {}
             try { rg = rgModel(id); } catch (e) {}
-            if (cg && cg.perTurn > 0) methods.push({ planet: pn, kind: 'print', label: `Print credits on ${pn}`, perTurn: cg.perTurn });
-            else notes.push(`${pn}: no Credit Gen data (printing not compared)`);
-            if (rg && rg.perTurn > 0) { methods.push({ planet: pn, kind: 'res', label: `Resources on ${pn}`, perTurn: rg.perTurn }); poolTpd = Math.max(poolTpd, rg.tpd || 0); }
-            else notes.push(`${pn}: no Resource Gen data (resources not compared)`);
+            if (cg && cg.perTurn > 0) { if (on.print) methods.push({ planet: pn, kind: 'print', label: `Print credits on ${pn}`, perTurn: cg.perTurn }); }
+            else if (on.print) notes.push(`${pn}: no Credit Gen data (printing not compared)`);
+            if (rg && rg.perTurn > 0) { if (on.res) methods.push({ planet: pn, kind: 'res', label: `Resources on ${pn}`, perTurn: rg.perTurn }); poolTpd = Math.max(poolTpd, rg.tpd || 0); }
+            else if (on.res) notes.push(`${pn}: no Resource Gen data (resources not compared)`);
         });
         // Training and selling units (Unit Value): slaves at your kept share, professors net of the
         // untrained used. Daily sell limits cap them; passive training (1 turn/tick) fills the limit first.
@@ -4715,9 +4844,9 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                 const pn = shortName(id), sp = slavesPerTurn(id), pp = profsPerTurn(id);
                 if (sp && uvPassiveOn()) passS += sp.n * A.ticksPerDay;
                 if (pp && uvPassiveOn()) passP += pp.n * A.ticksPerDay;
-                if (sp && pS != null && sp.n * pS * keepS > 0)
+                if (on.slaves && sp && pS != null && sp.n * pS * keepS > 0)
                     methods.push({ planet: pn, kind: 'units', group: 'slaves', units: sp.n, label: `Sell slaves from ${pn}`, perTurn: sp.n * pS * keepS });
-                if (pp && pP != null && pp.n * (pP - uSell) > 0)
+                if (on.profs && pp && pP != null && pp.n * (pP - uSell) > 0)
                     methods.push({ planet: pn, kind: 'units', group: 'profs', units: pp.n, label: `Sell professors from ${pn}`, perTurn: pp.n * (pP - uSell) });
             });
             unitCap.slaves = limS == null ? Infinity : Math.max(0, limS - passS);
@@ -4728,13 +4857,14 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             if (limP != null && unitCap.profs === 0) notes.push('Professor sales: the daily limit is already filled by passive training.');
         })();
         if (!planetIds().length) return { error: 'Save a planet first.' };
-        if (!methods.length) return { error: ['Fill Credit Gen and Resource Gen for at least one planet.', ...notes].join('\n') };
+        if (!VO_KINDS.some(([k]) => on[k])) return { error: 'No method selected: tick at least one method above.' };
+        if (!methods.length) return { error: ['None of the selected methods has data yet: fill Credit Gen, Resource Gen or Unit Value for at least one planet.', ...notes].join('\n') };
         const turns = typed ?? (empireTpd() || poolTpd);
         if (!turns) return { error: 'Turns per day unknown: type them above, or scan each planet\'s Tick Generator.' };
         const ranked = methods.slice().sort((a, b) => b.perTurn - a.perTurn);
         // Hand turns to the best method first; printing shares one daily cap
-        const plan = (printAllowed) => {
-            let left = turns, capLeft = printAllowed ? A.turnsPerDay : 0, total = 0;
+        const plan = (printAllowed, T = turns) => {
+            let left = T, capLeft = printAllowed ? A.turnsPerDay : 0, total = 0;
             const ucap = Object.assign({}, unitCap);
             const steps = [];
             ranked.forEach(m => {
@@ -4749,15 +4879,35 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             });
             return { steps, total };
         };
-        const pd = plan(true), rd = plan(false);
-        const week = pd.total * A.printDays + rd.total * (7 - A.printDays);
+        let pd = plan(true), rd = plan(false);
+        const weekBase = pd.total * A.printDays + rd.total * (7 - A.printDays);
+        // Saving turns (since v3.13.0): turns made on the non-print days (taken as one stretch, like a weekend) can be held in
+        // Turn Storage and printed on print days that have room under the print cap. Moves the turns worth least on a
+        // non-print day; tries amounts up to the most that fits and keeps the best.
+        let save = null;
+        const P = A.printDays, N = 7 - A.printDays, ts = turnStorageCap();
+        if (P > 0 && N > 0 && on.print && ranked.some(m => m.kind === 'print')) {
+            const spare = Math.max(0, A.turnsPerDay - Math.min(turns, A.turnsPerDay));
+            const max = ts ? Math.min(ts.cap, N * turns, P * spare) : 0;
+            let best = { X: 0, week: weekBase, pd, rd };
+            if (max > 0) for (let i = 1; i <= 40; i++) {
+                const X = max * i / 40, p2 = plan(true, turns + X / P), r2 = plan(false, turns - X / N);
+                const w = p2.total * P + r2.total * N;
+                if (w > best.week) best = { X, week: w, pd: p2, rd: r2 };
+            }
+            save = { ts, spare, max, X: best.X, week: best.week, gain: best.week - weekBase, pd: best.pd, rd: best.rd,
+                     fillHours: ts && turns > 0 ? ts.cap / (turns / 24) : null, overflow: ts ? N * turns > ts.cap : false };
+        }
+        const useSave = !!(save && save.gain > 0 && GM_getValue('sa-vo-usesave', false));
+        if (useSave) { pd = save.pd; rd = save.rd; }
+        const week = useSave ? save.week : weekBase;
         // Average credits per day by planet and method (print days and non-print days blended)
         const byMethod = {};
         [[pd, A.printDays], [rd, 7 - A.printDays]].forEach(([p, days]) => p.steps.forEach(st => {
             const k = st.m.label; byMethod[k] = byMethod[k] || { m: st.m, perDay: 0, turns: 0 };
             byMethod[k].perDay += st.value * days / 7; byMethod[k].turns += st.n * days / 7;
         }));
-        return { A, typed, turns, ranked, pd, rd, week, notes, unitInfo, byMethod: Object.values(byMethod) };
+        return { A, typed, turns, ranked, pd, rd, week, weekBase, save, useSave, notes, unitInfo, byMethod: Object.values(byMethod) };
     }
     // ---------- Share data to Sharky (opt-in) & Admin view ----------
     // Shared data goes to Sharky's Google Apps Script (see SharkBot-share.gs). The admin
@@ -7206,7 +7356,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         if (!out || !sbReady) return;
         const vp = voPlan();
         if (vp.error) { out.textContent = vp.error; return; }
-        const { A, typed, turns, ranked, pd, rd, week, notes, unitInfo } = vp;
+        const { A, typed, turns, ranked, pd, rd, week, weekBase, save, useSave, notes, unitInfo } = vp;
         const n0 = (v) => Math.round(v).toLocaleString();
         const L = (l, v) => l.padEnd(30) + v;
         const bestPrint = ranked.find(m => m.kind === 'print'), bestRes = ranked.find(m => m.kind === 'res');
@@ -7223,8 +7373,23 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             ...(A.printDays < 7 ? ['BEST PLAN · non-print day',
                 ...rd.steps.map((st, i) => `${i + 1}. ${st.m.label}: ${n0(st.n)} turns → ${fmt(st.value)}`),
                 L('= Credits per day', fmt(rd.total)), ''] : []),
-            L('PER WEEK (best plan)', fmt(week)),
+            L('PER WEEK (best plan)', fmt(weekBase)),
             '',
+            ...(() => {   // Saving turns in Turn Storage for print days (since v3.13.0)
+                if (!save) return [];
+                const o = ['SAVE TURNS FOR PRINT DAYS (Turn Storage)'];
+                if (!save.ts) return [...o, 'Turn Storage level unknown: scan Facilities or fill the Turn Storage calculator.', ''];
+                o.push(L('Turn Storage holds', `${n0(save.ts.cap)} turns (level ${n0(save.ts.level)}, ${n0(save.ts.brains)} brains)` + (save.fillHours != null ? ` · full after ${save.fillHours.toFixed(1)} h` : '')));
+                if (!(save.spare > 0)) o.push('No room: your turns already fill the print cap every print day, so saved turns can\'t be printed.');
+                else if (!(save.gain > 0)) o.push('Saving doesn\'t pay: spending turns on non-print days earns as much as printing them later.');
+                else {
+                    o.push(`Store ${n0(save.X)} turns over the ${A.printDays < 6 ? (7 - A.printDays) + ' non-print days' : 'non-print day'} and print them across your ${A.printDays} print days (${n0(save.X / A.printDays)} more per print day; room ${n0(save.spare)}).`);
+                    o.push(L('PER WEEK (with saving)', fmt(save.week) + ` (+${fmt(save.gain)})`));
+                }
+                if (save.overflow) o.push(`⚠ Storage is full after ${save.fillHours != null ? save.fillHours.toFixed(1) + ' h' : 'a while'}: turns past it are lost unless you spend them, so log in before then.`);
+                o.push(useSave ? 'Income statement and turn value use the saving plan.' : 'Tick "Use the saving plan" above to use it in the Income statement and turn value.');
+                return [...o, ''];
+            })(),
             ...(() => {   // daily sell limits → most turns worth spending on selling each unit
                 const out = [];
                 Object.entries(unitInfo || {}).forEach(([g, u]) => {
@@ -7280,24 +7445,32 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                 : r.o.research ? `Lv ${r.o.L0} → ${r.E}${r.o.cum(r.E).energySSB ? ` · +${f(r.o.cum(r.E).energySSB)} SSB` : ''}`
                 : `+${f(r.o.sizeGain(r.E))} ${escapeHtml(r.o.what || 'size')}`;
             H.push(`<div style="overflow-x:auto"><table class="sa-unit-table sa-traps-table">
-                <thead><tr><th>Upgrade</th><th>Levels</th><th>Spend</th><th>Adds</th><th title="Training turns for new workers, plus research turns">Turns</th><th>Credits/day</th><th>Payback</th></tr></thead>
+                <thead><tr><th>Upgrade</th><th>Levels</th><th title="Credits and materials spent now">Instant</th><th>Adds</th><th title="Future cost: turns to train the new workers (plus research turns), and how many days of your turns that is">Future (turns)</th><th>Credits/day</th><th title="Days until income is full (all new workers trained)">Full after</th><th title="Days until it has paid for itself: instant cost plus training turns, with income growing as workers are trained">Break-even</th></tr></thead>
                 <tbody>${plan.rows.map(r => `<tr>
                     <td class="sa-trap-name" title="${escapeHtml(r.o.label)}">${escapeHtml(r.o.label)}</td>
                     <td class="sa-num" title="${r.o.L0.toLocaleString()} → ${r.E.toLocaleString()}">+${r.levels.toLocaleString()}</td>
                     <td class="sa-num">${f(r.spent)}</td>
                     <td class="sa-num">${gainOf(r)}</td>
-                    <td class="sa-num" title="${r.tCost > 0 ? 'worth ' + escapeHtml(fmt(r.tCost)) : ''}">${r.tTurns > 0 ? f(r.tTurns) : '—'}</td>
+                    <td class="sa-num" title="${r.tCost > 0 ? 'worth ' + escapeHtml(fmt(r.tCost)) : ''}">${r.tTurns > 0 ? f(r.tTurns) + (r.tDays ? `<div style="font-size:9px; color:var(--muted)">${dd(r.tDays)} of turns</div>` : '') : '—'}</td>
                     <td class="sa-num sa-diff-pos">${r.o.hasGain ? '+' + f(r.gain) : '—'}</td>
-                    <td class="sa-num">${r.o.hasGain ? dd((r.spent + (r.tCost || 0)) / r.gain) : '—'}</td></tr>`).join('')}
+                    <td class="sa-num">${r.tDays ? dd(r.tDays) : 'now'}</td>
+                    <td class="sa-num">${r.o.hasGain ? dd(r.be) : '—'}</td></tr>`).join('')}
                 <tr class="sa-stmt-total"><td>Total</td><td></td><td class="sa-num">${f(plan.spent)}</td><td></td>
-                    <td class="sa-num" title="${plan.tCost > 0 ? 'worth ' + escapeHtml(fmt(plan.tCost)) : ''}">${plan.tTurns > 0 ? f(plan.tTurns) : '—'}</td>
-                    <td class="sa-num sa-diff-pos">+${f(plan.gain)}</td><td class="sa-num">${plan.gain > 0 ? dd((plan.spent + plan.tCost) / plan.gain) : '—'}</td></tr>
+                    <td class="sa-num" title="${plan.tCost > 0 ? 'worth ' + escapeHtml(fmt(plan.tCost)) : ''}">${plan.tTurns > 0 ? f(plan.tTurns) + (plan.tDays ? `<div style="font-size:9px; color:var(--muted)">${dd(plan.tDays)} of turns</div>` : '') : '—'}</td>
+                    <td class="sa-num sa-diff-pos">+${f(plan.gain)}</td><td class="sa-num">${plan.tDays ? dd(plan.tDays) : 'now'}</td><td class="sa-num">${plan.gain > 0 ? dd(plan.be) : '—'}</td></tr>
                 </tbody></table></div>`);
             const meta = [];
             if (plan.left > 0) meta.push(`Left over: ${f(plan.left)}`);
             if (plan.tCost > 0) meta.push(`Training turns are worth ${f(plan.tCost)} at the Value Optimizer average turn (hover for each)`);
             if (mats.length) meta.push('Materials used: ' + mats.map(n => `${escapeHtml(n)} ${f(plan.used[n])}`).join(', '));
             meta.forEach(m => H.push(`<div class="sa-slot-meta" style="margin-top:3px">${m}</div>`));
+        }
+        // Compared with the Income Facility (since v3.13.0): the same credits on the planet where it earns most
+        if (plan.rows.length && plan.gain > 0) {
+            const cs = ids.map(id => ({ id, c: incomeFacCompare(id, plan.spent) })), ok = cs.filter(x => !x.c.error).sort((a, b) => b.c.gain - a.c.gain);
+            const pick = ok[0] || cs[0];
+            H.push(`<div class="sa-label" style="margin:10px 0 4px">Compared with Income Facility${pick && !pick.c.error ? ' · ' + escapeHtml(shortName(pick.id)) : ''}</div>
+                <pre class="sa-recommend" style="margin:0; white-space:pre-wrap">${escapeHtml(incomeFacLines(pick.id, plan.spent, plan.gain, plan.p30).slice(2).join('\n'))}</pre>`);
         }
         // Options and notes
         H.push(`<div class="sa-label" style="margin:10px 0 4px">Options looked at</div><div class="sa-slot-meta">${
@@ -7306,8 +7479,9 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         H.push(`<div class="sa-slot-meta" style="margin-top:6px">Research options (Economy, Industrialism, Commercialism, Digging, Iron and Gold mining) cost credits, resources,
             research turns and any extra energy storage (SSB), like the Research calculator; their gain adds up over all planets.<br>
             Assumes area size = worker room, filled with newly trained workers. Training costs turns
-            (Training: Soldiers &amp; workers per turn), valued at the Value Optimizer average turn; slices are ranked by credits/day per
-            (credits + training turn value), and payback includes it.</div>`);
+            (Training: Soldiers &amp; workers per turn), valued at the Value Optimizer average turn. <b>Instant</b> = credits and materials spent now;
+            <b>future</b> = those training turns, paid over the days it takes with all your turns. Income grows as workers are trained, so
+            break-even counts that ramp; slices are ranked the same way.</div>`);
         out.style.whiteSpace = 'normal';
         out.innerHTML = H.join('');
     }
@@ -7413,6 +7587,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         const root = document.querySelector('main') || document.body;
         const t = (root.innerText || root.textContent || '');
         if (isNerdsView()) return 'nerds';   // same table as TRAPs (since v3.11.0)
+        if (/money\s*printer/i.test(t)) return 'print';   // Bank → Print: the Money Printer's level (since v3.14.0)
         if (findTrapsTable()) return 'traps';
         return /galaxy\s*fee|volatility|income\s*ratio|player\s*investments/i.test(t) ? 'central' : 'player';
     }
@@ -7822,7 +7997,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                 </tbody></table>` : '<div class="sa-empty">No known holders yet.</div>';
             const addOv = mg ? `<div style="font-size:10px; margin-top:4px">Add a holder: <input class="sa-tc-addname" data-name="${escapeHtml(r.name)}" placeholder="player" style="width:90px" />
                 <input class="sa-tc-addamt" data-name="${escapeHtml(r.name)}" placeholder="amount" style="width:80px" /> <button class="sa-btn sa-tc-add" data-name="${escapeHtml(r.name)}" style="margin:0">Add</button></div>` : '';
-            return `<tr data-child="1"><td colspan="12" style="background:var(--inset); padding:4px 8px 6px 22px">${brk}${tbl}${addOv}</td></tr>`;
+            return `<tr data-child="1"><td colspan="15" style="background:var(--inset); padding:4px 8px 6px 22px">${brk}${tbl}${addOv}</td></tr>`;
         };
         view.innerHTML = `
             <div class="sa-recommend" style="margin-bottom:6px">All known holders: <b>${f(T('invested'))}</b> invested · profit ${sg(T('pTurn'))}/turn · <b>${sg(T('pDay'))}/day</b><br>You: ${f(Y('inv'))} invested · ${sg(Y('pTurn'))}/turn · <b>${sg(Y('pDay'))}/day</b></div>
@@ -7835,8 +8010,9 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             ${rows.length ? `<div style="overflow-x:auto"><table class="sa-unit-table" data-sort-id="trapcalc">
                 <thead><tr><th>Name</th><th>Type</th><th style="text-align:right">Equity</th><th style="text-align:right">Shares</th><th style="text-align:right">Multi</th>
                     <th style="text-align:right" title="Calculated; the game's price is in grey">Share price</th><th style="text-align:right" title="All known holders">Invested</th><th style="text-align:right">Holders</th>
-                    <th style="text-align:right" title="All known holders">Profit /turn</th><th style="text-align:right" title="All known holders">Profit /day</th><th style="text-align:right">You</th><th style="text-align:right">Your /day</th></tr></thead>
-                <tbody>${rows.map(x => `<tr data-tc="${escapeHtml(x.r.name)}" style="cursor:pointer" title="Click to ${tcOpen[x.r.name] ? 'hide' : 'show'} holders and details">
+                    <th style="text-align:right" title="All known holders">Profit /turn</th><th style="text-align:right" title="All known holders">Profit /day</th><th style="text-align:right">You</th><th style="text-align:right">Your /day</th>
+                    <th style="text-align:right" title="Managed: (Earnings − Tax payment) ÷ Earnings">Efficiency</th><th style="text-align:right" title="Managed: efficiency × the game's interest per turn (turn_interest)">Real interest /turn</th><th style="text-align:right" title="Managed: equity × real interest × turns per day">Daily interest</th></tr></thead>
+                <tbody>${rows.map(x => `<tr data-tc=""${escapeHtml(x.r.name)}" style="cursor:pointer" title="Click to ${tcOpen[x.r.name] ? 'hide' : 'show'} holders and details">
                     <td class="sa-trap-name" title="${escapeHtml(x.r.name)}"><span style="color:var(--muted)">${tcOpen[x.r.name] ? '▾' : '▸'}</span> ${escapeHtml(x.r.name)}</td>
                     <td${x.r.locked ? ' title="Set to managed for everyone"' : ''}>${x.r.managed ? 'Managed' : 'Unmanaged'}${x.r.locked ? ' 🔒' : ''}</td>
                     <td class="sa-num" data-sort="${x.E}">${f(x.E)}</td><td class="sa-num" data-sort="${x.S || ''}">${f(x.S)}</td>
@@ -7845,9 +8021,12 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                     <td class="sa-num" data-sort="${x.invested}">${x.holders.length ? f(x.invested) : '—'}</td>
                     <td class="sa-num" data-sort="${x.holders.length}">${x.holders.length || ''}</td>
                     <td class="sa-num" data-sort="${x.pTurn}">${x.holders.length ? sg(x.pTurn) : ''}</td><td class="sa-num" data-sort="${x.pDay}">${x.holders.length ? sg(x.pDay) : ''}</td>
-                    <td class="sa-num" data-sort="${x.you?.inv ?? ''}">${x.you ? f(x.you.inv) : ''}</td><td class="sa-num" data-sort="${x.you?.pDay ?? ''}">${x.you ? sg(x.you.pDay) : ''}</td></tr>${tcOpen[x.r.name] ? child(x) : ''}`).join('')}
+                    <td class="sa-num" data-sort="${x.you?.inv ?? ''}">${x.you ? f(x.you.inv) : ''}</td><td class="sa-num" data-sort="${x.you?.pDay ?? ''}">${x.you ? sg(x.you.pDay) : ''}</td>
+                    ${(() => { if (!x.r.managed || !(x.earn > 0)) return '<td class="sa-num">—</td><td class="sa-num">—</td><td class="sa-num">—</td>';
+                        const eff = (x.earn - x.pay) / x.earn, real = eff * x.a.turnInterest;   // Efficiency calculator (since v3.14.0)
+                        return `<td class="sa-num" data-sort="${eff}">${pct(eff)}</td><td class="sa-num" data-sort="${real}">${(real * 100).toFixed(4)}%</td><td class="sa-num" data-sort="${x.E * real * tpd}">${sg(x.E * real * tpd)}</td>`; })()}</tr>${tcOpen[x.r.name] ? child(x) : ''}`).join('')}
                 <tr data-pin="1" style="font-weight:600"><td>Total</td><td></td><td class="sa-num">${f(T('E'))}</td><td></td><td></td><td></td><td class="sa-num">${f(T('invested'))}</td><td></td>
-                    <td class="sa-num">${sg(T('pTurn'))}</td><td class="sa-num">${sg(T('pDay'))}</td><td class="sa-num">${f(Y('inv'))}</td><td class="sa-num">${sg(Y('pDay'))}</td></tr>
+                    <td class="sa-num">${sg(T('pTurn'))}</td><td class="sa-num">${sg(T('pDay'))}</td><td class="sa-num">${f(Y('inv'))}</td><td class="sa-num">${sg(Y('pDay'))}</td><td></td><td></td><td></td></tr>
                 </tbody></table></div>` : '<div class="sa-empty">No investments to show.</div>'}
             <div class="sa-slot-meta" style="margin-top:4px">Invested: unmanaged = shares × share price, managed = the amount typed in (yours in Data → Bank, other players' from their SharkBot, or your override); never more than the equity.
                 Profit: managed = (Earnings − Payment) × invested ÷ equity; unmanaged = shares × share price change. Game list ${escapeHtml(agoText(api.savedAt))}.</div>`;
@@ -8253,6 +8432,15 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     function isNerdsView() {
         if (pageKey !== 'bank') return false;
         return Array.from(document.querySelectorAll('body *')).some(el => !el.closest('#' + PANEL_ID) && el.children.length <= 2 && /^\+?\s*create\s+nerd$/i.test(normText(el)));
+    }
+    // Bank → Print (since v3.14.0): the Money Printer's level, read from the text around "Money Printer"
+    function readPrintLevel() {
+        const root = document.querySelector('#content-wrap') || document.querySelector('main') || document.body;
+        const t = (root.innerText || root.textContent || '').replace(/\s+/g, ' ');
+        const m = t.match(/money\s*printer[^0-9]{0,60}?(?:lvl|level)\.?\s*:?\s*([\d,.]+)/i) || t.match(/(?:lvl|level)\.?\s*:?\s*([\d,.]+)[^0-9]{0,40}money\s*printer/i)
+            || t.match(/money\s*printer\s*\(?\s*([\d,]+)\s*\)?/i);
+        const v = m ? parseNumber(m[1]) : null;
+        return { value: v, text: m ? m[0].slice(0, 80) : '' };
     }
     function storeNerds(t) { GM_setValue('sa-nerds', { savedAt: new Date().toISOString(), items: t.items }); }
     function nerdsLoad() { return GM_getValue('sa-nerds', null); }
@@ -9258,7 +9446,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                 'sa-inv-' + id, 'sa-turngen-' + id, 'sa-turns-' + id,
                 'sa-slot-collapsed-' + id, 'sa-rslot-collapsed-' + id, 'sa-fslot-collapsed-' + id,
                 'sa-nation-' + id, 'sa-colony-' + id));
-            keys.push('sa-market-latest', 'sa-bank', 'sa-player-bank', 'sa-traps', 'sa-nerds', 'sa-invest-api', 'sa-stmt-history', 'sa-galaxy-fee', 'sa-central-bank',
+            keys.push('sa-market-latest', 'sa-bank', 'sa-player-bank', 'sa-traps', 'sa-nerds', 'sa-print-level', 'sa-invest-api', 'sa-stmt-history', 'sa-galaxy-fee', 'sa-central-bank',
                       'sa-turngen-active', 'sa-turns-active', 'sa-cards');
         }
         const toDelete = keys.filter(k => k.startsWith('sa-') && !KEEP_KEYS.includes(k) && !KEEP_PREFIXES.some(p => k.startsWith(p)));
@@ -9657,6 +9845,180 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     document.getElementById('sa-uv-slot')?.addEventListener('change', (e) => { GM_setValue('sa-uv-slot', e.target.value); renderUnitValue(); });
     ['sa-uv-price', 'sa-uv-pprice', 'sa-uv-split', 'sa-uv-limS', 'sa-uv-limP'].forEach(id => { const i = document.getElementById(id); if (i) { i.value = GM_getValue(id, '');
         i.addEventListener('input', () => { GM_setValue(id, i.value); renderUnitValue(); }); } });
+    // ---------- More calculators (since v3.14.0): Factory, Money Printer, Invest Create, Attack, Assassination ----------
+    // Each is a form of fields (● filled from saved data, ○ typed) and a result. Typed values are kept per calculator.
+    const XC = {};
+    function xcSlot(id) { const ids = planetIds(); const s = GM_getValue('sa-xc-slot-' + id, null); return ids.includes(s) ? s : ids[0] || 'A'; }
+    function xcUnits(slot, re, not) { return (getSlot(slot)?.units || []).filter(u => re.test(u.name) && !(not && not.test(u.name))).reduce((t, u) => t + (u.count || 0), 0); }
+    function xcFac(slot, re) { const f = (getFSlot(slot)?.items || []).find(i => i.kind !== 'area' && re.test(cleanName(i.name)) && i.value != null); return f ? (facIsOff(f) ? 0 : levelFrom(f).value) : null; }
+    function xcValues(id) {
+        const d = XC[id], slot = xcSlot(id), saved = GM_getValue('sa-xc-' + id, {}) || {}, v = {}, src = {};
+        d.fields.forEach(([k, , auto]) => {
+            if (k[0] === '#') return;
+            const t = saved[k] != null && String(saved[k]).trim() !== '';
+            let a = null; if (auto) { try { a = auto(slot); } catch (e) { a = null; } }
+            v[k] = t ? parseNumber(saved[k]) : a; src[k] = t ? 'typed' : a != null ? 'auto' : 'none';
+        });
+        return { v, src, slot };
+    }
+    function renderXc(id) {
+        const d = XC[id], form = document.getElementById('sa-xc-' + id + '-form'), res = document.getElementById('sa-xc-' + id + '-result');
+        if (!d || !form || !res || !sbReady) return;
+        const sel = document.querySelector(`#${PANEL_ID} .sa-xc-slot[data-xc="${id}"]`);
+        if (sel && document.activeElement !== sel) sel.innerHTML = planetIds().map(p => `<option value="${p}" ${p === xcSlot(id) ? 'selected' : ''}>${escapeHtml(shortName(p))}</option>`).join('');
+        const { v, src, slot } = xcValues(id);
+        if (!form.contains(document.activeElement)) {
+            const saved = GM_getValue('sa-xc-' + id, {}) || {};
+            form.innerHTML = d.fields.map(([k, l, auto, hint]) => {
+                if (k[0] === '#') return `<div class="sa-label" style="grid-column:1/-1; margin:6px 0 0">${l}</div>`;
+                const typed = src[k] === 'typed', val = typed ? saved[k] : v[k] != null ? (Math.abs(v[k]) >= 1e6 ? fmt(v[k]) : v[k].toLocaleString()) : '';
+                return `<label>${l}</label><input data-xk="${k}" value="${escapeHtml(String(val))}" placeholder="${escapeHtml(hint || (auto ? 'not saved' : '0'))}" />
+                    <span class="sa-src ${typed || !auto || v[k] == null ? 'manual' : ''}">${auto && !typed && v[k] != null ? '●' : '○'}</span>`;
+            }).join('');
+            form.querySelectorAll('input[data-xk]').forEach(inp => inp.addEventListener('input', () => {
+                const cur = GM_getValue('sa-xc-' + id, {}) || {}; cur[inp.dataset.xk] = inp.value; GM_setValue('sa-xc-' + id, cur); renderXc(id);
+            }));
+        }
+        document.querySelectorAll(`#${PANEL_ID} .sa-pane[data-pane="${id}"] .sa-xc-roll`).forEach(el => {
+            if (el.contains(document.activeElement)) return;
+            const r = xcRoll();
+            el.innerHTML = `<div style="display:flex; gap:4px; align-items:center; flex-wrap:wrap; font-size:11px"><span title="Losses are random: count × death rate × √(roll), roll 0 to 1">Roll</span>${
+                [0.25, 0.5, 0.75].map(x => `<button class="sa-btn ${!xcRandom && r === x ? 'active' : ''}" data-roll="${x}" style="margin:0">${x}${x === 0.5 ? ' (average)' : ''}</button>`).join('')}
+                <button class="sa-btn ${xcRandom ? 'active' : ''}" data-roll="sim" style="margin:0" title="One random battle (a new roll for every row)">🎲 Simulate</button></div>`;
+            el.querySelectorAll('button[data-roll]').forEach(b => b.addEventListener('click', () => {
+                if (b.dataset.roll === 'sim') { xcRandom = true; xcRolls = Array.from({ length: 20 }, () => Math.random()); }
+                else { xcRandom = false; GM_setValue('sa-xc-roll', Number(b.dataset.roll)); }
+                renderXc('attack'); renderXc('assassin');
+            }));
+        });
+        try { res.innerHTML = d.render(v, slot, src); } catch (e) { res.textContent = 'Couldn\'t calculate: ' + e.message; }
+    }
+    function renderXcAll() { Object.keys(XC).forEach(id => { try { renderXc(id); } catch (e) {} }); }
+    var xcRandom = false, xcRolls = [];
+    function xcRoll() { const r = Number(GM_getValue('sa-xc-roll', 0.5)); return [0.25, 0.5, 0.75].includes(r) ? r : 0.5; }
+    function xcQ(i) { return Math.sqrt(xcRandom ? (xcRolls[i] ?? Math.random()) : xcRoll()); }
+    const xf = (v) => v == null || !isFinite(v) ? '—' : escapeHtml(fmt(v));
+    const xkv = (rows) => `<table class="sa-unit-table sa-stmt"><tbody>${rows.map(([k, val]) => `<tr><td>${k}</td><td class="sa-num">${val}</td></tr>`).join('')}</tbody></table>`;
+
+    // Factory (Tier I)
+    XC.factorycalc = {
+        fields: [['iw', 'Industrial workers', (s) => xcUnits(s, /industrial/i)], ['fw', 'Factory workers', (s) => xcUnits(s, /factory\s*worker/i)],
+            ['eng', 'Engineers', (s) => xcUnits(s, /engineer/i)], ['fac', 'Factory level', (s) => xcFac(s, /^factory$/i)],
+            ['giga', 'Giga Factory level', (s) => xcFac(s, /giga/i)], ['auto', 'Automation research', () => researchLevel(/automation/i)]],
+        render: (v) => {
+            const z = (k) => v[k] || 0;
+            const parts = [Math.pow(z('iw'), 0.3), Math.pow(z('fw'), 0.35), Math.pow(z('eng'), 0.4)];
+            const mF = Math.pow(z('fac'), 0.62), mG = 1 + Math.pow(z('giga'), 1.14) / 100, mA = 1 + 0.02 * z('auto');
+            const tot = (parts[0] + parts[1] + parts[2]) * mF * mG * mA, tpd = cgAssumptions().ticksPerDay;
+            return xkv([['Industrial workers^0.3', xf(parts[0])], ['Factory workers^0.35', xf(parts[1])], ['Engineers^0.4', xf(parts[2])],
+                ['× Factory^0.62', xf(mF)], ['× (1 + Giga Factory^1.14 ÷ 100)', mG.toFixed(4)], ['× (1 + 2% × Automation)', mA.toFixed(2)],
+                ['<b>Factory production per tick</b>', `<b>${xf(tot)}</b>`], [`Per day (${tpd.toLocaleString()} ticks)`, xf(tot * tpd)]]);
+        },
+    };
+
+    // Money Printer (Tier I): cost from the start level to the end level; level read from Bank → Print
+    function printerCost(a, b) {
+        let cr = 0, g = 0, ir = 0, n = 0;
+        for (let L = a; L < b && n < 1e6; L++, n++) { cr += Math.pow(L, 4) + Math.pow(1.11, L); g += Math.pow(Math.max(0, L - 2), 1.2); ir += Math.pow(Math.max(0, L - 10), 1.5); }
+        return { n, credits: Math.round(1e6 * cr), gold: n + Math.round(g), iron: n + Math.round(10 * ir) };
+    }
+    function matsInCredits(m) {   // owned at sell price, missing at buy price (like the other cost calculators)
+        const stock = {}; planetIds().forEach(id => (invLoad(id)?.items || []).forEach(i => { if (i.value != null) { const n = i.name.replace(/ #\d+$/, ''); stock[n] = (stock[n] || 0) + i.value; } }));
+        let t = 0, missing = [];
+        Object.entries(m).forEach(([n, q]) => { const mk = marketRes(new RegExp('^' + n + '$', 'i')), have = Math.min(q, stock[n] || 0), buy = q - have;
+            if (!mk) { missing.push(n); return; } t += have * (mk.sellPrice ?? mk.buyPrice ?? 0) + buy * (mk.buyPrice ?? mk.sellPrice ?? 0); });
+        return { value: t, missing };
+    }
+    XC.printer = {
+        fields: [['start', 'Start level', () => GM_getValue('sa-print-level', null)?.value ?? null, 'open Bank → Print'],
+            ['end', 'End level', null, 'blank = start + 1']],
+        render: (v) => {
+            const pl = GM_getValue('sa-print-level', null);
+            if (v.start == null) return 'Start level unknown: open Bank → <b>Print</b> and click <b>Manual Scan</b>, or type it.';
+            const a = Math.round(v.start), b = v.end != null ? Math.round(v.end) : a + 1;
+            if (!(b > a)) return 'End level must be above the start level.';
+            const c = printerCost(a, b), mc = matsInCredits({ Gold: c.gold, Iron: c.iron }), cap = capitalFor({});
+            const total = c.credits + mc.value;
+            const lines = [['Upgrades', `${c.n.toLocaleString()} (level ${a.toLocaleString()} → ${b.toLocaleString()})`], ['Credits', xf(c.credits)], ['Gold', xf(c.gold)], ['Iron', xf(c.iron)],
+                ['<b>Total in credits</b>', `<b>${xf(total)}</b>${mc.missing.length ? ` <span style="color:var(--muted)">(no market price: ${escapeHtml(mc.missing.join(', '))})</span>` : ''}`],
+                ['Your capital', xf(cap.available) + (cap.available >= total ? ' <span class="sa-diff-pos">✓ enough</span>' : ` <span class="sa-diff-neg">short ${xf(total - cap.available)}</span>`)]];
+            // Most levels the capital buys
+            const opt = { label: 'Money Printer', short: 'Money Printer', L0: a, what: 'levels', sizeGain: (E) => E - a,
+                cum: (E) => { const x = printerCost(a, E); return { credits: x.credits, mats: { Gold: x.gold, Iron: x.iron } }; }, gain: () => 0, hasGain: false };
+            let most = '';
+            try { const plan = planSpend([opt], cap.available, true); most = plan.rows.length ? `${plan.rows[0].E.toLocaleString()} (+${plan.rows[0].levels.toLocaleString()} levels for ${xf(plan.spent)})` : 'not even one level'; } catch (e) {}
+            if (most) lines.push(['All capital here: up to level', most]);
+            return xkv(lines) + `<div class="sa-slot-meta" style="margin-top:4px">${pl ? `Level read from Bank → Print ${escapeHtml(agoText(pl.savedAt))}. ` : ''}Below level 10 (iron) and 2 (gold) the level part counts as 0, so those levels cost the flat 1 iron and 1 gold. Gold and iron you own are valued at the sell price, missing ones at the buy price.</div>`;
+        },
+    };
+
+    // Invest Create (Tier I)
+    XC.invcreate = {
+        fields: [['credits', 'Credits put in', null, 'e.g. 20 Sx'], ['turns', 'Turns put in', null, 'e.g. 200,000'],
+            ['vol', 'Volatility', () => { const v = trapVolatility().value; return v != null ? Math.round(v * 1000) / 1000 : null; }, 'from Bank → Central bank'],
+            ['card', 'Card bonus %', () => { const c = bestCardPct(st => /invest|interest/.test(st) && !/cost/.test(st)); return c ? c.value : null; }, '0']],
+        render: (v) => {
+            if (!(v.credits > 0) || !(v.turns > 0) || !(v.vol > 0)) return 'Type the credits and turns you put in (volatility comes from your Central bank scan).';
+            const V2 = v.vol * v.vol, r = Math.pow(v.credits / V2, 0.06) * Math.pow(v.turns / V2, 0.06) / 88000 * (1 + (v.card || 0) / 100);
+            const g = (n) => Math.pow(1 + r, n) - 1, p = (x) => (x * 100).toFixed(4) + '%';
+            return xkv([['Interest per 30 minutes', p(r)], ['24 hours', p(g(48)) + ` · ${xf(v.credits * g(48))} credits`], ['7 days', p(g(336)) + ` · ${xf(v.credits * g(336))}`],
+                ['30 days', p(g(1440)) + ` · ${xf(v.credits * g(1440))}`]]) + `<div class="sa-slot-meta" style="margin-top:4px">Volatility as a number (239.8% = 2.398); type your own if it differs.</div>`;
+        },
+    };
+
+    // Attack (Military)
+    const AT_UNITS = [['s', 'Soldiers', /soldier/i, 10, 1, 1], ['c', 'Corporals', /corporal/i, 20, 1, 1], ['m', 'Majors', /major/i, 60, 0.2, 0.1], ['ch', 'Champions', /champion/i, 100, 0.01, 0.001],
+        ['inv', 'Invader ships', /invader/i, 200000, 0.3, 0.3], ['f', 'Space fighters', /fighter/i, 1e6, 0.3, 0.3], ['car', 'Carriers', /carrier/i, 1.2e6, 0.3, 0.3]];
+    XC.attack = {
+        fields: [['#a', 'Attacker (you)'], ...AT_UNITS.map(([k, l, re]) => ['a_' + k, l, (s) => xcUnits(s, re)]),
+            ['a_tech', 'Weapon tech', () => researchLevel(/weapon/i)], ['a_card', 'Attack card %', () => { const c = bestCardPct(st => /attack|weapon|offen/.test(st) && !/assassin|spy|defen|cost/.test(st)); return c ? c.value : null; }],
+            ['#d', 'Defender'], ...AT_UNITS.map(([k, l]) => ['d_' + k, l, null]), ['d_miner', 'Miner ships (no defense)', null],
+            ['d_tech', 'Defense tech', null], ['d_card', 'Defense card %', null]],
+        render: (v) => {
+            const z = (k) => v[k] || 0;
+            const side = (p, tk, ck) => AT_UNITS.reduce((t, u) => t + z(p + u[0]) * u[3], 0) * (1 + z(tk) * 0.005) * (1 + z(ck) / 100);
+            const A = side('a_', 'a_tech', 'a_card'), D = side('d_', 'd_tech', 'd_card');
+            if (!(A > 0)) return 'Fill in the attacker.';
+            const ratio = D > 0 ? A / D : Infinity, aDie = ratio === Infinity ? 0 : 5 / ratio / 100, dDie = 4 * (ratio > 5 ? 4.5 : ratio) / 100;
+            let i = 0;
+            const rows = AT_UNITS.map(([k, l, , , am, dm]) => { const al = Math.min(z('a_' + k), z('a_' + k) * aDie * xcQ(i++) * am), dl = Math.min(z('d_' + k), z('d_' + k) * dDie * xcQ(i++) * dm); return { l, a: z('a_' + k), al, d: z('d_' + k), dl }; });
+            const ml = Math.min(z('d_miner'), z('d_miner') * dDie * xcQ(i++) * 0.3);
+            rows.push({ l: 'Miner ships', a: null, al: null, d: z('d_miner'), dl: ml });
+            const space = z('a_inv') * 12000 + z('a_f') * 6000 + z('a_car') * 300000;
+            return xkv([['Attacker strength', xf(A)], ['Defender strength', xf(D)], ['Success ratio', isFinite(ratio) ? ratio.toFixed(3) : '∞'],
+                ['Attackers die', (aDie * 100).toFixed(2) + '% × √roll'], ['Defenders die', (dDie * 100).toFixed(2) + '% × √roll' + (ratio > 5 ? ' (ratio over 5 counts as 4.5)' : '')],
+                ['Ship space (attacker)', xf(space)]])
+                + `<table class="sa-unit-table sa-traps-table" style="margin-top:6px"><thead><tr><th>Unit</th><th>Attacker</th><th>Attacker loses</th><th>Defender</th><th>Defender loses</th></tr></thead><tbody>${
+                rows.map(r => `<tr><td>${r.l}</td><td class="sa-num">${r.a == null ? '' : xf(r.a)}</td><td class="sa-num sa-diff-neg">${r.al ? xf(r.al) : r.a == null ? '' : '0'}</td><td class="sa-num">${xf(r.d)}</td><td class="sa-num sa-diff-neg">${r.dl ? xf(r.dl) : '0'}</td></tr>`).join('')}</tbody></table>
+                <div class="sa-slot-meta" style="margin-top:4px">${xcRandom ? 'One random battle (🎲 again for another).' : `Roll ${xcRoll()} (√ = ${Math.sqrt(xcRoll()).toFixed(3)}).`} Majors lose × 0.2 attacking / × 0.1 defending, champions × 0.01 / × 0.001, ships × 0.3. Losses never exceed what's there.</div>`;
+        },
+    };
+
+    // Assassination (Military)
+    XC.assassin = {
+        fields: [['#a', 'Attacker (you)'], ['a_ass', 'Assassins', (s) => xcUnits(s, /assassin/i)], ['a_tech', 'Assassin tech', () => researchLevel(/assassin/i)],
+            ['a_card', 'Assassin card %', () => { const c = bestCardPct(st => /assassin/.test(st) && !/defen|cost|security/.test(st)); return c ? c.value : null; }],
+            ['#d', 'Defender'], ['d_ass', 'Assassins', null], ['d_sec', 'Security officers', null],
+            ['d_t1', 'Targeted unit 1', null], ['d_t2', 'Targeted unit 2', null], ['d_t3', 'Targeted unit 3', null], ['d_t4', 'Targeted unit 4', null],
+            ['d_tech', 'Assassin tech', null], ['d_card', 'Card %', null]],
+        render: (v) => {
+            const z = (k) => v[k] || 0;
+            const A = z('a_ass') * 20 * (1 + z('a_tech') * 0.005) * (1 + z('a_card') / 100);
+            const D = (z('d_ass') * 20 + z('d_sec') * 15) * (1 + z('d_tech') * 0.005) * (1 + z('d_card') / 100);
+            if (!(A > 0)) return 'Fill in your assassins.';
+            const ratio = D > 0 ? A / D : Infinity, aDie = ratio === Infinity ? 0 : 10 / ratio / 100, dDie = 8 * (ratio > 5 ? 4.5 : ratio) / 100;
+            const al = Math.min(z('a_ass'), z('a_ass') * aDie * xcQ(0));
+            const ts = [1, 2, 3, 4].map(n => ({ n, c: z('d_t' + n), l: Math.min(z('d_t' + n), z('d_t' + n) * dDie * xcQ(n)) })).filter(t => t.c > 0);
+            return xkv([['Attacker strength', xf(A)], ['Defender strength', xf(D)], ['Success ratio', isFinite(ratio) ? ratio.toFixed(3) : '∞'],
+                ['Your assassins die', (aDie * 100).toFixed(2) + '% × √roll → <b class="sa-diff-neg">' + xf(al) + '</b> of ' + xf(z('a_ass'))],
+                ['Targets die', (dDie * 100).toFixed(2) + '% × √roll' + (ratio > 5 ? ' (ratio over 5 counts as 4.5)' : '')],
+                ...ts.map(t => [`Targeted unit ${t.n}`, `<b class="sa-diff-neg">${xf(t.l)}</b> of ${xf(t.c)}`])])
+                + `<div class="sa-slot-meta" style="margin-top:4px">${xcRandom ? 'One random attempt (🎲 again for another).' : `Roll ${xcRoll()} (√ = ${Math.sqrt(xcRoll()).toFixed(3)}).`}</div>`;
+        },
+    };
+    document.querySelectorAll(`#${PANEL_ID} .sa-xc-slot`).forEach(sel => sel.addEventListener('change', () => { GM_setValue('sa-xc-slot-' + sel.dataset.xc, sel.value); renderXc(sel.dataset.xc); }));
+    renderXcAll();
+
     // ---------- Expand all / Collapse all (since v3.12.0) ----------
     // At the top of every subtab with parts that open and close. Display only: nothing new is loaded.
     const EA_PANES = ['units', 'research', 'facilities', 'bank', 'trapcalc', 'cards', 'admin', 'adminusers', 'players', 'fleets'];
@@ -9694,6 +10056,19 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     (() => {
         const vi = document.getElementById('sa-vo-turns');
         if (vi) { vi.value = GM_getValue('sa-vo-turns', ''); vi.addEventListener('input', () => { GM_setValue('sa-vo-turns', vi.value); renderValueOpt(); }); }
+        const vm = document.getElementById('sa-vo-methods');
+        if (vm) {
+            const on = voMethods();
+            vm.innerHTML = VO_KINDS.map(([k, l]) => `<label class="sa-check"><input type="checkbox" data-vom="${k}" ${on[k] ? 'checked' : ''} /><span>${l}</span></label>`).join('');
+            vm.querySelectorAll('input[data-vom]').forEach(cb => cb.addEventListener('change', () => {
+                const cur = voMethods(); cur[cb.dataset.vom] = cb.checked; GM_setValue('sa-vo-methods', cur);
+                try { refreshCalcs(); } catch (e) { renderValueOpt(); }
+            }));
+        }
+        const ic = document.getElementById('sa-if-cost');
+        if (ic) { ic.value = GM_getValue('sa-if-cost', ''); ic.addEventListener('change', () => { GM_setValue('sa-if-cost', ic.value); try { refreshCalcs(true); } catch (e) {} }); }
+        const vs = document.getElementById('sa-vo-usesave');
+        if (vs) { vs.checked = !!GM_getValue('sa-vo-usesave', false); vs.addEventListener('change', () => { GM_setValue('sa-vo-usesave', vs.checked); try { refreshCalcs(); } catch (e) { renderValueOpt(); } }); }
     })();
     refreshCalcs();
     autoScan();   // and once when the game first loads
