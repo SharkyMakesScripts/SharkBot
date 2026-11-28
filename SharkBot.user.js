@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SharkBot
 // @namespace    https://spacealpha.net/
-// @version      3.33.0
+// @version      3.34.0
 // @description  SharkBot for Space Alpha: saves your planets' units, facilities, inventory, research, bank and market prices, and calculates credit generation and Tick Generator upgrade costs.
 // @author       SharkBot
 // @match        https://spacealpha.net/*
@@ -221,7 +221,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     const PANEL_ID = 'sa-helper-panel';
     const SLOT_IDS = 'ABCDEFGHIJ'.split('');   // up to 10 planets
     // Version comes from the @version header so it's never out of sync
-    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.33.0';
+    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.34.0';
     // Two copies installed (usually an update pasted in as a new script): since v3.17.1 every copy writes its version on the
     // page before doing anything, so the second copy always sees the first, even if the first has no panel yet or crashed.
     // The second copy stops and shows a large banner at the top of the page naming the older copy to delete.
@@ -5542,8 +5542,8 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             let passS = 0, passP = 0;
             planetIds().forEach(id => {
                 const pn = shortName(id), sp = slavesPerTurn(id), pp = profsPerTurn(id);
-                if (sp && uvPassiveOn()) passS += sp.n * A.ticksPerDay;
-                if (pp && uvPassiveOn()) passP += pp.n * A.ticksPerDay;
+                if (sp && uvPassiveOn()) passS += sp.n * passiveShare(id, 'slaves').share * A.ticksPerDay;
+                if (pp && uvPassiveOn()) passP += pp.n * passiveShare(id, 'profs').share * A.ticksPerDay;
                 if (on.slaves && sp && pS != null && sp.n * pS * keepS > 0)
                     methods.push({ planet: pn, kind: 'units', group: 'slaves', units: sp.n, label: `Sell slaves from ${pn}`, perTurn: sp.n * pS * keepS });
                 if (on.profs && pp && pP != null && pp.n * (pP - uSell) > 0)
@@ -8084,6 +8084,24 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     // Passive training on or off (since v3.11.0): Unit Value, Value Optimizer and the Income statement
     function uvPassiveOn() { return GM_getValue('sa-uv-passive', true) !== false; }
     function uvTicks() { return uvPassiveOn() ? cgAssumptions().ticksPerDay : 0; }
+    // Passive training is split by training slots (since v3.33.1): each unit in the planet's queue gets 1/N of one turn's worth per tick
+    // (1 unit training = 100%, 4 = 25% each); units not in the queue get none. The queue comes from the game's Empire page (and the
+    // Train Units page once it's read); with no reading for a planet, no passive is counted.
+    function trainQueue(slot) {
+        const cands = [];
+        const emp = GM_getValue('sa-empire', null);
+        const ep = emp && (emp.planets || []).find(p => p.slot === slot && p.train);
+        if (ep) cands.push({ items: (ep.train.items || []).map(i => i.name), savedAt: emp.savedAt, from: 'Empire page' });
+        const tq = GM_getValue('sa-trainq-' + slot, null);
+        if (tq && Array.isArray(tq.items)) cands.push({ items: tq.items, savedAt: tq.savedAt, from: 'Train Units page' });
+        cands.sort((a, b) => new Date(b.savedAt || 0) - new Date(a.savedAt || 0));
+        return cands[0] || null;
+    }
+    function passiveShare(slot, kind) {
+        const q = trainQueue(slot); if (!q) return { share: 0, known: false };
+        const re = kind === 'profs' ? /professor/i : /slave/i, n = q.items.length;
+        return { share: n ? q.items.filter(x => re.test(x)).length / n : 0, known: true, n, from: q.from, savedAt: q.savedAt };
+    }
     // Slaves per turn = 50% of the planet's untrained per tick (all bonuses)
     function slavesPerTurn(slot) {
         const um = untrainedModel(slot);
@@ -8169,7 +8187,10 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         const sRows = priceRows(/slave|untrained/i, 'sa-uv-price');
         const sp = slavesPerTurn(slot);
         const pOn = uvPassiveOn(), offTxt = '<span style="color:var(--dim)">off</span>';
-        const sPassive = sp && pOn ? sp.n * ticks : 0, ss = split(sPassive, sp ? sp.n : 0, limS);
+        const shS = passiveShare(slot, 'slaves'), shP = passiveShare(slot, 'profs');
+        if (pOn) note(shS.known ? `Passive training is split by training slots: ${shS.n} unit${shS.n === 1 ? '' : 's'} training here (${escapeHtml(shS.from)}, ${escapeHtml(agoText(shS.savedAt))}), so slaves get ${Math.round(shS.share * 100)}% and professors ${Math.round(shP.share * 100)}% of a turn's worth per tick.`
+            : 'Passive training: open the game\'s Empire page so SharkBot knows what this planet is training. Until then no passive training is counted.');
+        const sPassive = sp && pOn ? sp.n * shS.share * ticks : 0, ss = split(sPassive, sp ? sp.n : 0, limS);
         head('Slaves');
         kv([['Passive (1 turn / tick)', pOn ? `${f(sPassive)} /day → sold ${f(ss.pSold)}` : offTxt],
             ['Trained per turn', sp ? f(sp.n) + ' <span style="color:var(--muted)">(50% of untrained per tick)</span>' : 'Farmers not saved (scan Train Units)'],
@@ -8182,7 +8203,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         // Professors
         const pp = profsPerTurn(slot);
         const uSell = (marketRes(/untrained/i) || {}).sellPrice ?? null;
-        const pPassive = pp && pOn ? pp.n * ticks : 0, ps = split(pPassive, pp ? pp.n : 0, limP);
+        const pPassive = pp && pOn ? pp.n * shP.share * ticks : 0, ps = split(pPassive, pp ? pp.n : 0, limP);
         head('Professors');
         kv([['Passive (1 turn / tick)', pOn ? `${f(pPassive)} /day → sold ${f(ps.pSold)}` : offTxt],
             ['Trained per turn', pp ? `${f(pp.n)} <span style="color:var(--muted)">(Barracks ${pp.L}, Education +${(pp.edu * 100).toFixed(0)}%${pp.card ? `, card +${pp.card}%` : ''})</span>` : 'Barracks level not saved'],
@@ -8212,7 +8233,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             let tS = 0, tP = 0;
             const rows = planetIds().map(id => {
                 const a = slavesPerTurn(id), b = profsPerTurn(id);
-                const sd = a ? a.n * ticks : 0, pd = b ? b.n * ticks : 0; tS += sd; tP += pd;
+                const sd = a ? a.n * passiveShare(id, 'slaves').share * ticks : 0, pd = b ? b.n * passiveShare(id, 'profs').share * ticks : 0; tS += sd; tP += pd;
                 return [escapeHtml(shortName(id)) + (a && b ? '' : ' <span style="color:var(--dim)">(' + (!a ? 'no farmers' : 'no Barracks') + ')</span>'), f(sd), f(pd),
                     sP ? f(sd * sP[1] * keepS) : '—', pP ? f(pd * pP[1]) : '—'];
             });
@@ -11041,11 +11062,58 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     }
     setInterval(() => { try { checkEmpirePage(); } catch (e) {} }, 3000);
     // Empire → Overview: every planet at a glance. Red: idle or ends within 6 hours; amber: within 24 hours (timers count down from the reading)
+    // Overview from saved data first (since v3.34.0): every saved planet, with inventory, untrained units and the hero from your scans;
+    // the Empire page adds training, factory, attacks and fleets. Where both have something, the newer reading wins.
+    function overviewPlanets() {
+        const d = GM_getValue('sa-empire', null), et = d ? new Date(d.savedAt).getTime() : 0;
+        const rows = d ? (d.planets || []).map(p => Object.assign({}, p, { heroEndAt: p.hero && p.hero.leftMs != null ? et + p.hero.leftMs : null, src: 'empire' })) : [];
+        planetIds().forEach(id => {
+            let r = rows.find(p => p.slot === id);
+            if (!r) { r = { name: shortName(id), slot: id, src: 'saved' }; rows.push(r); }
+            const inv = invLoad(id), it = inv && new Date(inv.savedAt || 0).getTime();
+            if (inv && inv.items && (!r.inv || it > et)) {
+                const old = r.inv || [];
+                r.inv = inv.items.map(i => { const o = old.find(x => resName(x.name) === resName(i.name)); return { name: i.name, amount: i.value, change: o ? o.change : null }; });
+                r.invAt = inv.savedAt;
+            }
+            const u = getSlot(id), ut = u && new Date(u.savedAt || 0).getTime(), un = u && (u.units || []).find(x => /^untrained/i.test(x.name));
+            if (un && (r.untrained == null || ut > et)) { r.untrained = un.count; r.untrainedAt = u.savedAt; }
+            const h = GM_getValue('sa-hero-' + id, null);
+            if (h && h.endsAt && (r.hero === undefined || new Date(h.savedAt).getTime() > et)) { r.hero = { effects: h.effects || (r.hero && r.hero.effects) || '' }; r.heroEndAt = new Date(h.endsAt).getTime(); r.heroExact = true; }
+        });
+        return { d, rows };
+    }
+    // Hero card's exact time left (since v3.34.0): hovering its time on the Nation or Empire page shows e.g. "2 months, 14 days, 8 hours,
+    // 22 minutes, and 23 seconds"; that end time is saved per planet (sa-hero-<slot>)
+    var heroHover = null;
+    document.addEventListener('mouseover', (e) => {
+        const h = e.target && e.target.closest && e.target.closest('active-hero'); if (!h || sbView) return;
+        heroHover = { el: h, at: Date.now() }; setTimeout(readHeroTip, 300); setTimeout(readHeroTip, 900);
+    }, true);
+    function readHeroTip() {
+        if (!heroHover || Date.now() - heroHover.at > 5000 || isLocked()) return;
+        const DUR = /^(\d+\s*(months?|days?|hours?|minutes?|seconds?)[,\s]*(and\s*)?)+$/i;
+        const tip = Array.from(document.querySelectorAll('body *')).find(el => !el.closest('#' + PANEL_ID) && !el.closest('active-hero') && el.children.length === 0
+            && DUR.test((el.textContent || '').trim()) && el.getBoundingClientRect().width > 0);
+        const ms = tip && durMs(tip.textContent); if (!ms) return;
+        const h = heroHover.el, emp = h.closest('empire-page');
+        let slot = null;
+        if (emp) {
+            const td = h.closest('td'), tr = td && td.parentElement, first = tr && tr.cells[0];   // one row per planet, its name in the first cell
+            const name = first ? ((first.innerText || first.textContent || '').split('\n').map(x => x.trim()).filter(Boolean)[0] || '').replace(/#\s*\(.*$/, '').trim() : '';
+            slot = planetIds().find(id => shortName(id).trim().toLowerCase() === String(name).trim().toLowerCase()) || null;
+        } else { const det = detectPlanet(); if (det && det.slot && !det.assign) slot = det.slot; }
+        if (!slot) return;
+        const ef = (h.innerText || h.textContent || '').replace(/\s+/g, ' ').match(/Effects:\s*(.+?)(?:Time left:|$)/i);
+        GM_setValue('sa-hero-' + slot, { endsAt: new Date(Date.now() + ms).toISOString(), effects: ef ? ef[1].trim().slice(0, 120) : '', savedAt: new Date().toISOString() });
+        heroHover = null;
+        try { renderOverview(); } catch (e) {}
+    }
     function renderOverview() {
         const view = document.getElementById('sa-overview-view'); if (!view) return;
-        const d = GM_getValue('sa-empire', null);
-        if (!d || !(d.planets || []).length) { view.innerHTML = '<div class="sa-empty">Nothing read yet. Open the game\'s <b>Empire</b> page (all your planets on one screen) and SharkBot reads it by itself.</div>'; return; }
-        const at = new Date(d.savedAt).getTime(), age = Date.now() - at;
+        const { d, rows: planets } = overviewPlanets();
+        if (!planets.length) { view.innerHTML = '<div class="sa-empty">Nothing saved yet. Scan your planets, or open the game\'s <b>Empire</b> page (all your planets on one screen) and SharkBot reads it by itself.</div>'; return; }
+        const at = d ? new Date(d.savedAt).getTime() : Date.now(), age = Date.now() - at;
         const left = (ms) => ms == null ? null : ms - age;
         const H = 3600e3, RED = 'var(--neg, #e06060)', AMB = 'var(--warn, #e0b050)';
         const col = (ms) => ms == null ? '' : ms <= 6 * H ? RED : ms <= 24 * H ? AMB : '';
@@ -11053,7 +11121,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             return dd ? `${dd} d ${hh} h` : hh ? `${hh} h ${mm} min` : `${mm} min`; };
         const f = (v) => v == null ? '—' : escapeHtml(fmt(v));
         const alerts = [];
-        const rows = d.planets.map(p => {
+        const rows = planets.map(p => {
             const tr = p.train, fa = p.factory, hero = p.hero;
             // Training
             let tCell = '—';
@@ -11080,7 +11148,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                 (p.untrained != null ? `<div style="font-size:10px">Untrained: ${f(p.untrained)}${p.untrainedSlaves != null ? ` · slaves ${f(p.untrainedSlaves)}` : ''}</div>` : '') +
                 (p.energy != null ? `<div style="font-size:10px">⚡ ${f(p.energy)}${p.energyGain != null ? ` (+${f(p.energyGain)})` : ''}</div>` : '');
             // Attacks, fleets, hero
-            const hl = hero ? left(hero.leftMs) : null;
+            const hl = hero && p.heroEndAt ? p.heroEndAt - Date.now() : null;
             if (hero && hl != null && hl <= 24 * H) alerts.push(`${p.name}: hero ends in ${dur(hl)}`);
             const oCell = `${p.attacks != null ? `<div style="font-size:10px; color:${p.attacks > 0 ? AMB : 'inherit'}">Incoming attacks: ${f(p.attacks)}</div>` : ''}` +
                 `${p.fleets ? `<div style="font-size:10px">Fleets ${p.fleets[0]} / ${p.fleets[1]}</div>` : ''}` +
@@ -11090,7 +11158,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         }).join('');
         const ageCol = age > 3 * 24 * H ? RED : age > 24 * H ? AMB : 'var(--muted)';
         view.innerHTML = `<div class="sa-recommend" style="margin-bottom:6px">${alerts.length ? `<b style="color:${RED}">${alerts.length} to check:</b> ${alerts.map(escapeHtml).join(' · ')}` : '<b style="color:var(--pos)">Everything is busy.</b>'}
-                <div style="font-size:10px; color:${ageCol}; margin-top:2px">Read from the game's Empire page ${escapeHtml(agoText(d.savedAt))}; timers count down from then. Open it again to refresh.</div></div>
+                <div style="font-size:10px; color:${ageCol}; margin-top:2px">${d ? `Training, factory, attacks and fleets from the game's Empire page ${escapeHtml(agoText(d.savedAt))}; timers count down from then. Open it again to refresh.` : 'From your saved scans. Open the game\'s Empire page to add training, factory, attacks and fleets.'} Inventory, untrained units and heroes use your newest scan (hover a hero card's time on the Nation or Empire page for its exact end).</div></div>
             <div style="overflow-x:auto"><table class="sa-unit-table sa-stmt" style="font-size:11px"><thead><tr><th>Planet</th><th>Training</th><th>Factory</th><th>Resources / tick</th><th>Attacks · fleets · hero</th></tr></thead>
             <tbody>${rows}</tbody></table></div>`;
     }
