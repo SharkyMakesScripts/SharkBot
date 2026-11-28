@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SharkBot
 // @namespace    https://spacealpha.net/
-// @version      3.30.1
+// @version      3.33.0
 // @description  SharkBot for Space Alpha: saves your planets' units, facilities, inventory, research, bank and market prices, and calculates credit generation and Tick Generator upgrade costs.
 // @author       SharkBot
 // @match        https://spacealpha.net/*
@@ -103,10 +103,11 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         if (m || !make) return m || null;
         const v = hexOf(rnd(12)); document.cookie = 'sbSess=' + v + '; path=/; SameSite=Strict; Secure'; return v;
     }
-    function sessionSave(raw, lock) { __SB_GM.set('sa-lock-session', { marker: sessMarker(true), id: lock.id, key: encB64(raw) }); }
+    // Remember me (since v3.31.0): kept unlocked across browser restarts until Lock now or a password change
+    function sessionSave(raw, lock, remember) { __SB_GM.set('sa-lock-session', { marker: sessMarker(true), id: lock.id, key: encB64(raw), remember: !!remember, at: new Date().toISOString() }); }
     async function sessionRestore(lock) {
         const s = __SB_GM.get('sa-lock-session', null), m = sessMarker(false);
-        if (!s || !m || s.marker !== m || s.id !== lock.id) return false;
+        if (!s || s.id !== lock.id || (!s.remember && (!m || s.marker !== m))) return false;
         try { await useKey(decB64(s.key)); return true; } catch (e) { return false; }
     }
     // Every saved item into memory, decrypted; items saved before the lock (or by an older copy) are encrypted now
@@ -140,31 +141,46 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             const mode = lock ? 'unlock' : backup && backup.v === 2 && backup.lock ? 'restore' : 'create';
             const box = document.createElement('div');
             box.id = 'sa-lock-screen';
-            box.style.cssText = 'position:fixed; top:80px; right:20px; width:360px; z-index:2147483646; background:#111827; color:#e5e7eb; border:1px solid #3b82f6; border-radius:10px; padding:14px 16px; font:12px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; box-shadow:0 8px 24px rgba(0,0,0,.6); text-align:left';
-            const inp = 'width:100%; box-sizing:border-box; margin:3px 0 8px; padding:6px 8px; background:#0b1220; color:#e5e7eb; border:1px solid #374151; border-radius:6px; font:13px sans-serif';
+            box.style.cssText = 'position:fixed; top:80px; right:20px; width:360px; min-width:280px; min-height:220px; resize:both; overflow:auto; z-index:2147483646; background:#111827; color:#e5e7eb; border:1px solid #3b82f6; border-radius:10px; padding:14px 16px; font:12px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; box-shadow:0 8px 24px rgba(0,0,0,.6); text-align:left';
+            const lbl = 'display:block'; const inp = 'display:block; width:100%; box-sizing:border-box; margin:3px 0 8px; padding:6px 8px; background:#0b1220; color:#e5e7eb; border:1px solid #374151; border-radius:6px; font:13px sans-serif';
             const btn = (bg) => `display:block; width:100%; margin:4px 0 0; padding:7px; border-radius:6px; border:1px solid ${bg}; background:${bg}; color:#fff; font:600 12px sans-serif; cursor:pointer`;
             const lnk = 'background:none; border:0; color:#93c5fd; cursor:pointer; padding:0; font:11px sans-serif; text-decoration:underline';
+            const remember = `<label style="display:flex; gap:6px; align-items:center; margin:0 0 6px; cursor:pointer"><input type="checkbox" id="sa-lk-rem" style="margin:0"> Remember me <span style="color:#9ca3af; font-size:11px">(stay unlocked on this computer until 🔒 Lock now)</span></label>`;
+            const title = (t) => `<div id="sa-lk-title" style="font-weight:700; font-size:14px; margin:-4px -6px 6px; padding:4px 6px; cursor:move; user-select:none" title="Drag to move; resize from the bottom-right corner">${t}</div>`;
             const note = '<div style="font-size:11px; color:#9ca3af; margin:0 0 10px">Your password never leaves this browser: it isn\'t sent to Sharky, the game or anyone, and nobody (admins included) can see or recover it. Everything SharkBot saves is encrypted with it.</div>';
-            box.innerHTML = mode === 'create' ? `<div style="font-weight:700; font-size:14px; margin-bottom:6px">🦈 Create your SharkBot password</div>${note}
-                    <label>Password (at least 8 characters)<input type="password" id="sa-lk-pw" autocomplete="new-password" style="${inp}"></label>
-                    <label>Type it again<input type="password" id="sa-lk-pw2" autocomplete="new-password" style="${inp}"></label>
-                    <div id="sa-lk-msg" style="color:#fca5a5; min-height:16px; font-size:11px"></div><button type="button" id="sa-lk-go" style="${btn('#2563eb')}">Set password and continue</button>
+            box.innerHTML = mode === 'create' ? `${title('🦈 Create your SharkBot password')}${note}
+                    <label style="${lbl}">Password (at least 8 characters)<input type="password" id="sa-lk-pw" autocomplete="new-password" style="${inp}"></label>
+                    <label style="${lbl}">Type it again<input type="password" id="sa-lk-pw2" autocomplete="new-password" style="${inp}"></label>
+                    ${remember}<div id="sa-lk-msg" style="color:#fca5a5; min-height:16px; font-size:11px"></div><button type="button" id="sa-lk-go" style="${btn('#2563eb')}">Set password and continue</button>
                     <div style="font-size:11px; color:#9ca3af; margin-top:8px">You'll type it once each time you start your browser. If you forget it, SharkBot's saved data on this browser has to be wiped and you register again (keep a backup with Download my data).</div>`
-                : mode === 'restore' ? `<div style="font-weight:700; font-size:14px; margin-bottom:6px">🦈 Welcome back</div>
+                : mode === 'restore' ? `${title('🦈 Welcome back')}
                     <div style="font-size:11px; color:#9ca3af; margin:0 0 10px">An earlier SharkBot install in this browser left an encrypted backup of your registration. Type that SharkBot password to keep it, or start fresh.</div>
-                    <label>Password<input type="password" id="sa-lk-pw" autocomplete="current-password" style="${inp}"></label>
-                    <div id="sa-lk-msg" style="color:#fca5a5; min-height:16px; font-size:11px"></div><button type="button" id="sa-lk-go" style="${btn('#2563eb')}">Unlock</button>
+                    <label style="${lbl}">Password<input type="password" id="sa-lk-pw" autocomplete="current-password" style="${inp}"></label>
+                    ${remember}<div id="sa-lk-msg" style="color:#fca5a5; min-height:16px; font-size:11px"></div><button type="button" id="sa-lk-go" style="${btn('#2563eb')}">Unlock</button>
                     <div style="margin-top:8px"><button type="button" id="sa-lk-fresh" style="${lnk}">Start fresh (register again)</button></div>`
-                : `<div style="font-weight:700; font-size:14px; margin-bottom:6px">🦈 SharkBot is locked</div>
-                    <label>Password<input type="password" id="sa-lk-pw" autocomplete="current-password" style="${inp}"></label>
-                    <div id="sa-lk-msg" style="color:#fca5a5; min-height:16px; font-size:11px"></div><button type="button" id="sa-lk-go" style="${btn('#2563eb')}">Unlock</button>
+                : `${title('🦈 SharkBot is locked')}
+                    <label style="${lbl}">Password<input type="password" id="sa-lk-pw" autocomplete="current-password" style="${inp}"></label>
+                    ${remember}<div id="sa-lk-msg" style="color:#fca5a5; min-height:16px; font-size:11px"></div><button type="button" id="sa-lk-go" style="${btn('#2563eb')}">Unlock</button>
                     <div style="margin-top:8px"><button type="button" id="sa-lk-forgot" style="${lnk}">Forgot password?</button></div>`;
             document.body.appendChild(box);
+            // Where the box was and its size (since v3.31.0; plain, so it can be read before unlocking)
+            try { const p = __SB_GM.get('sa-lock-pos', null); if (p) { box.style.right = 'auto';
+                box.style.left = Math.max(0, Math.min(p.left, innerWidth - 120)) + 'px'; box.style.top = Math.max(0, Math.min(p.top, innerHeight - 60)) + 'px';
+                if (p.w) box.style.width = p.w + 'px'; if (p.h) box.style.height = p.h + 'px'; } } catch (e) {}
+            const savePos = () => { const r = box.getBoundingClientRect(); try { __SB_GM.set('sa-lock-pos', { left: Math.round(r.left), top: Math.round(r.top), w: Math.round(r.width), h: box.style.height ? Math.round(r.height) : 0 }); } catch (e) {} };
+            box.querySelector('#sa-lk-title').addEventListener('mousedown', (e) => {
+                if (e.button !== 0) return; e.preventDefault();
+                const r = box.getBoundingClientRect(), dx = e.clientX - r.left, dy = e.clientY - r.top;
+                const mv = (ev) => { box.style.right = 'auto'; box.style.left = Math.max(0, Math.min(ev.clientX - dx, innerWidth - 120)) + 'px'; box.style.top = Math.max(0, Math.min(ev.clientY - dy, innerHeight - 40)) + 'px'; };
+                const up = () => { removeEventListener('mousemove', mv); removeEventListener('mouseup', up); savePos(); };
+                addEventListener('mousemove', mv); addEventListener('mouseup', up);
+            });
+            let rsT = 0; try { new ResizeObserver(() => { if (!box.isConnected) return; clearTimeout(rsT); rsT = setTimeout(() => { if (box.style.width || box.style.height) savePos(); }, 400); }).observe(box); } catch (e) {}
             const msg = (t) => { box.querySelector('#sa-lk-msg').textContent = t; };
             const pw = box.querySelector('#sa-lk-pw'), go = box.querySelector('#sa-lk-go');
             setTimeout(() => { try { pw.focus(); } catch (e) {} }, 50);
             box.addEventListener('keydown', (e) => { if (e.key === 'Enter') go.click(); e.stopPropagation(); });
-            const done = async (raw, lk) => { __SB_GM.set('sa-lock', lk); await useKey(raw); sessionSave(raw, lk); box.remove(); resolve(); };
+            const done = async (raw, lk) => { __SB_GM.set('sa-lock', lk); await useKey(raw); sessionSave(raw, lk, !!box.querySelector('#sa-lk-rem')?.checked); box.remove(); resolve(); };
             go.addEventListener('click', async () => {
                 const p = pw.value;
                 go.disabled = true; msg('');
@@ -205,7 +221,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     const PANEL_ID = 'sa-helper-panel';
     const SLOT_IDS = 'ABCDEFGHIJ'.split('');   // up to 10 planets
     // Version comes from the @version header so it's never out of sync
-    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.30.1';
+    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.33.0';
     // Two copies installed (usually an update pasted in as a new script): since v3.17.1 every copy writes its version on the
     // page before doing anything, so the second copy always sees the first, even if the first has no panel yet or crashed.
     // The second copy stops and shows a large banner at the top of the page naming the older copy to delete.
@@ -5727,11 +5743,13 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         if (!bar) return;
         const u = updLoad(), need = u.min && verLess(VERSION, u.min) || regLoad().status === 'update', avail = u.latest && verLess(VERSION, u.latest);
         const url = u.url || UPDATE_URL;
+        // A new major or minor version (x.y.0) is strongly recommended (since v3.33.0); only major (x.0.0) versions are forced by the server
+        const strong = avail && !need && (() => { const a = String(VERSION).split('.').map(Number), b = String(u.latest).split('.').map(Number); return (b[0] || 0) > (a[0] || 0) || (b[1] || 0) > (a[1] || 0); })();
         if (!need && !avail && !updMsg) { bar.style.display = 'none'; bar.innerHTML = ''; return; }
         bar.style.cssText = `display:flex; gap:6px; align-items:center; flex-wrap:wrap; padding:5px 10px; font-size:11px; border-bottom:1px solid var(--border);
-            background:${need ? 'rgba(220,70,70,0.18)' : avail ? 'rgba(80,160,255,0.15)' : 'var(--inset)'}`;
+            background:${need ? 'rgba(220,70,70,0.18)' : strong ? 'rgba(245,158,11,0.22)' : avail ? 'rgba(80,160,255,0.15)' : 'var(--inset)'}`;
         bar.innerHTML = !need && !avail ? `<span style="flex:1">${escapeHtml(updMsg)}</span>${updGhFail && /GitHub/.test(updMsg) ? `<button class="sa-btn" id="sa-update-open" style="margin:0">Open update page</button>` : ''}`
-            : `<span style="flex:1">${need ? `<b>Update required:</b> Sharky's server needs SharkBot v${escapeHtml(u.min || u.latest || '?')} or newer` : `<b>SharkBot v${escapeHtml(u.latest)}</b> is available`} (you have v${escapeHtml(VERSION)}).${
+            : `<span style="flex:1">${need ? `<b>Update required:</b> Sharky's server needs SharkBot v${escapeHtml(u.min || u.latest || '?')} or newer` : strong ? `<b>Strongly recommended:</b> update to SharkBot v${escapeHtml(u.latest)}` : `<b>SharkBot v${escapeHtml(u.latest)}</b> is available`} (you have v${escapeHtml(VERSION)}).${
                 url ? '' : ' Ask Sharky for the new file.'}</span>${url ? `<button class="sa-btn" id="sa-update-go" style="margin:0">Update</button>` : ''}`;
         bar.querySelector('#sa-update-open')?.addEventListener('click', () => { window.open(url, '_blank'); updMsg = 'If Tampermonkey shows an Update or Reinstall page, click it, then refresh this page (F5) to start the new version.'; updGhFail = false; renderUpdateBar(); });
         bar.querySelector('#sa-update-go')?.addEventListener('click', () => {
@@ -5922,7 +5940,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             const cur = __SB_GM.get('sa-lock', null); if (!cur) return say('No password set yet.');
             say('Checking…');
             let raw; try { raw = await lockOpen(cur, o); } catch (e) { return say('The current password is wrong.'); }
-            const nl = await lockWrap(raw, n, cur.id); __SB_GM.set('sa-lock', nl); encBackupSave();
+            const nl = await lockWrap(raw, n, cur.id); __SB_GM.set('sa-lock', nl); sessionSave(raw, nl, false); encBackupSave();   // a new password ends Remember me
             pwMsg = 'Password changed.'; renderPwBox();
         });
         box.querySelector('#sa-pw-lock').addEventListener('click', () => { try { __SB_GM.del('sa-lock-session'); } catch (e) {} location.reload(); });
@@ -6089,6 +6107,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     var unregArmed = false;
 
     // Admin: log in (checked by the Apps Script) and browse everyone's shared data
+    var relockArmed = false, relockMsg = '', suggestMsg = '';
     var adminCreds = null, adminData = null, adminUsers = null, adminResetArmed = null, adminSelfNote = '', adminPullAt = null, adminPullMsg = '', adminPullTimer = null;
     function renderAdmin() {
         const view = document.getElementById('sa-admin-view');
@@ -6141,6 +6160,8 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                 <button class="sa-btn" id="sa-adm-refresh" style="margin:0; flex:1">↻ Refresh</button>
                 <button class="sa-btn" id="sa-adm-pull" style="margin:0; flex:1" title="Ask players for data: pick what, from whom and for how long; each player sees a note and chooses whether to send">⇣ Request data</button>
                 <button class="sa-btn" id="sa-adm-logout" style="margin:0; flex:1">Log out</button></div>
+            <div style="margin-bottom:6px"><button class="sa-btn" id="sa-adm-suggest" style="margin:0; width:100%" title="Players on an older version get a pop-up within a minute suggesting the update (once each)">⇧ Suggest update to v${escapeHtml(updLoad().latest || VERSION)}</button>${suggestMsg ? `<div class="sa-slot-meta">${escapeHtml(suggestMsg)}</div>` : ''}</div>
+            <div style="margin-bottom:6px"><button class="sa-btn sa-btn-danger" id="sa-adm-relock" style="margin:0; width:100%" title="Every player's SharkBot locks within a minute and asks for their password again (Remember me included). Admin copies aren't affected.">🔒 Make everyone re-enter their password</button>${relockMsg ? `<div class="sa-slot-meta">${escapeHtml(relockMsg)}</div>` : ''}</div>
             ${(() => { const c = clearCandidates(); return `<div style="margin-bottom:6px"><button class="sa-btn sa-btn-danger" id="sa-adm-clear" style="margin:0; width:100%" ${c.names.length ? '' : 'disabled'}
                 title="Removes them from the Players and Alliances lists for every admin (not their registration or shared data). Players we have data on are kept. A cleared player comes back when seen online or on the highscore again.">${
                 clearArmed ? `Click again to clear ${c.names.length} players` : `🧹 Clear 1-player alliances and players with no alliance (${c.names.length}: ${c.single} alone in an alliance, ${c.none} with no alliance)`}</button>${
@@ -6172,6 +6193,19 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                 ${deleteBtn(resetPick)}` : ''}
             ${managedAdminHtml()}`;
         view.querySelector('#sa-adm-refresh').addEventListener('click', adminRefresh);
+        view.querySelector('#sa-adm-suggest').addEventListener('click', async () => {
+            try { const r = await gmPost(shareUrl(), Object.assign({ action: 'suggestupdate', user: adminCreds.user, pass: adminCreds.pass, version: VERSION }, regIdentity()));
+                  suggestMsg = r && r.ok ? `Suggested v${r.suggest.version} at ${new Date(r.suggest.at).toLocaleTimeString()}: open SharkBots on older versions see a pop-up within a minute.` : 'Failed: ' + ((r && r.error) || 'no answer');
+            } catch (e) { suggestMsg = 'Failed: ' + e.message; }
+            renderAdmin();
+        });
+        view.querySelector('#sa-adm-relock').addEventListener('click', async () => {
+            if (!relockArmed) return; relockArmed = false;
+            try { const r = await gmPost(shareUrl(), Object.assign({ action: 'relockall', user: adminCreds.user, pass: adminCreds.pass, version: VERSION }, regIdentity()));
+                  relockMsg = r && r.ok ? `Sent ${new Date(r.relockAt).toLocaleTimeString()}: open SharkBots lock within a minute, the rest on their next page load.` : 'Failed: ' + ((r && r.error) || 'no answer');
+            } catch (e) { relockMsg = 'Failed: ' + e.message; }
+            renderAdmin();
+        });
         view.querySelector('#sa-adm-clear')?.addEventListener('click', async () => {
             if (!clearArmed) { clearArmed = true; renderAdmin(); setTimeout(() => { if (clearArmed) { clearArmed = false; renderAdmin(); } }, 8000); return; }
             clearArmed = false;
@@ -6861,7 +6895,31 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     async function pullCheck() {
         const url = shareUrl();
         if (!url || sbView || isLocked() || regLoad().status !== 'accepted') return;
-        try { const r = await gmPost(url, { action: 'pullcheck', username: regIdentity().username || '' }); if (r && r.ok && r.pullAt) pullAnswer(r.pullAt, r.request); } catch (e) {}
+        try { const r = await gmPost(url, { action: 'pullcheck', username: regIdentity().username || '' }); if (r && r.ok && r.relockAt) relockCheck(r.relockAt); if (r && r.ok && r.suggest) suggestUpdate(r.suggest); if (r && r.ok && r.pullAt) pullAnswer(r.pullAt, r.request); } catch (e) {}
+    }
+    // Sharky asked everyone to type their password again (since v3.32.0): a session unlocked before that ends (Remember me too) and the
+    // lock screen shows. Admin copies are skipped.
+    // Sharky suggests updating (since v3.33.0): copies older than the suggested version get a pop-up once per suggestion
+    function suggestUpdate(sg) {
+        if (sbView || !sg || !sg.at || !sg.version || !verLess(VERSION, sg.version) || GM_getValue('sa-suggest-seen', '') === sg.at || document.getElementById('sa-suggest-pop')) return;
+        const url = updLoad().url || UPDATE_URL, pop = document.createElement('div');
+        pop.id = 'sa-suggest-pop';
+        pop.style.cssText = 'position:fixed; top:90px; left:50%; transform:translateX(-50%); width:340px; z-index:2147483646; background:#111827; color:#e5e7eb; border:1px solid #f59e0b; border-radius:10px; padding:12px 14px; font:12px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; box-shadow:0 8px 24px rgba(0,0,0,.6); text-align:left';
+        const b = (bg) => `margin:0; flex:1; padding:6px; border-radius:6px; border:1px solid ${bg}; background:${bg}; color:#fff; font:600 12px sans-serif; cursor:pointer`;
+        pop.innerHTML = `<div style="font-weight:700; font-size:14px; margin-bottom:6px">🦈 Sharky suggests updating</div>
+            <div style="margin-bottom:10px">SharkBot v${escapeHtml(sg.version)} is out (you have v${escapeHtml(VERSION)}). Click Update, confirm in Tampermonkey, then refresh this page (F5).</div>
+            <div style="display:flex; gap:6px"><button type="button" id="sa-sg-go" style="${b('#2563eb')}">Update</button><button type="button" id="sa-sg-no" style="${b('#4b5563')}">Not now</button></div>`;
+        document.body.appendChild(pop);
+        const seen = () => { GM_setValue('sa-suggest-seen', sg.at); pop.remove(); };
+        pop.querySelector('#sa-sg-go').addEventListener('click', () => { seen(); window.open(url, '_blank'); updMsg = 'Tampermonkey opens its Update page: click Update there, then refresh this page (F5) to start the new version.'; try { renderUpdateBar(); } catch (e) {} });
+        pop.querySelector('#sa-sg-no').addEventListener('click', seen);
+    }
+    function relockCheck(at) {
+        if (sbView || GM_getValue('sa-admin-copy', false)) return;
+        const s = __SB_GM.get('sa-lock-session', null), t = new Date(at).getTime();
+        if (!s || !t || new Date(s.at || 0).getTime() >= t) return;
+        try { __SB_GM.del('sa-lock-session'); } catch (e) {}
+        location.reload();
     }
     setInterval(() => pullCheck(), 60e3);
     setTimeout(() => { try { renderNoticeBar(); } catch (e) {} }, 2500);   // a request still open after a reload shows again (since v3.20.1)
@@ -7049,6 +7107,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         const nm = (x) => escapeHtml(String(x || '').trim());
         let ask = null;
         if (btn.id === 'sa-adm-clear') { const c = clearCandidates(); ask = { what: `Clear ${c.names.length} players (1-player alliances and players with no alliance) from Players and Alliances for every admin?`, arm: () => { clearArmed = true; } }; }
+        else if (btn.id === 'sa-adm-relock') ask = { what: 'Make every player type their SharkBot password again? Open copies lock within a minute (Remember me included); admin copies aren\'t affected.', arm: () => { relockArmed = true; } };
         else if (btn.id === 'sa-fl-reset') ask = { what: 'Delete ALL fleet history (every saved fleet, scan and maximum) for every admin? This can\'t be undone.', arm: () => { flResetArmed = true; } };
         else if (btn.id === 'sa-temp-del') ask = { what: `Delete the temp profile for ${nm(tempPick && tempPick.name)}?`, arm: () => { tempDelArmed = true; } };
         else if (btn.id === 'sa-adm-reset') ask = { what: 'Reset this player\'s shared data? Their row on your server is deleted; their SharkBot sends fresh data when they next share.', arm: () => { adminResetArmed = '*'; } };
