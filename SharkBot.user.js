@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SharkBot
 // @namespace    https://spacealpha.net/
-// @version      3.38.5
+// @version      3.38.6
 // @description  SharkBot for Space Alpha: saves your planets' units, facilities, inventory, research, bank and market prices, and calculates credit generation and Tick Generator upgrade costs.
 // @author       SharkBot
 // @match        https://spacealpha.net/*
@@ -244,7 +244,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     const PANEL_ID = 'sa-helper-panel';
     const SLOT_IDS = 'ABCDEFGHIJ'.split('');   // up to 10 planets
     // Version comes from the @version header so it's never out of sync
-    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.38.5';
+    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.38.6';
     // Two copies installed (usually an update pasted in as a new script): since v3.17.1 every copy writes its version on the
     // page before doing anything, so the second copy always sees the first, even if the first has no panel yet or crashed.
     // The second copy stops and shows a large banner at the top of the page naming the older copy to delete.
@@ -8603,7 +8603,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         else lines.push('', 'Turn Storage wasn\'t found in your saved facilities: pick it in the list above, or type the level.');
         if (v.brains == null) lines.push('Brains not saved: open the Research page, or type them.');
         // Turn Refill cost (since v3.37.0; the game's turns_refill_cost, shared by Sean): min(⌈1 + 3·√D ÷ 5⌉, ⌈D ÷ 50⌉) for D turns
-        { const rc = (D) => Math.min(Math.ceil(1 + 3 * Math.sqrt(D) / 5), Math.ceil(D / 10 / 5)); if (cap > 0) lines.push('', `Turn Refill cost for a full storage (${Math.round(cap).toLocaleString()} turns): ${rc(Math.round(cap)).toLocaleString()} (the game's refill formula: min(⌈1 + 3·√D ÷ 5⌉, ⌈D ÷ 50⌉)).`); }
+        { const rc = (D) => Math.min(Math.ceil(1 + 3 * Math.sqrt(D) / 5), Math.ceil(D / 10 / 5)); if (cap > 0) lines.push('', `Turn Refill cost for a full storage (${Math.round(cap).toLocaleString()} turns): ${rc(Math.round(cap)).toLocaleString()} diamonds (the game's refill formula: min(⌈1 + 3·√D ÷ 5⌉, ⌈D ÷ 50⌉)).`); }
         out.textContent = lines.join('\n');
     }
     // ---------- Research calculator: cost of the next level of every research ----------
@@ -11185,6 +11185,23 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         try { renderOverview(); } catch (e) {}
     }
     setInterval(() => { try { checkEmpirePage(); } catch (e) {} }, 3000);
+    // Train Units page queue (since v3.38.6): which of the planet's units are training, for the passive training split.
+    // Read from the page's training queue (train-units … trainingqueue) by finding the planet's own unit names in it.
+    var trainqSig = '';
+    function checkTrainQueue() {
+        if (isLocked() || sbView) return;
+        const q = document.querySelector('#content-wrap train-units trainingqueue') || document.querySelector('train-units trainingqueue'); if (!q) return;
+        const det = detectPlanet(); if (!det || !det.slot || det.assign) return;
+        const rows = Array.from(q.querySelectorAll('table tr td > div > div > div > div:nth-child(2)'));
+        const texts = (rows.length ? rows : [q]).map(el => (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim()).filter(Boolean);
+        const names = [...new Set((getSlot(det.slot)?.units || []).map(u => String(u.name).trim()).filter(Boolean))].sort((a, b) => b.length - a.length);
+        const items = [];
+        texts.forEach(t => { let rest = t; names.forEach(n => { const re = new RegExp(n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'); const m = rest.match(re); if (m) { m.forEach(() => items.push(n)); rest = rest.replace(re, ' '); } }); });
+        const sig = det.slot + '|' + items.join(',');
+        if (sig === trainqSig) return; trainqSig = sig;
+        GM_setValue('sa-trainq-' + det.slot, { items, savedAt: new Date().toISOString() });
+    }
+    setInterval(() => { try { checkTrainQueue(); } catch (e) {} }, 3000);
     // Empire → Overview: every planet at a glance. Red: idle or ends within 6 hours; amber: within 24 hours (timers count down from the reading)
     // Overview from saved data first (since v3.34.0): every saved planet, with inventory, untrained units and the hero from your scans;
     // the Empire page adds training, factory, attacks and fleets. Where both have something, the newer reading wins.
