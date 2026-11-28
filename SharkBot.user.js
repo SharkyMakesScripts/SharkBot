@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SharkBot
 // @namespace    https://spacealpha.net/
-// @version      3.38.4
+// @version      3.38.5
 // @description  SharkBot for Space Alpha: saves your planets' units, facilities, inventory, research, bank and market prices, and calculates credit generation and Tick Generator upgrade costs.
 // @author       SharkBot
 // @match        https://spacealpha.net/*
@@ -28,6 +28,11 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     // ---------- Lag report (since v3.38.1) ----------
     // SharkBot's own timers and page watchers are timed only while a 30-second lag recording runs (otherwise they run as is)
     const LAG = { on: false, tasks: new Map(), runs: [], labels: new WeakMap(), cur: null };
+    function lagSpan(label, fn) {   // times one part of a bigger job while recording (since v3.38.5)
+        if (!LAG.on) return fn(); const t0 = performance.now();
+        try { return fn(); } finally { const t1 = performance.now(), d = t1 - t0, x = LAG.tasks.get(label) || { n: 0, total: 0, max: 0 }; x.n++; x.total += d; x.max = Math.max(x.max, d); LAG.tasks.set(label, x); if (d > 5) LAG.runs.push({ label, t0, t1 }); }
+    }
+    function lagAdd(label, t0) { if (LAG.on) lagSpan(label, () => {}), (() => { const x = LAG.tasks.get(label); x.total += performance.now() - t0; x.max = Math.max(x.max, performance.now() - t0); })(); }
     const lagLabel = (fn, kind) => { if (kind[0] === '=') return kind.slice(1); let l = LAG.labels.get(fn); if (!l) { l = kind + ': ' + (fn.name || String(fn).replace(/\s+/g, ' ').slice(0, 70)); LAG.labels.set(fn, l); } return l; };
     function lagTimed(fn, kind) {
         if (typeof fn !== 'function') return fn;
@@ -239,7 +244,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     const PANEL_ID = 'sa-helper-panel';
     const SLOT_IDS = 'ABCDEFGHIJ'.split('');   // up to 10 planets
     // Version comes from the @version header so it's never out of sync
-    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.38.4';
+    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.38.5';
     // Two copies installed (usually an update pasted in as a new script): since v3.17.1 every copy writes its version on the
     // page before doing anything, so the second copy always sees the first, even if the first has no panel yet or crashed.
     // The second copy stops and shows a large banner at the top of the page naming the older copy to delete.
@@ -5058,6 +5063,14 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     // ---------- Best spend: what all your capital could buy ----------
     // Σ k^p, a..b inclusive; closed form for big spans or high levels (same method for a
     // given a, so differences between two calls are smooth)
+    // Σ k^p for k = a…b without looping more than 1,000 times (since v3.38.5; the loop below ran up to 2 million steps per area)
+    function sumPowQuick(a, b, p) {
+        if (b < a) return 0;
+        const m = Math.min(b, a + 999); let t = 0; for (let k = a; k <= m; k++) t += Math.pow(k, p);
+        if (m === b) return t;
+        const A = m + 1, F = (x) => Math.pow(x, p + 1) / (p + 1);
+        return t + F(b) - F(A) + (Math.pow(A, p) + Math.pow(b, p)) / 2 + p / 12 * (Math.pow(b, p - 1) - Math.pow(A, p - 1));
+    }
     function sumPowFast(a, b, p) {
         if (b < a) return 0;
         if (a < 50 && b - a <= 2e6) { let t = 0; for (let k = a; k <= b; k++) t += Math.pow(k, p); return t; }
@@ -11271,8 +11284,8 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         items.forEach(i => {
             const L = i.kind === 'area' ? levelFrom(i).value ?? i.value : i.value; if (!(L > 0)) return;
             const nm = cleanName(i.name);
-            if (i.kind === 'area') { const full = Math.round(40000 * sumPowFast(1, L, 1.7)), ak = p.slot + '|' + nm, cp = (memo.ac[ak] ?? (memo.ac[ak] = areaCardPct(p.slot, nm))) / 100; add(`${nm} (level ${fmt(L)})`, full * (1 - cp), null, full * cp, cp ? ` (−${+(cp * 100).toFixed(2)}% card)` : ''); }
-            else if (/tick\s*generator/i.test(nm)) { const n = L, s25 = sumPowFast(1, L - 1, 2.5), s13 = sumPowFast(1, L - 1, 1.3), s15 = sumPowFast(1, L - 1, 1.5);
+            if (i.kind === 'area') { const full = Math.round(40000 * sumPowQuick(1, L, 1.7)), ak = p.slot + '|' + nm, cp = (memo.ac[ak] ?? (memo.ac[ak] = areaCardPct(p.slot, nm))) / 100; add(`${nm} (level ${fmt(L)})`, full * (1 - cp), null, full * cp, cp ? ` (−${+(cp * 100).toFixed(2)}% card)` : ''); }
+            else if (/tick\s*generator/i.test(nm)) { const n = L, s25 = sumPowQuick(1, L - 1, 2.5), s13 = sumPowQuick(1, L - 1, 1.3), s15 = sumPowQuick(1, L - 1, 1.5);
                 add(`Tick Generator (level ${fmt(L)})`, 8e8 * n + 1.2e9 * s25, { Gold: n + 8 * s13, Iron: 3 * n + 10 * s15, Tritium: n + 10 * s13 }); }
             else if (/barracks/i.test(nm)) {}
             else out.unknown.push(nm);
@@ -11294,7 +11307,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     }
     function renderOverview() {
         const view = document.getElementById('sa-overview-view'); if (!view) return;
-        const { d, rows: planets } = overviewPlanets();
+        const { d, rows: planets } = lagSpan('overview: saved data', () => overviewPlanets());
         if (!planets.length) { view.innerHTML = '<div class="sa-empty">Nothing saved yet. Scan your planets, or open the game\'s <b>Empire</b> page (all your planets on one screen) and SharkBot reads it by itself.</div>'; return; }
         const at = d ? new Date(d.savedAt).getTime() : Date.now(), age = Date.now() - at;
         const left = (ms) => ms == null ? null : ms - age;
@@ -11310,14 +11323,14 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         const fT = (t) => t == null ? '—' : escapeHtml(fmt(Math.ceil(t)));
         const rows = planets.map(p => {
             const tr = p.train, fa = p.factory, hero = p.hero;
-            const ab = abandonOf(p, memo); if (ab) { tot.abC = (tot.abC || 0) + ab.credits; tot.abT = (tot.abT || 0) + ab.turns; }
+            const ab = lagSpan('overview: abandon cost', () => abandonOf(p, memo)); if (ab) { tot.abC = (tot.abC || 0) + ab.credits; tot.abT = (tot.abT || 0) + ab.turns; }
             if (ab) tot.abY = (tot.abY || 0) + ab.yourTurns;
             const aTip = ab ? [`Cheapest way: best card for each part, free training counted.`, `Saved: ${fmt(ab.saved || 0)} credits by cards · ${Math.ceil(ab.freeTurns).toLocaleString()} turns trained free (1 a minute) of ${Math.ceil(ab.turns).toLocaleString()} turns' worth`,
                 ...ab.parts.map(x => `${x.label}: ${fmt(x.v)} credits`), ...ab.units.map(x => `${x.label}: ${fmt(x.n)} → ${Math.ceil(x.t).toLocaleString()} turns' worth`),
                 ...(ab.trainKnown ? [] : ['Units: needs the Barracks level (Train Units page)']), ...(ab.unknown.length ? [`Not counted (cost formula unknown): ${ab.unknown.join(', ')}`] : []),
                 ...(ab.noPrice.size ? [`No market price for ${[...ab.noPrice].join(', ')}`] : [])].join('\n') : '';
             const aCell = !ab ? '—' : `<details title="${escapeHtml(aTip)}"><summary style="cursor:pointer"><b>${f(ab.credits)}</b>${ab.turns ? ` + <b>${escapeHtml(Math.ceil(ab.yourTurns).toLocaleString())}</b> turns` : ''}${ab.unknown.length ? ' <span style="color:var(--muted)">(min)</span>' : ''}${ab.saved || ab.freeTurns ? `<div style="font-size:9px; color:var(--pos)">saves ${f(ab.saved || 0)}${ab.freeTurns ? ` + ${escapeHtml(Math.ceil(ab.freeTurns).toLocaleString())} free turns` : ''}</div>` : ''}</summary><div style="font-size:10px; color:var(--muted)">${escapeHtml(aTip).replace(/\n/g, '<br>')}</div></details>`;
-            const rk = riskOf(p, profsAll, memo); tot.avg += rk.res.avg; tot.min += rk.res.min; tot.max += rk.res.max; tot.turns += rk.turns.total; if (rk.turns.known) tot.known = true;
+            const rk = lagSpan('overview: at risk', () => riskOf(p, profsAll, memo)); tot.avg += rk.res.avg; tot.min += rk.res.min; tot.max += rk.res.max; tot.turns += rk.turns.total; if (rk.turns.known) tot.known = true;
             const rTip = `Min ${fmt(rk.res.min)} · max ${fmt(rk.res.max)} (sell / buy prices)\n` + rk.res.parts.map(x => `${x.label}: ${fmt(x.amount)}${x.label === 'Credits' ? '' : ` ≈ ${fmt(x.value)} credits`}`).join('\n');
             const rCell = rk.res.parts.length ? `<details title="${escapeHtml(rTip)}"><summary style="cursor:pointer"><b>${f(rk.res.avg)}</b></summary><div style="font-size:10px; color:var(--muted)">${escapeHtml(rTip).replace(/\n/g, '<br>')}</div></details>` : '—';
             const tTip = rk.turns.parts.map(x => `${x.label}: ${fmt(x.n)} → ${fmt(Math.ceil(x.t))} turns`).join('\n');
@@ -11356,6 +11369,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                 <td>${tCell}</td><td>${fCell}</td><td>${iCell || '—'}</td><td>${oCell}</td><td class="sa-num">${rCell}</td><td class="sa-num">${tkCell}</td><td class="sa-num">${aCell}</td></tr>`;
         }).join('');
         const ageCol = age > 3 * 24 * H ? RED : age > 24 * H ? AMB : 'var(--muted)';
+        const __tw = performance.now();
         view.innerHTML = `<div class="sa-recommend" style="margin-bottom:6px">${alerts.length ? `<b style="color:${RED}">${alerts.length} to check:</b> ${alerts.map(escapeHtml).join(' · ')}` : '<b style="color:var(--pos)">Everything is busy.</b>'}
                 <div style="font-size:10px; color:${ageCol}; margin-top:2px">${d ? `Training, factory, attacks and fleets from the game's Empire page ${escapeHtml(agoText(d.savedAt))}; timers count down from then. Open it again to refresh.` : 'From your saved scans. Open the game\'s Empire page to add training, factory, attacks and fleets.'} Inventory, untrained units and heroes use your newest scan (hover a hero card's time on the Nation or Empire page for its exact end).</div></div>
             <div style="overflow-x:auto"><table class="sa-unit-table sa-stmt" style="font-size:11px"><thead><tr><th>Planet</th><th>Training</th><th>Factory</th><th>Resources / tick</th><th>Attacks · fleets · hero</th><th title="Credits on the planet + gold, iron, tritium, coal, steel and untrained slaves at market prices (average of sell and buy). Hover or click for min, max and each part">Resources at risk</th><th title="Turns the Training calculator needs to train the planet's units again. Hover or click for each unit">Turns at risk</th><th title="What a fresh colony (everything at level 0) would cost to build back to this point: areas, Tick Generator, Barracks (credits; iron, gold and tritium at market average) and training every unit except professors and teachers (turns). Credits, resources and untrained units aren't counted. (min) = some facilities' cost formulas aren't known yet. Hover or click for each part">Abandon cost</th></tr></thead>
@@ -11364,6 +11378,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                 <label><input type="checkbox" id="sa-ov-majors" ${GM_getValue('sa-ov-majors', false) ? 'checked' : ''}> Majors</label>
                 <label><input type="checkbox" id="sa-ov-champs" ${GM_getValue('sa-ov-champs', false) ? 'checked' : ''}> Champions</label>
                 <label title="Engineers and scientists train faster with professors. Blank = all your planets' professors">Professors <input class="sa-amt" id="sa-ov-profs" style="width:90px" value="${escapeHtml(GM_getValue('sa-ov-profs', '') || '')}" placeholder="all: ${escapeHtml(fmt(sumProfs))}"></label></div>`;
+        lagAdd('overview: drawing the table', __tw);
         view.querySelector('#sa-ov-majors')?.addEventListener('change', (e) => { GM_setValue('sa-ov-majors', e.target.checked); renderOverview(); });
         view.querySelector('#sa-ov-champs')?.addEventListener('change', (e) => { GM_setValue('sa-ov-champs', e.target.checked); renderOverview(); });
         view.querySelector('#sa-ov-profs')?.addEventListener('change', (e) => { GM_setValue('sa-ov-profs', e.target.value.trim()); renderOverview(); });
