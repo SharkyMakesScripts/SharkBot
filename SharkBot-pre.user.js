@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SharkBot
 // @namespace    https://spacealpha.net/
-// @version      4.0.1
+// @version      4.0.2
 // @description  SharkBot for Space Alpha: saves your planets' units, facilities, inventory, research, bank and market prices, and calculates credit generation and Tick Generator upgrade costs.
 // @author       SharkBot
 // @match        https://spacealpha.net/*
@@ -244,7 +244,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     const PANEL_ID = 'sa-helper-panel';
     const SLOT_IDS = 'ABCDEFGHIJ'.split('');   // up to 10 planets
     // Version comes from the @version header so it's never out of sync
-    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '4.0.1';
+    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '4.0.2';
     // Two copies installed (usually an update pasted in as a new script): since v3.17.1 every copy writes its version on the
     // page before doing anything, so the second copy always sees the first, even if the first has no panel yet or crashed.
     // The second copy stops and shows a large banner at the top of the page naming the older copy to delete.
@@ -5793,7 +5793,11 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     function updSave(patch) { GM_setValue('sa-update', Object.assign(updLoad(), patch)); renderUpdateBar(); }
     function updFromServer(r) {
         if (!r || (!r.latestVersion && !r.minVersion)) return;
-        const cur = updLoad(), pre = r.preVersion && GM_getValue('sa-admin-copy', false) && GM_getValue('sa-update-channel', 'public') === 'pre';
+        // An admin copy on the Pre-release channel also uses the newest version its admin login reported (since v4.0.2), in case the
+        // status check doesn't send it (e.g. this game name isn't in ADMIN_GAME_NAMES)
+        const cur = updLoad(), onPre = GM_getValue('sa-admin-copy', false) && GM_getValue('sa-update-channel', 'public') === 'pre';
+        const preV = onPre ? [r.preVersion, cur.preKnown].filter(Boolean).sort((a, b) => verLess(a, b) ? 1 : -1)[0] : null, pre = !!preV;
+        if (pre) r = Object.assign({}, r, { preVersion: preV, preUrl: r.preUrl || PRE_URL });
         // Pre-release channel (since v4.0.0): admin copies can follow SharkBot-pre.user.js; everyone else follows the public file
         const latest = [r.latestVersion, pre ? r.preVersion : null, cur.gistVersion].filter(Boolean).sort((a, b) => verLess(a, b) ? 1 : -1)[0];
         updSave({ min: r.minVersion || cur.min, latest, url: safeUpdateUrl(pre ? r.preUrl : r.updateUrl), publicVersion: r.publicVersion || cur.publicVersion || null,
@@ -5820,6 +5824,8 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         if (!manual && last && Date.now() - new Date(last) < every) { try { await checkReg(false, every); } catch (e) {} return; }
         if (manual) { updMsg = 'Checking…'; renderUpdateBar(); }
         try { await checkReg(!!manual, manual ? 0 : every); } catch (e) {}
+        { const c = updLoad(); if (c.preKnown && GM_getValue('sa-admin-copy', false) && GM_getValue('sa-update-channel', 'public') === 'pre' && (!c.latest || verLess(c.latest, c.preKnown)))
+              updSave({ latest: c.preKnown, url: PRE_URL }); }   // admin pre-release channel (since v4.0.2)
         const gv = await fetchGistVersion();
         updGhFail = !gv;   // since v3.16.1: say so instead of "up to date"
         const cur = updLoad();
@@ -5846,6 +5852,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         try { renderUpdateBar(); } catch (e) {}
     }
     // Updates only ever open SharkBot's own GitHub file (since v3.38.10): an address from the server is used only if it's that repository
+    const PRE_URL = 'https://raw.githubusercontent.com/SharkyMakesScripts/SharkBot/main/SharkBot-pre.user.js';
     function safeUpdateUrl(u) { return /^https:\/\/raw\.githubusercontent\.com\/SharkyMakesScripts\/SharkBot\/[^?#\s]+\.user\.js$/.test(String(u || '')) ? u : UPDATE_URL; }
     function renderUpdateBar() {
         const bar = document.getElementById('sa-update-bar');
@@ -6239,7 +6246,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                 try {
                     const r = await gmPost(u, Object.assign({ action: 'admin', user: adminCreds.user, pass: adminCreds.pass, version: VERSION }, regIdentity()));
                     if (!r || !r.ok) throw new Error((r && r.error) || 'refused');
-                    adminData = r.players || []; adminDataAt = Date.now(); adminSelfNote = r.selfNote || ''; adminPullAt = r.pullAt || null; adminRequest = r.request || null; adminPublic = r.publicVersion || null; adminPre = r.preVersion || null; adminTemps = r.temps || [];
+                    adminData = r.players || []; adminDataAt = Date.now(); adminSelfNote = r.selfNote || ''; adminPullAt = r.pullAt || null; adminRequest = r.request || null; adminPublic = r.publicVersion || null; adminPre = r.preVersion || null; if (r.preVersion) updSave({ preKnown: r.preVersion }); adminTemps = r.temps || [];
                     if (r.config) allianceSave(r.config);
                     // The Apps Script accepts the admin's own copy
                     if (r.self && r.self.status === 'accepted')
