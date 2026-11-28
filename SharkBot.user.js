@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SharkBot
 // @namespace    https://spacealpha.net/
-// @version      3.38.9
+// @version      3.38.10
 // @description  SharkBot for Space Alpha: saves your planets' units, facilities, inventory, research, bank and market prices, and calculates credit generation and Tick Generator upgrade costs.
 // @author       SharkBot
 // @match        https://spacealpha.net/*
@@ -244,7 +244,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     const PANEL_ID = 'sa-helper-panel';
     const SLOT_IDS = 'ABCDEFGHIJ'.split('');   // up to 10 planets
     // Version comes from the @version header so it's never out of sync
-    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.38.9';
+    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.38.10';
     // Two copies installed (usually an update pasted in as a new script): since v3.17.1 every copy writes its version on the
     // page before doing anything, so the second copy always sees the first, even if the first has no panel yet or crashed.
     // The second copy stops and shows a large banner at the top of the page naming the older copy to delete.
@@ -5794,12 +5794,12 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     function updFromServer(r) {
         if (!r || (!r.latestVersion && !r.minVersion)) return;
         const cur = updLoad(), latest = [r.latestVersion, cur.gistVersion].filter(Boolean).sort((a, b) => verLess(a, b) ? 1 : -1)[0];
-        updSave({ min: r.minVersion || cur.min, latest, url: r.updateUrl || UPDATE_URL || cur.url || '', serverAt: new Date().toISOString() });
+        updSave({ min: r.minVersion || cur.min, latest, url: safeUpdateUrl(r.updateUrl), serverAt: new Date().toISOString() });
     }
     var updMsg = '', updMsgTimer = null;
     var updGhFail = false;
     function fetchGistVersion() {
-        const url = updLoad().url || UPDATE_URL;
+        const url = safeUpdateUrl(updLoad().url);
         return new Promise((res) => {
             if (!url || typeof GM_xmlhttpRequest === 'undefined') return res(null);
             try {
@@ -5842,11 +5842,13 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         updSave({ gistVersion: gv, latest: [gv, cur.latest].filter(Boolean).sort((a, b) => verLess(a, b) ? 1 : -1)[0] });
         try { renderUpdateBar(); } catch (e) {}
     }
+    // Updates only ever open SharkBot's own GitHub file (since v3.38.10): an address from the server is used only if it's that repository
+    function safeUpdateUrl(u) { return /^https:\/\/raw\.githubusercontent\.com\/SharkyMakesScripts\/SharkBot\/[^?#\s]+\.user\.js$/.test(String(u || '')) ? u : UPDATE_URL; }
     function renderUpdateBar() {
         const bar = document.getElementById('sa-update-bar');
         if (!bar) return;
         const u = updLoad(), need = u.min && verLess(VERSION, u.min) || regLoad().status === 'update', avail = u.latest && verLess(VERSION, u.latest);
-        const url = u.url || UPDATE_URL;
+        const url = safeUpdateUrl(u.url);
         // A new major or minor version (x.y.0) is strongly recommended (since v3.33.0); only major (x.0.0) versions are forced by the server
         const strong = avail && !need && (() => { const a = String(VERSION).split('.').map(Number), b = String(u.latest).split('.').map(Number); return (b[0] || 0) > (a[0] || 0) || (b[1] || 0) > (a[1] || 0); })();
         if (!need && !avail && !updMsg) { bar.style.display = 'none'; bar.innerHTML = ''; return; }
@@ -7010,7 +7012,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     // Sharky suggests updating (since v3.33.0): copies older than the suggested version get a pop-up once per suggestion
     function suggestUpdate(sg) {
         if (sbView || !sg || !sg.at || !sg.version || !verLess(VERSION, sg.version) || GM_getValue('sa-suggest-seen', '') === sg.at || document.getElementById('sa-suggest-pop')) return;
-        const url = updLoad().url || UPDATE_URL, pop = document.createElement('div');
+        const url = safeUpdateUrl(updLoad().url), pop = document.createElement('div');
         pop.id = 'sa-suggest-pop';
         pop.style.cssText = 'position:fixed; top:90px; left:50%; transform:translateX(-50%); width:340px; z-index:2147483646; background:#111827; color:#e5e7eb; border:1px solid #f59e0b; border-radius:10px; padding:12px 14px; font:12px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; box-shadow:0 8px 24px rgba(0,0,0,.6); text-align:left';
         const b = (bg) => `margin:0; flex:1; padding:6px; border-radius:6px; border:1px solid ${bg}; background:${bg}; color:#fff; font:600 12px sans-serif; cursor:pointer`;
