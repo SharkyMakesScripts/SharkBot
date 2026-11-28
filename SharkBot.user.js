@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SharkBot
 // @namespace    https://spacealpha.net/
-// @version      3.38.0
+// @version      3.38.1
 // @description  SharkBot for Space Alpha: saves your planets' units, facilities, inventory, research, bank and market prices, and calculates credit generation and Tick Generator upgrade costs.
 // @author       SharkBot
 // @match        https://spacealpha.net/*
@@ -25,6 +25,24 @@
 const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues === 'function' ? GM_listValues : null, del: typeof GM_deleteValue === 'function' ? GM_deleteValue : null };
 (async function () {
     'use strict';
+    // ---------- Lag report (since v3.38.1) ----------
+    // SharkBot's own timers and page watchers are timed only while a 30-second lag recording runs (otherwise they run as is)
+    const LAG = { on: false, tasks: new Map(), runs: [], labels: new WeakMap(), cur: null };
+    const lagLabel = (fn, kind) => { let l = LAG.labels.get(fn); if (!l) { l = kind + ': ' + (fn.name || String(fn).replace(/\s+/g, ' ').slice(0, 70)); LAG.labels.set(fn, l); } return l; };
+    function lagTimed(fn, kind) {
+        if (typeof fn !== 'function') return fn;
+        return function (...a) {
+            if (!LAG.on) return fn.apply(this, a);
+            const label = lagLabel(fn, kind), t0 = performance.now(), prev = LAG.cur; LAG.cur = label;
+            try { return fn.apply(this, a); }
+            finally { const t1 = performance.now(), d = t1 - t0; LAG.cur = prev; const x = LAG.tasks.get(label) || { n: 0, total: 0, max: 0 }; x.n++; x.total += d; x.max = Math.max(x.max, d); LAG.tasks.set(label, x); if (d > 5) LAG.runs.push({ label, t0, t1 }); }
+        };
+    }
+    const __si = window.setInterval.bind(window), __st = window.setTimeout.bind(window), __raf = window.requestAnimationFrame.bind(window), __MO = window.MutationObserver;
+    function setInterval(fn, ms, ...a) { return __si(lagTimed(fn, 'every ' + (ms || 0) + ' ms'), ms, ...a); }
+    function setTimeout(fn, ms, ...a) { return __st(lagTimed(fn, 'after ' + (ms || 0) + ' ms'), ms, ...a); }
+    function requestAnimationFrame(fn) { return __raf(lagTimed(fn, 'frame')); }
+    const MutationObserver = class extends __MO { constructor(cb) { super(lagTimed(cb, 'page watcher')); } };
     // ---------- Viewer (since v3.5.0) ----------
     // While Sharky views a player (Admin → Viewer), their saved SharkBot data is read instead of this copy's. Writes go to a
     // throwaway copy in memory, and scanning, sharing and sending are off, so neither player's data can be overwritten.
@@ -221,7 +239,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     const PANEL_ID = 'sa-helper-panel';
     const SLOT_IDS = 'ABCDEFGHIJ'.split('');   // up to 10 planets
     // Version comes from the @version header so it's never out of sync
-    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.38.0';
+    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.38.1';
     // Two copies installed (usually an update pasted in as a new script): since v3.17.1 every copy writes its version on the
     // page before doing anything, so the second copy always sees the first, even if the first has no panel yet or crashed.
     // The second copy stops and shows a large banner at the top of the page naming the older copy to delete.
@@ -825,8 +843,10 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                 <div class="sa-section">
                     <div style="display:flex; justify-content:space-between; align-items:center;">
                         <div class="sa-label">Scan Output</div>
+                        <span style="display:flex; gap:6px"><button class="sa-btn" id="sa-lag"
+                                title="Records 30 seconds while you play (keep doing what lags), then copies a report for Sharky: page freezes, SharkBot's busiest work, saved-data sizes (names only, no values)">⏱ Copy lag report</button>
                         <button class="sa-btn" id="sa-copy"
-                                title="Copy last scan to clipboard">⧉ Copy</button>
+                                title="Copy last scan to clipboard">⧉ Copy</button></span>
                     </div>
                     <pre class="sa-dump" id="sa-dump">(click Manual Scan)</pre>
                 </div>
@@ -3066,6 +3086,32 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     });
     document.getElementById('sa-scan').title = 'Scan this page and save everything to the open planet\'s slot';
     document.getElementById('sa-copy').addEventListener('click', copyScan);
+    document.getElementById('sa-lag').addEventListener('click', async (e) => {
+        const btn = e.currentTarget; if (LAG.on) return;
+        LAG.on = true; LAG.tasks.clear(); LAG.runs = []; const longs = [], start = performance.now();
+        let po = null; try { po = new PerformanceObserver(l => l.getEntries().forEach(x => longs.push({ t0: x.startTime, d: x.duration }))); po.observe({ type: 'longtask', buffered: false }); } catch (err) {}
+        for (let s = 30; s > 0; s--) { btn.textContent = `⏱ Recording… ${s} s (keep playing)`; await new Promise(r => __st(r, 1000)); }
+        LAG.on = false; try { po && po.disconnect(); } catch (err) {}
+        const secs = (performance.now() - start) / 1000, ms = (x) => Math.round(x) + ' ms';
+        const keys = (__SB_GM.list ? __SB_GM.list() : []).filter(k => /^sa-/.test(k));
+        const sizes = keys.map(k => { let n = 0; try { const v = __SB_GM.get(k, ''); n = (typeof v === 'string' ? v : JSON.stringify(v) || '').length; } catch (err) {} return [k.replace(/^(sa-[a-z-]+?-)([^-]{6,}).*$/, '$1…'), k, n]; }).sort((a, b) => b[2] - a[2]);
+        const tasks = [...LAG.tasks.entries()].sort((a, b) => b[1].total - a[1].total);
+        const mem = performance.memory ? `${Math.round(performance.memory.usedJSHeapSize / 1048576)} MB used of ${Math.round(performance.memory.jsHeapSizeLimit / 1048576)} MB` : 'not available';
+        const lines = [`SharkBot lag report · v${VERSION} · ${new Date().toISOString()}`, `Browser: ${navigator.userAgent}`, `Page: ${location.pathname} · window ${innerWidth}×${innerHeight}`,
+            `Planets: ${planetIds().length} · tab: ${panel.querySelector('.sa-tab.active')?.dataset.tab || '?'} · pop-out windows: ${panel.querySelectorAll('.sa-popwin').length} · panel collapsed: ${panel.classList.contains('sa-collapsed')}`,
+            `Elements: panel ${panel.querySelectorAll('*').length.toLocaleString()} · page ${document.querySelectorAll('*').length.toLocaleString()} · memory ${mem}`,
+            `Saved data: ${keys.length} items, ${Math.round(sizes.reduce((t, x) => t + x[2], 0) / 1024).toLocaleString()} KB`,
+            ...sizes.slice(0, 12).map(x => `  ${x[1]}: ${Math.round(x[2] / 1024).toLocaleString()} KB`), '',
+            `Recorded ${secs.toFixed(0)} s. Page freezes over 50 ms: ${longs.length} (${ms(longs.reduce((t, x) => t + x.d, 0))} in total)`,
+            ...longs.sort((a, b) => b.d - a.d).slice(0, 10).map(x => { const hit = LAG.runs.filter(r => r.t1 > x.t0 && r.t0 < x.t0 + x.d).map(r => r.label); return `  ${ms(x.d)}${hit.length ? ' · SharkBot: ' + [...new Set(hit)].slice(0, 3).join(' | ') : ' · not SharkBot (or not timed)'}`; }), '',
+            `SharkBot's busiest work: ${ms(tasks.reduce((t, x) => t + x[1].total, 0))} in total (${(tasks.reduce((t, x) => t + x[1].total, 0) / (secs * 10)).toFixed(1)}% of the time)`,
+            ...tasks.slice(0, 15).map(([l, x]) => `  ${ms(x.total)} · ${x.n}× · longest ${ms(x.max)} · ${l}`)];
+        const txt = lines.join('\n');
+        try { await navigator.clipboard.writeText(txt); btn.textContent = '✓ Lag report copied'; }
+        catch (err) { const ta = document.createElement('textarea'); ta.value = txt; document.body.appendChild(ta); ta.select(); try { document.execCommand('copy'); btn.textContent = '✓ Lag report copied'; } catch (e2) { btn.textContent = 'Copy failed: it\'s below'; } ta.remove(); }
+        const dump = document.getElementById('sa-dump'); if (dump) dump.textContent = txt;
+        __st(() => { btn.textContent = '⏱ Copy lag report'; }, 4000);
+    });
 
     // ---------- Units tab: slot storage ----------
     // Each slot: { planetName, savedAt, units: [{name, count, countDisplay}] }
