@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SharkBot
 // @namespace    https://spacealpha.net/
-// @version      3.37.0
+// @version      3.38.0
 // @description  SharkBot for Space Alpha: saves your planets' units, facilities, inventory, research, bank and market prices, and calculates credit generation and Tick Generator upgrade costs.
 // @author       SharkBot
 // @match        https://spacealpha.net/*
@@ -221,7 +221,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     const PANEL_ID = 'sa-helper-panel';
     const SLOT_IDS = 'ABCDEFGHIJ'.split('');   // up to 10 planets
     // Version comes from the @version header so it's never out of sync
-    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.37.0';
+    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.38.0';
     // Two copies installed (usually an update pasted in as a new script): since v3.17.1 every copy writes its version on the
     // page before doing anything, so the second copy always sees the first, even if the first has no panel yet or crashed.
     // The second copy stops and shows a large banner at the top of the page naming the older copy to delete.
@@ -5149,6 +5149,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     // Instant = credits and materials spent now. Future = turns to train the workers that fill new room, paid over the
     // days it takes (all your turns go to training), each turn worth the Value Optimizer turn. Income grows as workers are
     // trained, so break-even follows that ramp instead of total cost ÷ full income.
+    const exT = (n) => Math.ceil(n || 0).toLocaleString();   // exact turn counts (since v3.37.1)
     function trainTpd() {
         try { const vp = voPlan(); if (vp && !vp.error && vp.turns > 0) return vp.turns; } catch (e) {}
         return empireTpd() || null;
@@ -5226,6 +5227,9 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             return b.credits - a.credits + dm;
         };
         const N = 120, tpdT = trainTpd();
+        // Passive training (since v3.37.1): the planet also trains 1 turn's worth every minute for free, so training is done after
+        // T ÷ (your turns per day + 1,440) days and only that share of T comes out of your turns
+        const FREE = uvPassiveOn() ? 1440 : 0, rateT = (tpdT || 0) + FREE, yourShare = rateT ? (tpdT || 0) / rateT : 0;
         let pool = 0, spent = 0;
         const step = (budget) => {
             let best = null;
@@ -5237,9 +5241,9 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                 let hi = Math.min(s.E + d, s.E + 1e13);
                 while (hi - lo > 1) { const mid = Math.floor((lo + hi) / 2); if (costTo(s, mid) <= budget) lo = mid; else hi = mid; }
                 const c = costTo(s, lo), g = s.o.hasGain ? s.o.gain(lo) - s.o.gain(s.E) : lo - s.E;
-                const tc = s.o.trainCost ? s.o.trainCost(lo) - s.o.trainCost(s.E) : 0;   // training turns, in credits
+                const tc = s.o.trainCost ? (s.o.trainCost(lo) - s.o.trainCost(s.E)) * yourShare : 0;   // your training turns, in credits
                 // The ramp (since v3.13.0): income arrives as workers are trained, about half a training stretch later
-                const dt = s.o.trainTurns && tpdT ? (s.o.trainTurns(lo) - s.o.trainTurns(s.E)) / tpdT : 0;
+                const dt = s.o.trainTurns && rateT ? (s.o.trainTurns(lo) - s.o.trainTurns(s.E)) / rateT : 0;
                 const r = g / (c + tc + g * dt / 2);
                 if (g > 0 && c > 0 && (!best || r > best.r)) best = { s, E: lo, c, r };
             });
@@ -5259,10 +5263,10 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             mats: s.o.cum(s.E).mats,
             tTurns: s.o.trainTurns ? s.o.trainTurns(s.E) : 0, tCost: s.o.trainCost ? s.o.trainCost(s.E) : 0,
         }));
-        rows.forEach(r => { r.tDays = tpdT && r.tTurns > 0 ? r.tTurns / tpdT : 0; r.be = rampBreakeven(r.spent, r.tCost, r.gain, r.tDays); r.p30 = rampProfit(r.spent, r.tCost, r.gain, r.tDays, 30); });
+        rows.forEach(r => { r.tCost = (r.tCost || 0) * yourShare; r.tYour = r.tTurns * yourShare; r.tFree = r.tTurns - r.tYour; r.tDays = rateT && r.tTurns > 0 ? r.tTurns / rateT : 0; r.be = rampBreakeven(r.spent, r.tCost, r.gain, r.tDays); r.p30 = rampProfit(r.spent, r.tCost, r.gain, r.tDays, 30); });
         const tTurns = rows.reduce((t, r) => t + r.tTurns, 0), tCost = rows.reduce((t, r) => t + r.tCost, 0), gain = rows.reduce((t, r) => t + r.gain, 0);
-        const tDays = tpdT && tTurns > 0 ? tTurns / tpdT : 0;   // training happens one after another
-        return { rows, spent, left: capital - spent, gain, used, tTurns, tCost, tDays, tpdT,
+        const tDays = rateT && tTurns > 0 ? tTurns / rateT : 0, tYour = tTurns * yourShare;   // training happens one after another
+        return { rows, spent, left: capital - spent, gain, used, tTurns, tCost, tDays, tpdT, tYour, free: FREE,
                  be: rampBreakeven(spent, tCost, gain, tDays), p30: rampProfit(spent, tCost, gain, tDays, 30) };
     }
 
@@ -5296,11 +5300,11 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                 ? `+${fmt(r.o.turnsGain(r.E))} turns/day`
                 : `+${fmt(r.o.sizeGain(r.E))} ${r.o.what || 'size'}`;
             out.push(`  Instant: spend ${fmt(r.spent)} now · ${extra}`);
-            if (r.tTurns > 0) out.push(`  Future: train ${fmt(r.tTurns)} turns${r.tDays ? ` = ${dd(r.tDays)} of your turns` : ''}${r.tCost > 0 ? ` (worth ${fmt(r.tCost)})` : ''}`,
+            if (r.tTurns > 0) out.push(`  Future: train ${exT(r.tTurns)} turns' worth = ${exT(r.tYour)} of your turns${r.tFree > 0 ? ` + ${exT(r.tFree)} free (1 a minute)` : ''}${r.tDays ? `, full after ${dd(r.tDays)}` : ''}${r.tCost > 0 ? ` (worth ${fmt(r.tCost)})` : ''}`,
                 `  Total cost: ${fmt(r.spent + (r.tCost || 0))}`);
             if (r.o.hasGain) out.push(`  +${fmt(r.gain)} credits/day${r.tDays ? ` once trained (full after ${dd(r.tDays)})` : ''} · breaks even after ${dd(r.be)}`);
         });
-        if (plan.rows.length > 1) out.push(`Total: instant ${fmt(plan.spent)}` + (plan.tTurns > 0 ? ` · future ${fmt(plan.tTurns)} training turns${plan.tDays ? ` (${dd(plan.tDays)})` : ''}${plan.tCost > 0 ? `, worth ${fmt(plan.tCost)}` : ''}` : ''),
+        if (plan.rows.length > 1) out.push(`Total: instant ${fmt(plan.spent)}` + (plan.tTurns > 0 ? ` · future ${exT(plan.tTurns)} turns' worth of training (${exT(plan.tYour)} of your turns${plan.tDays ? `, ${dd(plan.tDays)}` : ''})${plan.tCost > 0 ? `, worth ${fmt(plan.tCost)}` : ''}` : ''),
             `  +${fmt(plan.gain)} credits/day` + (plan.gain > 0 ? ` · breaks even after ${dd(plan.be)}` : ''));
         if (plan.left > 0) out.push(`Left over: ${fmt(plan.left)}`);
         return out;
@@ -8872,7 +8876,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                     <td class="sa-num" title="${r.o.L0.toLocaleString()} → ${r.E.toLocaleString()}">+${r.levels.toLocaleString()}</td>
                     <td class="sa-num">${f(r.spent)}</td>
                     <td class="sa-num">${gainOf(r)}</td>
-                    <td class="sa-num" title="${r.tCost > 0 ? 'worth ' + escapeHtml(fmt(r.tCost)) : ''}">${r.tTurns > 0 ? f(r.tTurns) + (r.tDays ? `<div style="font-size:9px; color:var(--muted)">${dd(r.tDays)} of turns</div>` : '') : '—'}</td>
+                    <td class="sa-num" title="${r.tCost > 0 ? 'worth ' + escapeHtml(fmt(r.tCost)) : ''}">${r.tTurns > 0 ? escapeHtml(exT(r.tYour)) + `<div style="font-size:9px; color:var(--muted)">of ${escapeHtml(exT(r.tTurns))} (rest free)${r.tDays ? ` · ${dd(r.tDays)}` : ''}</div>` : '—'}</td>
                     <td class="sa-num sa-diff-pos">${r.o.hasGain ? '+' + f(r.gain) : '—'}</td>
                     <td class="sa-num">${r.tDays ? dd(r.tDays) : 'now'}</td>
                     <td class="sa-num">${r.o.hasGain ? dd(r.be) : '—'}</td></tr>`).join('')}
@@ -11171,7 +11175,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         const cards = trCards(), card = (key) => { let b = 0; cards.forEach(g => { if (g.effects[key] != null && g.effects[key] > b) b = g.effects[key]; }); return b / 100; };
         const one = (key, base, staff = 0, tacOn = false) => { const b = base + staff, tAdd = tacOn ? base * tac : 0; return (b + tAdd) * (1 + edu) * (1 + card(key)); };
         const sp = Math.sqrt(profsOverride != null ? profsOverride : (val('professors') || 0)), st = Math.sqrt(val('tacticians') || 0);
-        return { workers: one('workers', 50 + 10 * P(L, 3)), slaves: one('slaves', 40 + 10 * P(L, 2.65)), spies: one('spies', 10 + 10 * P(L, 2.2)),
+        return { farmers: one('farmers', 100 + 20 * P(L, 3)), profs: one('profs', 10 + 5 * P(L, 2.2)), workers: one('workers', 50 + 10 * P(L, 3)), slaves: one('slaves', 40 + 10 * P(L, 2.65)), spies: one('spies', 10 + 10 * P(L, 2.2)),
                  docs: one('docs', 10 + 10 * P(L, 2.3), sp * 9), corporals: one('corporals', 0.4 + 0.4 * P(L, 3), st * 9),
                  majors: one('majors', 0.006 + 0.006 * P(L, 3), st, true), champions: one('champions', 0.0004 + 0.0004 * P(L, 2.8), 0, true) };
     }
@@ -11199,6 +11203,38 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         }
         return { res, turns };
     }
+    // Abandon cost (since v3.38.0): what it would take to build a fresh colony (everything at level 0) back to this point.
+    // Counted: every Area (40,000·Σk^1.7), the Tick Generator (Sean's formula), Barracks, and training every unit back except
+    // professors and teachers (turns, from the Training formulas). Not counted: credits, resources, untrained units and professors
+    // (they can be moved or sold), and facilities whose cost formula isn't known yet (listed).
+    function abandonOf(p) {
+        if (!p.slot) return null;
+        const price = (n) => { const m = marketRes(new RegExp('^' + n, 'i')); if (!m) return null; const a = [m.sellPrice, m.buyPrice].filter(x => x != null); return a.length ? a.reduce((x, y) => x + y, 0) / a.length : null; };
+        const out = { credits: 0, parts: [], unknown: [], turns: 0, units: [], noPrice: new Set() };
+        const mats = (o) => { let t = 0; Object.entries(o).forEach(([n, q]) => { if (!q) return; const pr = price(n); if (pr == null) out.noPrice.add(n); else t += q * pr; }); return t; };
+        const add = (label, cr, m) => { const v = cr + mats(m || {}); out.credits += v; out.parts.push({ label, v }); };
+        const items = getFSlot(p.slot)?.items || [];
+        items.forEach(i => {
+            const L = i.kind === 'area' ? levelFrom(i).value ?? i.value : i.value; if (!(L > 0)) return;
+            const nm = cleanName(i.name);
+            if (i.kind === 'area') add(`${nm} (level ${fmt(L)})`, Math.round(40000 * sumPowFast(1, L, 1.7)));
+            else if (/tick\s*generator/i.test(nm)) { const n = L, s25 = sumPowFast(1, L - 1, 2.5), s13 = sumPowFast(1, L - 1, 1.3), s15 = sumPowFast(1, L - 1, 1.5);
+                add(`Tick Generator (level ${fmt(L)})`, 8e8 * n + 1.2e9 * s25, { Gold: n + 8 * s13, Iron: 3 * n + 10 * s15, Tritium: n + 10 * s13 }); }
+            else if (/barracks/i.test(nm)) {}
+            else out.unknown.push(nm);
+        });
+        const bl = trSaved(p.slot).barracks;
+        if (bl > 0) { const c = barracksCost(0, bl, 0); add(`Barracks (level ${fmt(bl)})`, c.credits, { Iron: c.iron, Gold: c.gold }); }
+        const pt = trPerTurn(p.slot);
+        if (pt) (getSlot(p.slot)?.units || []).forEach(u => {
+            const n = u.count || 0, nm = String(u.name); if (!n || /untrained|professor|teacher/i.test(nm)) return;
+            const key = /corporal/i.test(nm) ? 'corporals' : /major/i.test(nm) ? 'majors' : /champion/i.test(nm) ? 'champions' : /tactician/i.test(nm) ? 'profs'
+                : /doctor|scientist|engineer/i.test(nm) ? 'docs' : /assassin|spy|spies|security/i.test(nm) ? 'spies' : /slave|forester/i.test(nm) ? 'slaves' : /farmer/i.test(nm) ? 'farmers' : 'workers';
+            if (!(pt[key] > 0)) return; const t = n / pt[key]; out.turns += t; out.units.push({ label: nm, n, t });
+        });
+        out.trainKnown = !!pt;
+        return out;
+    }
     function renderOverview() {
         const view = document.getElementById('sa-overview-view'); if (!view) return;
         const { d, rows: planets } = overviewPlanets();
@@ -11216,6 +11252,11 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         const fT = (t) => t == null ? '—' : escapeHtml(fmt(Math.ceil(t)));
         const rows = planets.map(p => {
             const tr = p.train, fa = p.factory, hero = p.hero;
+            const ab = abandonOf(p); if (ab) { tot.abC = (tot.abC || 0) + ab.credits; tot.abT = (tot.abT || 0) + ab.turns; }
+            const aTip = ab ? [...ab.parts.map(x => `${x.label}: ${fmt(x.v)} credits`), ...ab.units.map(x => `${x.label}: ${fmt(x.n)} → ${Math.ceil(x.t).toLocaleString()} turns`),
+                ...(ab.trainKnown ? [] : ['Units: needs the Barracks level (Train Units page)']), ...(ab.unknown.length ? [`Not counted (cost formula unknown): ${ab.unknown.join(', ')}`] : []),
+                ...(ab.noPrice.size ? [`No market price for ${[...ab.noPrice].join(', ')}`] : [])].join('\n') : '';
+            const aCell = !ab ? '—' : `<details title="${escapeHtml(aTip)}"><summary style="cursor:pointer"><b>${f(ab.credits)}</b>${ab.turns ? ` + <b>${escapeHtml(Math.ceil(ab.turns).toLocaleString())}</b> turns` : ''}${ab.unknown.length ? ' <span style="color:var(--muted)">(min)</span>' : ''}</summary><div style="font-size:10px; color:var(--muted)">${escapeHtml(aTip).replace(/\n/g, '<br>')}</div></details>`;
             const rk = riskOf(p, profsAll); tot.avg += rk.res.avg; tot.min += rk.res.min; tot.max += rk.res.max; tot.turns += rk.turns.total; if (rk.turns.known) tot.known = true;
             const rTip = `Min ${fmt(rk.res.min)} · max ${fmt(rk.res.max)} (sell / buy prices)\n` + rk.res.parts.map(x => `${x.label}: ${fmt(x.amount)}${x.label === 'Credits' ? '' : ` ≈ ${fmt(x.value)} credits`}`).join('\n');
             const rCell = rk.res.parts.length ? `<details title="${escapeHtml(rTip)}"><summary style="cursor:pointer"><b>${f(rk.res.avg)}</b></summary><div style="font-size:10px; color:var(--muted)">${escapeHtml(rTip).replace(/\n/g, '<br>')}</div></details>` : '—';
@@ -11252,13 +11293,13 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                 `${p.fleets ? `<div style="font-size:10px">Fleets ${p.fleets[0]} / ${p.fleets[1]}</div>` : ''}` +
                 `<div style="font-size:10px">${hero === undefined ? '' : hero === null ? '<span style="color:var(--muted)">No hero</span>' : `Hero: ${escapeHtml(hero.effects || '')} <b style="color:${col(hl)}">${hl != null ? dur(hl) + ' left' : ''}</b>`}</div>`;
             return `<tr><td style="white-space:nowrap"><b>${escapeHtml(p.name)}</b>${p.slot ? ` <span style="color:var(--muted)">(${escapeHtml(posLetter(p.slot))})</span>` : ''}<div style="font-size:10px; color:var(--muted)">${escapeHtml(p.coords ? '#' + p.coords : '')}${p.happiness ? ' · 😊 ' + escapeHtml(p.happiness) + '%' : ''}</div></td>
-                <td>${tCell}</td><td>${fCell}</td><td>${iCell || '—'}</td><td>${oCell}</td><td class="sa-num">${rCell}</td><td class="sa-num">${tkCell}</td></tr>`;
+                <td>${tCell}</td><td>${fCell}</td><td>${iCell || '—'}</td><td>${oCell}</td><td class="sa-num">${rCell}</td><td class="sa-num">${tkCell}</td><td class="sa-num">${aCell}</td></tr>`;
         }).join('');
         const ageCol = age > 3 * 24 * H ? RED : age > 24 * H ? AMB : 'var(--muted)';
         view.innerHTML = `<div class="sa-recommend" style="margin-bottom:6px">${alerts.length ? `<b style="color:${RED}">${alerts.length} to check:</b> ${alerts.map(escapeHtml).join(' · ')}` : '<b style="color:var(--pos)">Everything is busy.</b>'}
                 <div style="font-size:10px; color:${ageCol}; margin-top:2px">${d ? `Training, factory, attacks and fleets from the game's Empire page ${escapeHtml(agoText(d.savedAt))}; timers count down from then. Open it again to refresh.` : 'From your saved scans. Open the game\'s Empire page to add training, factory, attacks and fleets.'} Inventory, untrained units and heroes use your newest scan (hover a hero card's time on the Nation or Empire page for its exact end).</div></div>
-            <div style="overflow-x:auto"><table class="sa-unit-table sa-stmt" style="font-size:11px"><thead><tr><th>Planet</th><th>Training</th><th>Factory</th><th>Resources / tick</th><th>Attacks · fleets · hero</th><th title="Credits on the planet + gold, iron, tritium, coal, steel and untrained slaves at market prices (average of sell and buy). Hover or click for min, max and each part">Resources at risk</th><th title="Turns the Training calculator needs to train the planet's units again. Hover or click for each unit">Turns at risk</th></tr></thead>
-            <tbody>${rows}<tr class="sa-stmt-total"><td>Total</td><td></td><td></td><td></td><td></td><td class="sa-num" title="Min ${escapeHtml(fmt(tot.min))} · max ${escapeHtml(fmt(tot.max))}">${f(tot.avg)}</td><td class="sa-num">${tot.known ? fT(tot.turns) : '—'}</td></tr></tbody></table></div>
+            <div style="overflow-x:auto"><table class="sa-unit-table sa-stmt" style="font-size:11px"><thead><tr><th>Planet</th><th>Training</th><th>Factory</th><th>Resources / tick</th><th>Attacks · fleets · hero</th><th title="Credits on the planet + gold, iron, tritium, coal, steel and untrained slaves at market prices (average of sell and buy). Hover or click for min, max and each part">Resources at risk</th><th title="Turns the Training calculator needs to train the planet's units again. Hover or click for each unit">Turns at risk</th><th title="What a fresh colony (everything at level 0) would cost to build back to this point: areas, Tick Generator, Barracks (credits; iron, gold and tritium at market average) and training every unit except professors and teachers (turns). Credits, resources and untrained units aren't counted. (min) = some facilities' cost formulas aren't known yet. Hover or click for each part">Abandon cost</th></tr></thead>
+            <tbody>${rows}<tr class="sa-stmt-total"><td>Total</td><td></td><td></td><td></td><td></td><td class="sa-num" title="Min ${escapeHtml(fmt(tot.min))} · max ${escapeHtml(fmt(tot.max))}">${f(tot.avg)}</td><td class="sa-num">${tot.known ? fT(tot.turns) : '—'}</td><td class="sa-num">${tot.abC != null ? `${f(tot.abC)}${tot.abT ? ` + ${escapeHtml(Math.ceil(tot.abT).toLocaleString())} turns` : ''}` : '—'}</td></tr></tbody></table></div>
             <div class="sa-slot-meta" style="margin-top:4px; display:flex; gap:10px; flex-wrap:wrap; align-items:center">Turns at risk counts:
                 <label><input type="checkbox" id="sa-ov-majors" ${GM_getValue('sa-ov-majors', false) ? 'checked' : ''}> Majors</label>
                 <label><input type="checkbox" id="sa-ov-champs" ${GM_getValue('sa-ov-champs', false) ? 'checked' : ''}> Champions</label>
