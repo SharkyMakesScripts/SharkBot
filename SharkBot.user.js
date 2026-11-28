@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SharkBot
 // @namespace    https://spacealpha.net/
-// @version      3.34.0
+// @version      3.35.0
 // @description  SharkBot for Space Alpha: saves your planets' units, facilities, inventory, research, bank and market prices, and calculates credit generation and Tick Generator upgrade costs.
 // @author       SharkBot
 // @match        https://spacealpha.net/*
@@ -221,7 +221,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     const PANEL_ID = 'sa-helper-panel';
     const SLOT_IDS = 'ABCDEFGHIJ'.split('');   // up to 10 planets
     // Version comes from the @version header so it's never out of sync
-    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.34.0';
+    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.35.0';
     // Two copies installed (usually an update pasted in as a new script): since v3.17.1 every copy writes its version on the
     // page before doing anything, so the second copy always sees the first, even if the first has no panel yet or crashed.
     // The second copy stops and shows a large banner at the top of the page naming the older copy to delete.
@@ -11109,6 +11109,43 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         heroHover = null;
         try { renderOverview(); } catch (e) {}
     }
+    // Units trained per turn on a planet, as the Training calculator works it out (since v3.35.0, for Overview's turns at risk)
+    function trPerTurn(slot, profsOverride) {
+        const auto = trSaved(slot), saved = GM_getValue('sa-train-' + slot, {}) || {};
+        const val = (k) => saved[k] != null && String(saved[k]).trim() !== '' ? parseNumber(saved[k]) : auto[k];
+        const L = val('barracks'); if (L == null) return null;
+        const edu = (val('education') || 0) * 0.05, tac = (val('tactics') || 0) * 0.05, P = Math.pow;
+        const cards = trCards(), card = (key) => { let b = 0; cards.forEach(g => { if (g.effects[key] != null && g.effects[key] > b) b = g.effects[key]; }); return b / 100; };
+        const one = (key, base, staff = 0, tacOn = false) => { const b = base + staff, tAdd = tacOn ? base * tac : 0; return (b + tAdd) * (1 + edu) * (1 + card(key)); };
+        const sp = Math.sqrt(profsOverride != null ? profsOverride : (val('professors') || 0)), st = Math.sqrt(val('tacticians') || 0);
+        return { workers: one('workers', 50 + 10 * P(L, 3)), slaves: one('slaves', 40 + 10 * P(L, 2.65)), spies: one('spies', 10 + 10 * P(L, 2.2)),
+                 docs: one('docs', 10 + 10 * P(L, 2.3), sp * 9), corporals: one('corporals', 0.4 + 0.4 * P(L, 3), st * 9),
+                 majors: one('majors', 0.006 + 0.006 * P(L, 3), st, true), champions: one('champions', 0.0004 + 0.0004 * P(L, 2.8), 0, true) };
+    }
+    // At risk (since v3.35.0): resources = credits on the planet + gold, iron, tritium, coal, steel and untrained slaves at market prices
+    // (average of sell and buy; min and max on hover); turns = turns the Training calculator needs to train the planet's units again
+    function riskOf(p, profsAll) {
+        const price = (re) => { const m = marketRes(re); if (!m) return null; const a = [m.sellPrice, m.buyPrice].filter(x => x != null); return a.length ? { min: Math.min(...a), max: Math.max(...a), avg: a.reduce((x, y) => x + y, 0) / a.length } : null; };
+        const res = { avg: 0, min: 0, max: 0, parts: [] };
+        const add = (label, amount, pr) => { if (!amount) return; const q = pr || { min: 1, max: 1, avg: 1 }; res.avg += amount * q.avg; res.min += amount * q.min; res.max += amount * q.max; res.parts.push({ label, amount, value: amount * q.avg, priced: !!pr || label === 'Credits' }); };
+        const inv = p.inv || [], amt = (re) => inv.filter(x => re.test(x.name)).reduce((t, x) => t + (x.amount || 0), 0);
+        add('Credits', amt(/^credits?$/i), null);
+        [['Gold', /^gold/i], ['Iron', /^iron/i], ['Tritium', /^trit/i], ['Coal', /^coal/i], ['Steel', /^steel/i]].forEach(([l, re]) => add(l, amt(re), price(re)));
+        let slaves = p.untrainedSlaves;
+        if (slaves == null && p.slot) slaves = (getSlot(p.slot)?.units || []).filter(u => /untrained/i.test(u.name) && /slave/i.test(u.name)).reduce((t, u) => t + (u.count || 0), 0) || null;
+        if (slaves) add('Untrained slaves', slaves, price(/slave|untrained/i));
+        const turns = { total: 0, parts: [], known: false };
+        const pt = p.slot ? trPerTurn(p.slot, profsAll) : null;
+        if (pt) {
+            turns.known = true;
+            const units = getSlot(p.slot)?.units || [], cnt = (re) => units.filter(u => re.test(u.name)).reduce((t, u) => t + (u.count || 0), 0);
+            const groups = [['Mine slaves', /mine\s*slave/i, 'slaves'], ['Soldiers (att/def)', /soldier/i, 'workers'], ['Corporals', /corporal/i, 'corporals'],
+                ...(GM_getValue('sa-ov-majors', false) ? [['Majors', /major/i, 'majors']] : []), ...(GM_getValue('sa-ov-champs', false) ? [['Champions', /champion/i, 'champions']] : []),
+                ['Engineers', /engineer/i, 'docs'], ['Scientists', /scientist/i, 'docs'], ['Assassins', /assassin/i, 'spies'], ['Security officers', /security/i, 'spies']];
+            groups.forEach(([label, re, key]) => { const n = cnt(re); if (!n || !(pt[key] > 0)) return; const t = n / pt[key]; turns.total += t; turns.parts.push({ label, n, t }); });
+        }
+        return { res, turns };
+    }
     function renderOverview() {
         const view = document.getElementById('sa-overview-view'); if (!view) return;
         const { d, rows: planets } = overviewPlanets();
@@ -11121,8 +11158,16 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             return dd ? `${dd} d ${hh} h` : hh ? `${hh} h ${mm} min` : `${mm} min`; };
         const f = (v) => v == null ? '—' : escapeHtml(fmt(v));
         const alerts = [];
+        const typedProfs = parseNumber(GM_getValue('sa-ov-profs', '')), sumProfs = planetIds().reduce((t, id) => t + (getSlot(id)?.units || []).filter(u => /professor/i.test(u.name)).reduce((s, u) => s + (u.count || 0), 0), 0);
+        const profsAll = typedProfs != null ? typedProfs : sumProfs, tot = { avg: 0, min: 0, max: 0, turns: 0 };
+        const fT = (t) => t == null ? '—' : escapeHtml(fmt(Math.ceil(t)));
         const rows = planets.map(p => {
             const tr = p.train, fa = p.factory, hero = p.hero;
+            const rk = riskOf(p, profsAll); tot.avg += rk.res.avg; tot.min += rk.res.min; tot.max += rk.res.max; tot.turns += rk.turns.total; if (rk.turns.known) tot.known = true;
+            const rTip = `Min ${fmt(rk.res.min)} · max ${fmt(rk.res.max)} (sell / buy prices)\n` + rk.res.parts.map(x => `${x.label}: ${fmt(x.amount)}${x.label === 'Credits' ? '' : ` ≈ ${fmt(x.value)} credits`}`).join('\n');
+            const rCell = rk.res.parts.length ? `<details title="${escapeHtml(rTip)}"><summary style="cursor:pointer"><b>${f(rk.res.avg)}</b></summary><div style="font-size:10px; color:var(--muted)">${escapeHtml(rTip).replace(/\n/g, '<br>')}</div></details>` : '—';
+            const tTip = rk.turns.parts.map(x => `${x.label}: ${fmt(x.n)} → ${fmt(Math.ceil(x.t))} turns`).join('\n');
+            const tkCell = !rk.turns.known ? '<span style="color:var(--muted)" title="Needs the Barracks level (Train Units page)">—</span>' : rk.turns.parts.length ? `<details title="${escapeHtml(tTip)}"><summary style="cursor:pointer"><b>${fT(rk.turns.total)}</b></summary><div style="font-size:10px; color:var(--muted)">${escapeHtml(tTip).replace(/\n/g, '<br>')}</div></details>` : '0';
             // Training
             let tCell = '—';
             if (tr) {
@@ -11154,13 +11199,20 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                 `${p.fleets ? `<div style="font-size:10px">Fleets ${p.fleets[0]} / ${p.fleets[1]}</div>` : ''}` +
                 `<div style="font-size:10px">${hero === undefined ? '' : hero === null ? '<span style="color:var(--muted)">No hero</span>' : `Hero: ${escapeHtml(hero.effects || '')} <b style="color:${col(hl)}">${hl != null ? dur(hl) + ' left' : ''}</b>`}</div>`;
             return `<tr><td style="white-space:nowrap"><b>${escapeHtml(p.name)}</b>${p.slot ? ` <span style="color:var(--muted)">(${escapeHtml(posLetter(p.slot))})</span>` : ''}<div style="font-size:10px; color:var(--muted)">${escapeHtml(p.coords ? '#' + p.coords : '')}${p.happiness ? ' · 😊 ' + escapeHtml(p.happiness) + '%' : ''}</div></td>
-                <td>${tCell}</td><td>${fCell}</td><td>${iCell || '—'}</td><td>${oCell}</td></tr>`;
+                <td>${tCell}</td><td>${fCell}</td><td>${iCell || '—'}</td><td>${oCell}</td><td class="sa-num">${rCell}</td><td class="sa-num">${tkCell}</td></tr>`;
         }).join('');
         const ageCol = age > 3 * 24 * H ? RED : age > 24 * H ? AMB : 'var(--muted)';
         view.innerHTML = `<div class="sa-recommend" style="margin-bottom:6px">${alerts.length ? `<b style="color:${RED}">${alerts.length} to check:</b> ${alerts.map(escapeHtml).join(' · ')}` : '<b style="color:var(--pos)">Everything is busy.</b>'}
                 <div style="font-size:10px; color:${ageCol}; margin-top:2px">${d ? `Training, factory, attacks and fleets from the game's Empire page ${escapeHtml(agoText(d.savedAt))}; timers count down from then. Open it again to refresh.` : 'From your saved scans. Open the game\'s Empire page to add training, factory, attacks and fleets.'} Inventory, untrained units and heroes use your newest scan (hover a hero card's time on the Nation or Empire page for its exact end).</div></div>
-            <div style="overflow-x:auto"><table class="sa-unit-table sa-stmt" style="font-size:11px"><thead><tr><th>Planet</th><th>Training</th><th>Factory</th><th>Resources / tick</th><th>Attacks · fleets · hero</th></tr></thead>
-            <tbody>${rows}</tbody></table></div>`;
+            <div style="overflow-x:auto"><table class="sa-unit-table sa-stmt" style="font-size:11px"><thead><tr><th>Planet</th><th>Training</th><th>Factory</th><th>Resources / tick</th><th>Attacks · fleets · hero</th><th title="Credits on the planet + gold, iron, tritium, coal, steel and untrained slaves at market prices (average of sell and buy). Hover or click for min, max and each part">Resources at risk</th><th title="Turns the Training calculator needs to train the planet's units again. Hover or click for each unit">Turns at risk</th></tr></thead>
+            <tbody>${rows}<tr class="sa-stmt-total"><td>Total</td><td></td><td></td><td></td><td></td><td class="sa-num" title="Min ${escapeHtml(fmt(tot.min))} · max ${escapeHtml(fmt(tot.max))}">${f(tot.avg)}</td><td class="sa-num">${tot.known ? fT(tot.turns) : '—'}</td></tr></tbody></table></div>
+            <div class="sa-slot-meta" style="margin-top:4px; display:flex; gap:10px; flex-wrap:wrap; align-items:center">Turns at risk counts:
+                <label><input type="checkbox" id="sa-ov-majors" ${GM_getValue('sa-ov-majors', false) ? 'checked' : ''}> Majors</label>
+                <label><input type="checkbox" id="sa-ov-champs" ${GM_getValue('sa-ov-champs', false) ? 'checked' : ''}> Champions</label>
+                <label title="Engineers and scientists train faster with professors. Blank = all your planets' professors">Professors <input class="sa-amt" id="sa-ov-profs" style="width:90px" value="${escapeHtml(GM_getValue('sa-ov-profs', '') || '')}" placeholder="all: ${escapeHtml(fmt(sumProfs))}"></label></div>`;
+        view.querySelector('#sa-ov-majors')?.addEventListener('change', (e) => { GM_setValue('sa-ov-majors', e.target.checked); renderOverview(); });
+        view.querySelector('#sa-ov-champs')?.addEventListener('change', (e) => { GM_setValue('sa-ov-champs', e.target.checked); renderOverview(); });
+        view.querySelector('#sa-ov-profs')?.addEventListener('change', (e) => { GM_setValue('sa-ov-profs', e.target.value.trim()); renderOverview(); });
     }
     setInterval(() => { try { const p = document.querySelector('#sa-overview-view')?.closest('.sa-pane'); if (p && (p.classList.contains('active') || p.classList.contains('sa-win-on'))) renderOverview(); } catch (e) {} }, 60e3);
     function pollutionHtml(ids, head) {
