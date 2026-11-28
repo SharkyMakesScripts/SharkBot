@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SharkBot
 // @namespace    https://spacealpha.net/
-// @version      3.35.0
+// @version      3.37.0
 // @description  SharkBot for Space Alpha: saves your planets' units, facilities, inventory, research, bank and market prices, and calculates credit generation and Tick Generator upgrade costs.
 // @author       SharkBot
 // @match        https://spacealpha.net/*
@@ -221,7 +221,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     const PANEL_ID = 'sa-helper-panel';
     const SLOT_IDS = 'ABCDEFGHIJ'.split('');   // up to 10 planets
     // Version comes from the @version header so it's never out of sync
-    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.35.0';
+    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.37.0';
     // Two copies installed (usually an update pasted in as a new script): since v3.17.1 every copy writes its version on the
     // page before doing anything, so the second copy always sees the first, even if the first has no panel yet or crashed.
     // The second copy stops and shows a large banner at the top of the page naming the older copy to delete.
@@ -760,6 +760,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             <div class="sa-tab" data-tab="productivity">Productivity</div>
             <div class="sa-tab" data-tab="factorycalc">Factory</div>
             <div class="sa-tab" data-tab="printer">Money Printer</div>
+            <div class="sa-tab" data-tab="barracks">Barracks</div>
             <div class="sa-tab" data-tab="invcreate" title="Interest of an investment you create">Invest Create</div>
             <div class="sa-tab" data-tab="creditgen">Credit Gen</div>
             <div class="sa-tab" data-tab="resgen">Resource Gen</div>
@@ -1030,6 +1031,14 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                 </div>
                 <div class="sa-section"><div class="sa-form" id="sa-xc-printer-form"></div></div>
                 <div class="sa-section"><div class="sa-label">Result</div><div class="sa-recommend" id="sa-xc-printer-result" style="white-space:normal">—</div></div>
+            </div>
+            <div class="sa-pane" data-pane="barracks">
+                <div class="sa-section">
+                    <div class="sa-label">Barracks upgrade cost</div>
+                    <div style="font-size:10px; color:var(--muted)">Credits = round(1.269^start × (1.269^(end − start) − 1) ÷ 0.269) × 10,000,000 × (1 − card); each level L from start to end − 1 costs 10 + 10 × L^1.5 iron and 1 + L^1.5 gold. Starting level from the Train Units page of the planet picked in Training; card from your best Barracks cost card. ● filled from saved data, ○ typed</div>
+                </div>
+                <div class="sa-section"><div class="sa-form" id="sa-xc-barracks-form"></div></div>
+                <div class="sa-section"><div class="sa-label">Result</div><div class="sa-recommend" id="sa-xc-barracks-result" style="white-space:normal">—</div></div>
             </div>
             <div class="sa-pane" data-pane="invcreate">
                 <div class="sa-section">
@@ -1643,7 +1652,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         planet:      ['units', 'facilities', 'inventory', 'nation'],
         empire:      ['overview', 'research', 'bank', 'cards', 'missions'],
         global:      ['market', 'investments'],
-        calculators: ['storage', 'area', 'turns', 'training', 'rescalc', 'energy', 'productivity', 'creditgen', 'resgen', 'unitvalue', 'optimizer', 'valueopt', 'trapcalc', 'factorycalc', 'printer', 'invcreate', 'attack', 'assassin'],
+        calculators: ['storage', 'area', 'turns', 'training', 'rescalc', 'energy', 'productivity', 'creditgen', 'resgen', 'unitvalue', 'optimizer', 'valueopt', 'trapcalc', 'factorycalc', 'printer', 'barracks', 'invcreate', 'attack', 'assassin'],
         statements:  ['stbalance', 'stincome', 'stcash', 'stholder'],
         admin:       ['admin', 'adminusers', 'plist', 'players', 'viewer', 'fleets', 'admmissions'],
     };
@@ -1908,7 +1917,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     // What a tab needs when it comes on screen (in the panel or a window)
     function onTabShown(name) {
         const group = groupOf(name);
-        if (['factorycalc', 'printer', 'invcreate', 'attack', 'assassin'].includes(name) && typeof sbReady !== 'undefined' && sbReady) { try { renderXc(name); } catch (e) {} }
+        if (['factorycalc', 'printer', 'barracks', 'invcreate', 'attack', 'assassin'].includes(name) && typeof sbReady !== 'undefined' && sbReady) { try { renderXc(name); } catch (e) {} }
         if (name === "valueopt" && typeof sbReady !== "undefined" && sbReady) { try { renderValueOpt(); } catch (e) {} }
         if ((name === 'bank' || name === 'investments') && typeof sbReady !== 'undefined' && sbReady) { try { renderBank(); fetchInvestments(false); } catch (e) {} }
         if (name === 'overview' && typeof sbReady !== 'undefined' && sbReady) { try { renderOverview(); } catch (e) {} }
@@ -4257,6 +4266,15 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         { key: 'mineSlaves',   label: 'Mine Slaves',   from: 'units', match: /mine\s*slaves/i },
         { key: 'ironMines',    label: 'Iron Mines lvl', from: 'facilities', match: /^iron\s*mines?$/i },
         { key: 'goldMines',    label: 'Gold Mines lvl', from: 'facilities', match: /^gold\s*mines?$/i },
+        // Since v3.37.0 (Sean's resource sheet): sliders (work %) and the facilities that make or use coal, iron and steel
+        { key: 'ironWork',     label: 'Iron Mines work %', from: 'slider', match: /^iron\s*mines?$/i, def: '100' },
+        { key: 'goldWork',     label: 'Gold Mines work %', from: 'slider', match: /^gold\s*mines?$/i, def: '100' },
+        { key: 'cutters',      label: 'Wood Cutters lvl', from: 'facilities', match: /wood\s*cutters?/i, def: '0' },
+        { key: 'cutWork',      label: 'Wood Cutters work %', from: 'slider', match: /wood\s*cutters?/i, def: '100' },
+        { key: 'furnace',      label: 'Blast Furnace lvl', from: 'facilities', match: /blast\s*furnace/i, def: '0' },
+        { key: 'furnWork',     label: 'Blast Furnace work %', from: 'slider', match: /blast\s*furnace/i, def: '100' },
+        { key: 'coalPower',    label: 'Coal Power lvl', from: 'facilities', match: /^coal\s*power/i, def: '0' },
+        { key: 'cpWork',       label: 'Coal Power work %', from: 'slider', match: /^coal\s*power/i, def: '100' },
         { sub: 'Research' },
         { key: 'digging',      label: 'Digging',       from: 'research', match: /^digging$/i },
         { key: 'ironMining',   label: 'Iron mining',   from: 'research', match: /^iron\s*mining$/i },
@@ -4271,16 +4289,24 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         { key: 'goldPT', label: 'Gold per turn (flat)', def: '0' },
     ];
 
+    // Since v3.37.0 (Sean's resource sheet): mines count their work % (slider) and round like the game; Wood Cutters make coal;
+    // Coal Power uses coal; the Blast Furnace uses iron and coal and makes steel
+    const RG_RES = ['Coal', 'Iron', 'Gold', 'Steel'];
     function rgProduction(x) {
         const P = x.productivity / 100, W = x.mineWorkers + x.mineSlaves, dig = 1 + 0.05 * x.digging;
-        const pc = (k) => 1 + (x[k] || 0) / 100;
-        const coal = 0.01 * Math.pow(W, 0.42) * dig * P * pc('cCoalW');
+        const pc = (k) => 1 + (x[k] || 0) / 100, w = (k) => (x[k] == null ? 100 : x[k]) / 100, lv = (k) => x[k] || 0;
+        const furn = w('furnWork') * Math.pow(lv('furnace'), 1.2);
+        const coal = 0.01 * Math.pow(W, 0.42) * dig * P * pc('cCoalW')
+                   + Math.round(2 * w('cutWork') * Math.pow(lv('cutters'), 1.2)) - 1.2 * Math.ceil(w('cpWork') * Math.pow(lv('coalPower'), 1.1)) - Math.round(5 * furn);
         const iron = 0.01 * Math.pow(W, 0.4) * dig * P * pc('cIronW')
-                   + 0.3 * (2 * Math.pow(x.ironMines, 1.2)) * (1 + 0.05 * x.ironMining) * pc('cIronM') + (x.ironPT || 0);
+                   + 0.3 * Math.round(2 * w('ironWork') * Math.pow(x.ironMines, 1.2)) * (1 + 0.05 * x.ironMining) * pc('cIronM') + (x.ironPT || 0) - Math.round(2 * furn);
         const gold = 0.01 * Math.pow(W, 0.32) * dig * pc('cGoldM') * pc('cGoldW') * P
-                   + 0.3 * Math.pow(x.goldMines, 1.2) * (1 + 0.05 * x.goldMining) + (x.goldPT || 0);
-        return { Coal: coal, Iron: iron, Gold: gold };
+                   + 0.3 * Math.round(w('goldWork') * Math.pow(x.goldMines, 1.2)) * (1 + 0.05 * x.goldMining) + (x.goldPT || 0);
+        return { Coal: coal, Iron: iron, Gold: gold, Steel: Math.floor(3 * furn) };
     }
+    // Resources are also made every tick for free (1,440 a day), as well as with each turn spent (Sean's sheet)
+    function rgPassiveOn() { return rgShared().passive !== false; }
+    function rgRefill() { return rgShared().refill === true ? 10000 : 0; }   // Turn Refill: 6.9444 turns a minute
 
     function rgLoad(slot) {
         return Object.assign({ now: {}, cmp: {}, sources: {} }, GM_getValue('sa-rg-' + slot, {}) || {});
@@ -4292,6 +4318,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     // Saved value for a field on this planet (null if unknown)
     function rgSaved(slot, f) {
         if (f.from === 'colony') { const c = GM_getValue('sa-colony-' + slot, null); return c && c.productivity != null ? String(c.productivity) : null; }
+        if (f.from === 'slider') { const it = (getFSlot(slot)?.items || []).find(i => i.kind !== 'area' && f.match.test(cleanName(i.name))); return it && it.slider != null ? String(it.slider) : null; }
         const list = f.from === 'units' ? (getSlot(slot)?.units || []).map(u => ({ name: u.name, v: u.countDisplay || u.count }))
             : f.from === 'facilities' ? (getFSlot(slot)?.items || []).filter(i => i.kind !== 'area').map(i => ({ name: i.name, v: i.valueDisplay || i.value }))
             : f.from === 'research' ? (getRSlot('A')?.items || []).map(i => { const lv = levelFrom(i); return { name: i.name, v: lv.value != null ? lv.value : (i.valueDisplay || i.value) }; }) : [];
@@ -4337,7 +4364,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     // Credits/day (or raw amount/day without prices) for a set of numeric inputs
     function rgValue(x, tpd, price) {
         const p = rgProduction(x);
-        return ['Coal', 'Iron', 'Gold'].reduce((t, n) => t + p[n] * tpd * (price(n) ?? 1), 0);
+        return RG_RES.reduce((t, n) => t + p[n] * tpd * (price(n) ?? 1), 0);
     }
     function rgBestCard(base, tpd, price) {
         const data = GM_getValue('sa-cards', null);
@@ -4370,6 +4397,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             if (f.from) {
                 const v = rgSaved(slot, f);
                 if (v != null && (force || !manual)) { d.now[f.key] = v; d.sources[f.key] = 'saved'; }
+                else if (v == null && f.def != null && (d.now[f.key] == null || d.now[f.key] === '')) d.now[f.key] = f.def;
             } else if (d.now[f.key] == null || d.now[f.key] === '') d.now[f.key] = f.def;
         });
     }
@@ -4427,6 +4455,8 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             <input id="sa-rg-tpd" value="${escapeHtml(String(tpdVal ?? ''))}" placeholder="111,240" />
             <span class="sa-src ${sh.tpdSource === 'manual' || auto == null ? 'manual' : ''}"
                   title="${auto != null ? 'From the Tick Generator' + (() => { const tg = planetIds().map(id => (getFSlot(id)?.items || []).find(i => /tick\s*generator/i.test(i.name) && i.value != null)).find(Boolean); return tg ? ': ' + tpm(tg.value).toFixed(2) + ' TPM × 1,440' : ''; })() : 'Scan Facilities to fill this'}">${sh.tpdSource === 'manual' || auto == null ? '○' : '●'}</span>
+            <label class="sa-check" style="grid-column:1/-1" title="Resources are made every tick for free (1,440 a day), as well as with each turn you spend"><input type="checkbox" id="sa-rg-passive" ${rgPassiveOn() ? 'checked' : ''}> Count resources made every tick (1,440 a day)</label>
+            <label class="sa-check" style="grid-column:1/-1" title="Turn Refill adds 6.9444 turns a minute (10,000 a day)"><input type="checkbox" id="sa-rg-refill" ${rgRefill() ? 'checked' : ''}> Turn Refill (+10,000 turns a day)</label>
             <label for="sa-rg-basis">Value resources at</label>
             <select id="sa-rg-basis"><option value="sell" ${sh.basis === 'sell' ? 'selected' : ''}>Sell price</option>
                 <option value="buy" ${sh.basis === 'buy' ? 'selected' : ''}>Buy price</option></select><span></span>`;
@@ -4434,6 +4464,8 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             const cur = rgShared(); cur.tpd = e.target.value; cur.tpdSource = e.target.value.trim() ? 'manual' : 'auto';
             GM_setValue('sa-rg-shared', cur); updateResGen();
         });
+        document.getElementById('sa-rg-passive').addEventListener('change', (e) => { const cur = rgShared(); cur.passive = e.target.checked; GM_setValue('sa-rg-shared', cur); updateResGen(); });
+        document.getElementById('sa-rg-refill').addEventListener('change', (e) => { const cur = rgShared(); cur.refill = e.target.checked; GM_setValue('sa-rg-shared', cur); updateResGen(); });
         document.getElementById('sa-rg-basis').addEventListener('change', (e) => {
             const cur = rgShared(); cur.basis = e.target.value; GM_setValue('sa-rg-shared', cur); updateResGen();
         });
@@ -4456,7 +4488,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             cmp[f.key] = c != null && String(c).trim() !== '' ? num(c) : now[f.key];
         });
         const auto = rgAutoTpd(slot);
-        const tpd = sh.tpdSource === 'manual' && sh.tpd !== '' ? num(sh.tpd) : (auto ?? num(sh.tpd));
+        let tpd = sh.tpdSource === 'manual' && sh.tpd !== '' ? num(sh.tpd) : (auto ?? num(sh.tpd));
         if (missing.length || tpd == null) {
             out.classList.add('sa-warn');
             out.textContent = 'Fill in: ' + [...missing, ...(tpd == null ? ['Turns per day'] : [])].join(', ');
@@ -4469,7 +4501,8 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             return m ? (sh.basis === 'buy' ? m.buyPrice : m.sellPrice) : null;
         };
         const a = rgProduction(now), b = rgProduction(cmp);
-        const names = ['Coal', 'Iron', 'Gold'];
+        const names = RG_RES, turnTpd = tpd, passTicks = rgPassiveOn() ? 1440 : 0;
+        tpd = turnTpd + passTicks + rgRefill();   // made per day = per turn × (turns + free ticks + Turn Refill)
         const fmtN = (n) => Math.abs(n) < 1e3 ? (Math.round(n * 10) / 10).toLocaleString() : fmt(n);
         const sign = (n) => (n > 0 ? '+' : n < 0 ? '−' : '±') + fmtN(Math.abs(n));
         let cpt = 0, cpd = 0, dCpd = 0;
@@ -4485,7 +4518,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             return n.padEnd(6) + sign(dt).padStart(9) + sign(dt * tpd).padStart(10) + (p != null ? sign(dt * tpd * p) : '—').padStart(13);
         });
         out.textContent = [
-            `${tpd.toLocaleString()} turns/day · ${sh.basis} prices` + (market ? ` (market ${new Date(market.savedAt).toLocaleDateString()})` : ' · scan Market for prices'),
+            `${turnTpd.toLocaleString()} turns/day${passTicks ? ' + 1,440 free ticks' : ''}${rgRefill() ? ' + 10,000 Turn Refill' : ''} = ${Math.round(tpd).toLocaleString()} per day · ${sh.basis} prices` + (market ? ` (market ${new Date(market.savedAt).toLocaleDateString()})` : ' · scan Market for prices'),
             '',
             'NOW'.padEnd(6) + 'Per turn'.padStart(9) + 'Per day'.padStart(10) + 'Credits/day'.padStart(13),
             ...rowsNow,
@@ -5010,7 +5043,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         RG_FIELDS.forEach(f => {
             if (!f.key) return;
             const n = parseNumber(d.now[f.key]);
-            if (n == null) { if (RG_CARD_KEYS.includes(f.key) || f.def != null) x[f.key] = 0; else ok = false; }
+            if (n == null) { if (RG_CARD_KEYS.includes(f.key) || f.def != null) x[f.key] = parseNumber(f.def) ?? 0; else ok = false; }
             else x[f.key] = n;
         });
         if (!ok) return null;
@@ -5024,7 +5057,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             const best = rgBestCard(x, tpd, price);
             if (best) Object.assign(x, best.bonus);
         }
-        const val = (y) => { const p = rgProduction(y); return ['Coal', 'Iron', 'Gold'].reduce((t, n) => t + p[n] * tpd * (price(n) ?? 0), 0); };
+        const val = (y) => { const p = rgProduction(y); return RG_RES.reduce((t, n) => t + p[n] * tpd * (price(n) ?? 0), 0); };
         const perDay = val(x);
         return { tpd, perDay, perTurn: perDay / tpd, x, price,
                  gainWorkers: (dw) => val(Object.assign({}, x, { mineWorkers: x.mineWorkers + dw })) - perDay,
@@ -8498,6 +8531,8 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             'in the new view (click Expand if a section is collapsed), or type the level.');
         else lines.push('', 'Turn Storage wasn\'t found in your saved facilities: pick it in the list above, or type the level.');
         if (v.brains == null) lines.push('Brains not saved: open the Research page, or type them.');
+        // Turn Refill cost (since v3.37.0; the game's turns_refill_cost, shared by Sean): min(⌈1 + 3·√D ÷ 5⌉, ⌈D ÷ 50⌉) for D turns
+        { const rc = (D) => Math.min(Math.ceil(1 + 3 * Math.sqrt(D) / 5), Math.ceil(D / 10 / 5)); if (cap > 0) lines.push('', `Turn Refill cost for a full storage (${Math.round(cap).toLocaleString()} turns): ${rc(Math.round(cap)).toLocaleString()} (the game's refill formula: min(⌈1 + 3·√D ÷ 5⌉, ⌈D ÷ 50⌉)).`); }
         out.textContent = lines.join('\n');
     }
     // ---------- Research calculator: cost of the next level of every research ----------
@@ -9371,6 +9406,19 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                      invested: sum('inv'), pTurn: sum('pTurn'), pDay: sum('pDay'), you, hi: !!hi[r.name] };
         });
     }
+    // Investment tax % from volatility (since v3.37.0; the game's own functions, shared by Sean):
+    //   tax % = max(0, (volatility − 1) ÷ 10 + 10 × central bank volatility change)
+    //   change: above target → −min(volatility − target, 10,000) ÷ 5,000; below → (target − volatility) ÷ 20,000 (0.05 if over 10,000 below)
+    function cbVolChange(v, t) {
+        if (v > t) { const G = Math.min(v - t, 1e4); return v > 0 ? -G / 5e3 : -G / 2e4; }
+        const G = t - v; return G > 1e4 ? 0.05 : G / 2e4;
+    }
+    function volTaxPct(v, t) { const r = (v - 1) / 10 + 10 * cbVolChange(v, t); return r > 0 ? r : 0; }
+    function volTarget() {
+        const typed = parseNumber(GM_getValue('sa-tc-target', '')); if (typed != null) return { value: typed, src: 'typed' };
+        const f = (centralBankLoad()?.fields || []).find(x => /target/i.test(x.label) && /volatil/i.test(x.label) && x.value != null);
+        return f ? { value: f.value, src: 'central' } : { value: null, src: null };
+    }
     function renderTrapCalc() {
         const view = document.getElementById('sa-tc-view');
         if (!view || !view.closest('.sa-pane')?.classList.contains('active')) return;
@@ -9411,7 +9459,10 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         };
         view.innerHTML = `
             <div class="sa-recommend" style="margin-bottom:6px">All known holders: <b>${f(T('invested'))}</b> invested · profit ${sg(T('pTurn'))}/30 min · <b>${sg(T('pDay'))}/day</b><br>You: ${f(Y('inv'))} invested · ${sg(Y('pTurn'))}/30 min · <b>${sg(Y('pDay'))}/day</b></div>
-            <div style="font-size:10px; color:var(--muted); margin-bottom:6px">Volatility: ${volTxt}. Share price = equity ÷ total shares × multi × (volatility + 1).</div>
+            <div style="font-size:10px; color:var(--muted); margin-bottom:6px">Volatility: ${volTxt}. Share price = equity ÷ total shares × multi × (volatility + 1).
+                ${(() => { const tg = volTarget(), v = vol.value != null ? vol.value * 100 : null;
+                    return `<br>Tax from volatility: ${v != null && tg.value != null ? `<b>${volTaxPct(v, tg.value).toFixed(3)}%</b> (volatility ${v.toFixed(2)} vs target ${escapeHtml(fmt(tg.value))}${tg.src === 'central' ? ', target from your Central bank scan' : ''}; the game's formula, shared by Sean)` : 'needs the target volatility'}
+                    · Target volatility <input class="sa-amt" id="sa-tc-target" style="width:70px" value="${escapeHtml(GM_getValue('sa-tc-target', '') || '')}" placeholder="${tg.src === 'central' ? escapeHtml(fmt(tg.value)) : 'type it'}">`; })()}</div>
             <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; font-size:11px; margin-bottom:6px">
                 <button class="sa-btn" id="sa-tc-refresh" style="margin:0">${investFetching ? 'Loading…' : '↻ Refresh'}</button>
                 <label class="sa-check" style="margin:0"><input type="checkbox" id="sa-tc-mine" ${mineOnly ? 'checked' : ''} /><span>Only mine</span></label>
@@ -9443,6 +9494,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         // (the Turns/day box is gone since v3.14.1: investments always pay 48 times a day)
         view.querySelector('#sa-tc-refresh')?.addEventListener('click', () => { fetchInvestments(true); fetchHolders(true); });
         view.querySelector('#sa-tc-mine')?.addEventListener('change', (e) => { GM_setValue('sa-tc-mine', e.target.checked); re(); });
+        view.querySelector('#sa-tc-target')?.addEventListener('change', (e) => { GM_setValue('sa-tc-target', e.target.value.trim()); re(); });
         view.querySelectorAll('tr[data-tc]').forEach(tr => tr.addEventListener('click', (e) => {
             if (e.target.closest('input, button, select, a, label')) return;
             tcOpen[tr.dataset.tc] = !tcOpen[tr.dataset.tc]; re();
@@ -10127,6 +10179,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             } catch (e) {}
             try { rg = rgModel(id); } catch (e) {}
             if (cg) income.passive.push([pn, cg.passiveDay]);
+            if (rg && rgPassiveOn()) { const p = rgProduction(rg.x), v = RG_RES.reduce((t, n) => t + p[n] * 1440 * (rg.price(n) ?? 0), 0); if (v) income.resources.push([`${pn} (every tick, free)`, v]); }   // since v3.37.0
         });
         // Turn spending follows the Value Optimizer plan (averaged over the week)
         let vp = null;
@@ -12009,6 +12062,27 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         },
     };
 
+    // Barracks (since v3.36.0): total cost of going from one Barracks level to another (same formula as Training's Barracks upgrade)
+    function barracksCost(S, E, cr) {
+        const credits = Math.round(Math.pow(1.269, S) * (Math.pow(1.269, E - S) - 1) / 0.269) * 1e7 * (1 - cr);
+        let iron = 0, gold = 0; for (let k = S; k <= E - 1; k++) { const p = Math.pow(k, 1.5); iron += 10 + 10 * p; gold += 1 + p; }
+        return { credits, iron: Math.round(iron), gold: Math.round(gold) };
+    }
+    XC.barracks = {
+        fields: [['start', 'Starting Barracks', () => trSaved(trSlot()).barracks ?? null, 'open Train Units'],
+            ['end', 'Ending Barracks', null, 'blank = start + 10'],
+            ['card', 'Card reduction %', () => { const c = trCostCards()[0]; return c ? c.value : null; }, '0']],
+        render: (v) => {
+            if (v.start == null) return 'Starting level unknown: open the game\'s <b>Train Units</b> page, or type it.';
+            const S = Math.round(v.start), E = v.end != null ? Math.round(v.end) : S + 10, cr = Math.min(100, Math.max(0, v.card || 0)) / 100;
+            if (!(E > S)) return 'Ending level must be above the starting level.';
+            const c = barracksCost(S, E, cr), mc = matsInCredits({ Iron: c.iron, Gold: c.gold }), total = c.credits + mc.value;
+            return xkv([['Levels', `${S.toLocaleString()} → ${E.toLocaleString()} (+${(E - S).toLocaleString()})`], ['Card reduction', (cr * 100).toFixed(2).replace(/\.?0+$/, '') + '%'],
+                ['Total cost (credits)', xf(c.credits)], ['Total iron', xf(c.iron)], ['Total gold', xf(c.gold)],
+                ['<b>Total in credits</b>', `<b>${xf(total)}</b>${mc.missing.length ? ` <span style="color:var(--muted)">(no market price: ${escapeHtml(mc.missing.join(', '))})</span>` : ''}`]]) +
+                `<div class="sa-slot-meta" style="margin-top:4px">Iron and gold count at sell price for what you own and buy price for the rest.</div>`;
+        },
+    };
     // Invest Create (Tier I)
     XC.invcreate = {
         fields: [['credits', 'Credits put in', null, 'e.g. 20 Sx'], ['turns', 'Turns put in', null, 'e.g. 200,000'],
@@ -12200,7 +12274,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     // Given formula (complete and from the game's players / Sharky) or Assumed (SharkBot's own model or a fill-in);
     // "More detail" = every input and where it came from, and each step; "Nerdy details" (inside) = exact formulas and edge cases.
     const HOW_RESULT = { storage: 'sa-ts-result', area: 'sa-ar-result', turns: 'sa-tn-result', training: 'sa-tr-result', rescalc: 'sa-rc-result',
-        energy: 'sa-en-result', productivity: 'sa-pr-result', factorycalc: 'sa-xc-factorycalc-result', printer: 'sa-xc-printer-result',
+        energy: 'sa-en-result', productivity: 'sa-pr-result', factorycalc: 'sa-xc-factorycalc-result', printer: 'sa-xc-printer-result', barracks: 'sa-xc-barracks-result',
         invcreate: 'sa-xc-invcreate-result', creditgen: 'sa-tg-result', resgen: 'sa-rg-result', unitvalue: 'sa-uv-result',
         optimizer: 'sa-opt-result', valueopt: 'sa-vo-result', trapcalc: 'sa-tc-view', attack: 'sa-xc-attack-result', assassin: 'sa-xc-assassin-result' };
     var howOpen = {};
@@ -12272,7 +12346,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         storage: ['facilities', 'brains'], area: ['facilities', 'research', 'cards', ...CAPITAL_SRC], turns: ['facilities', 'cards', ...CAPITAL_SRC],
         training: ['units', 'facilities', 'research', 'cards'], rescalc: ['research', 'units', 'facilities', 'cards', 'market', 'brains'],
         energy: ['facilities', 'research', 'cards', 'brains'], productivity: ['units', 'research', 'nation', 'colony', 'cards'],
-        factorycalc: ['units', 'facilities', 'research'], printer: ['print', ...CAPITAL_SRC], invcreate: ['central', 'cards'],
+        factorycalc: ['units', 'facilities', 'research'], printer: ['print', ...CAPITAL_SRC], barracks: ['units', 'cards', 'market'], invcreate: ['central', 'cards'],
         creditgen: ['units', 'facilities', 'research', 'colony', 'cards', 'central', ...CAPITAL_SRC], resgen: ['units', 'facilities', 'research', 'colony', 'cards', 'market'],
         unitvalue: ['units', 'facilities', 'colony', 'cards', 'market'],
         optimizer: ['units', 'facilities', 'research', 'colony', 'cards', 'central', ...CAPITAL_SRC], valueopt: ['units', 'facilities', 'research', 'colony', 'cards', 'central', 'market'],
@@ -12517,7 +12591,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     // At the top of every subtab with parts that open and close. Display only: nothing new is loaded.
     const EA_PANES = ['units', 'research', 'facilities', 'bank', 'trapcalc', 'cards', 'admin', 'adminusers', 'players', 'plist', 'fleets',
         // calculators: open or close the "How it's calculated" drop-downs (since v3.16.0)
-        'missions', 'admmissions', 'storage', 'area', 'turns', 'training', 'rescalc', 'energy', 'productivity', 'factorycalc', 'printer', 'invcreate', 'creditgen', 'resgen', 'unitvalue', 'optimizer', 'valueopt', 'attack', 'assassin'];
+        'missions', 'admmissions', 'storage', 'area', 'turns', 'training', 'rescalc', 'energy', 'productivity', 'factorycalc', 'printer', 'barracks', 'invcreate', 'creditgen', 'resgen', 'unitvalue', 'optimizer', 'valueopt', 'attack', 'assassin'];
     function eaApply(name, open) {
         const root = document.querySelector(`#${PANEL_ID} .sa-pane[data-pane="${name}"]`);
         if (!root) return;
@@ -12695,7 +12769,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         'assassin|def:targeted unit 4': ['Fourth targeted unit.', 'Typed by you: from a spy report.'], 'assassin|def:assassin tech': ['Defender\'s assassin tech.', 'Typed by you, if you know it.'],
         'assassin|def:card %': ['Defender\'s card.', 'Typed by you, if you know it.'],
     };
-    const CALC_PANES = ['storage', 'area', 'turns', 'training', 'rescalc', 'energy', 'productivity', 'creditgen', 'resgen', 'unitvalue', 'optimizer', 'valueopt', 'trapcalc', 'factorycalc', 'printer', 'invcreate', 'attack', 'assassin'];
+    const CALC_PANES = ['storage', 'area', 'turns', 'training', 'rescalc', 'energy', 'productivity', 'creditgen', 'resgen', 'unitvalue', 'optimizer', 'valueopt', 'trapcalc', 'factorycalc', 'printer', 'barracks', 'invcreate', 'attack', 'assassin'];
     function infoFor(pane, label, def) {
         const l = String(label || '').replace(/\s+/g, ' ').replace(/ⓘ/g, '').trim().toLowerCase(); if (!l) return null;
         const keys = [pane + '|' + (def ? 'def:' : '') + l, pane + '|' + l, pane + '|def:' + l, '*|' + l];
