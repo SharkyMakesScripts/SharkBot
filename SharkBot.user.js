@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SharkBot
 // @namespace    https://spacealpha.net/
-// @version      3.38.1
+// @version      3.38.2
 // @description  SharkBot for Space Alpha: saves your planets' units, facilities, inventory, research, bank and market prices, and calculates credit generation and Tick Generator upgrade costs.
 // @author       SharkBot
 // @match        https://spacealpha.net/*
@@ -239,7 +239,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     const PANEL_ID = 'sa-helper-panel';
     const SLOT_IDS = 'ABCDEFGHIJ'.split('');   // up to 10 planets
     // Version comes from the @version header so it's never out of sync
-    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.38.1';
+    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.38.2';
     // Two copies installed (usually an update pasted in as a new script): since v3.17.1 every copy writes its version on the
     // page before doing anything, so the second copy always sees the first, even if the first has no panel yet or crashed.
     // The second copy stops and shows a large banner at the top of the page naming the older copy to delete.
@@ -11258,19 +11258,19 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         const price = (n) => { const m = marketRes(new RegExp('^' + n, 'i')); if (!m) return null; const a = [m.sellPrice, m.buyPrice].filter(x => x != null); return a.length ? a.reduce((x, y) => x + y, 0) / a.length : null; };
         const out = { credits: 0, parts: [], unknown: [], turns: 0, units: [], noPrice: new Set() };
         const mats = (o) => { let t = 0; Object.entries(o).forEach(([n, q]) => { if (!q) return; const pr = price(n); if (pr == null) out.noPrice.add(n); else t += q * pr; }); return t; };
-        const add = (label, cr, m) => { const v = cr + mats(m || {}); out.credits += v; out.parts.push({ label, v }); };
+        const add = (label, cr, m, save = 0, note = '') => { const v = cr + mats(m || {}); out.credits += v; out.saved = (out.saved || 0) + save; out.parts.push({ label: label + note, v }); };
         const items = getFSlot(p.slot)?.items || [];
         items.forEach(i => {
             const L = i.kind === 'area' ? levelFrom(i).value ?? i.value : i.value; if (!(L > 0)) return;
             const nm = cleanName(i.name);
-            if (i.kind === 'area') add(`${nm} (level ${fmt(L)})`, Math.round(40000 * sumPowFast(1, L, 1.7)));
+            if (i.kind === 'area') { const full = Math.round(40000 * sumPowFast(1, L, 1.7)), cp = areaCardPct(p.slot, nm) / 100; add(`${nm} (level ${fmt(L)})`, full * (1 - cp), null, full * cp, cp ? ` (−${+(cp * 100).toFixed(2)}% card)` : ''); }
             else if (/tick\s*generator/i.test(nm)) { const n = L, s25 = sumPowFast(1, L - 1, 2.5), s13 = sumPowFast(1, L - 1, 1.3), s15 = sumPowFast(1, L - 1, 1.5);
                 add(`Tick Generator (level ${fmt(L)})`, 8e8 * n + 1.2e9 * s25, { Gold: n + 8 * s13, Iron: 3 * n + 10 * s15, Tritium: n + 10 * s13 }); }
             else if (/barracks/i.test(nm)) {}
             else out.unknown.push(nm);
         });
         const bl = trSaved(p.slot).barracks;
-        if (bl > 0) { const c = barracksCost(0, bl, 0); add(`Barracks (level ${fmt(bl)})`, c.credits, { Iron: c.iron, Gold: c.gold }); }
+        if (bl > 0) { const cp = (trCostCards()[0]?.value || 0) / 100, c = barracksCost(0, bl, cp); add(`Barracks (level ${fmt(bl)})`, c.credits, { Iron: c.iron, Gold: c.gold }, c.credits / (1 - cp || 1) * cp, cp ? ` (−${+(cp * 100).toFixed(2)}% card)` : ''); }
         const pt = trPerTurn(p.slot);
         if (pt) (getSlot(p.slot)?.units || []).forEach(u => {
             const n = u.count || 0, nm = String(u.name); if (!n || /untrained|professor|teacher/i.test(nm)) return;
@@ -11279,6 +11279,9 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             if (!(pt[key] > 0)) return; const t = n / pt[key]; out.turns += t; out.units.push({ label: nm, n, t });
         });
         out.trainKnown = !!pt;
+        // Free passive training (1 turn's worth a minute) takes part of the turns: only the rest comes out of your turns
+        const tpd = trainTpd() || 0, free = uvPassiveOn() ? 1440 : 0;
+        out.yourTurns = tpd + free ? out.turns * tpd / (tpd + free) : out.turns; out.freeTurns = out.turns - out.yourTurns;
         return out;
     }
     function renderOverview() {
@@ -11299,10 +11302,12 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         const rows = planets.map(p => {
             const tr = p.train, fa = p.factory, hero = p.hero;
             const ab = abandonOf(p); if (ab) { tot.abC = (tot.abC || 0) + ab.credits; tot.abT = (tot.abT || 0) + ab.turns; }
-            const aTip = ab ? [...ab.parts.map(x => `${x.label}: ${fmt(x.v)} credits`), ...ab.units.map(x => `${x.label}: ${fmt(x.n)} → ${Math.ceil(x.t).toLocaleString()} turns`),
+            if (ab) tot.abY = (tot.abY || 0) + ab.yourTurns;
+            const aTip = ab ? [`Cheapest way: best card for each part, free training counted.`, `Saved: ${fmt(ab.saved || 0)} credits by cards · ${Math.ceil(ab.freeTurns).toLocaleString()} turns trained free (1 a minute) of ${Math.ceil(ab.turns).toLocaleString()} turns' worth`,
+                ...ab.parts.map(x => `${x.label}: ${fmt(x.v)} credits`), ...ab.units.map(x => `${x.label}: ${fmt(x.n)} → ${Math.ceil(x.t).toLocaleString()} turns' worth`),
                 ...(ab.trainKnown ? [] : ['Units: needs the Barracks level (Train Units page)']), ...(ab.unknown.length ? [`Not counted (cost formula unknown): ${ab.unknown.join(', ')}`] : []),
                 ...(ab.noPrice.size ? [`No market price for ${[...ab.noPrice].join(', ')}`] : [])].join('\n') : '';
-            const aCell = !ab ? '—' : `<details title="${escapeHtml(aTip)}"><summary style="cursor:pointer"><b>${f(ab.credits)}</b>${ab.turns ? ` + <b>${escapeHtml(Math.ceil(ab.turns).toLocaleString())}</b> turns` : ''}${ab.unknown.length ? ' <span style="color:var(--muted)">(min)</span>' : ''}</summary><div style="font-size:10px; color:var(--muted)">${escapeHtml(aTip).replace(/\n/g, '<br>')}</div></details>`;
+            const aCell = !ab ? '—' : `<details title="${escapeHtml(aTip)}"><summary style="cursor:pointer"><b>${f(ab.credits)}</b>${ab.turns ? ` + <b>${escapeHtml(Math.ceil(ab.yourTurns).toLocaleString())}</b> turns` : ''}${ab.unknown.length ? ' <span style="color:var(--muted)">(min)</span>' : ''}${ab.saved || ab.freeTurns ? `<div style="font-size:9px; color:var(--pos)">saves ${f(ab.saved || 0)}${ab.freeTurns ? ` + ${escapeHtml(Math.ceil(ab.freeTurns).toLocaleString())} free turns` : ''}</div>` : ''}</summary><div style="font-size:10px; color:var(--muted)">${escapeHtml(aTip).replace(/\n/g, '<br>')}</div></details>`;
             const rk = riskOf(p, profsAll); tot.avg += rk.res.avg; tot.min += rk.res.min; tot.max += rk.res.max; tot.turns += rk.turns.total; if (rk.turns.known) tot.known = true;
             const rTip = `Min ${fmt(rk.res.min)} · max ${fmt(rk.res.max)} (sell / buy prices)\n` + rk.res.parts.map(x => `${x.label}: ${fmt(x.amount)}${x.label === 'Credits' ? '' : ` ≈ ${fmt(x.value)} credits`}`).join('\n');
             const rCell = rk.res.parts.length ? `<details title="${escapeHtml(rTip)}"><summary style="cursor:pointer"><b>${f(rk.res.avg)}</b></summary><div style="font-size:10px; color:var(--muted)">${escapeHtml(rTip).replace(/\n/g, '<br>')}</div></details>` : '—';
@@ -11345,7 +11350,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         view.innerHTML = `<div class="sa-recommend" style="margin-bottom:6px">${alerts.length ? `<b style="color:${RED}">${alerts.length} to check:</b> ${alerts.map(escapeHtml).join(' · ')}` : '<b style="color:var(--pos)">Everything is busy.</b>'}
                 <div style="font-size:10px; color:${ageCol}; margin-top:2px">${d ? `Training, factory, attacks and fleets from the game's Empire page ${escapeHtml(agoText(d.savedAt))}; timers count down from then. Open it again to refresh.` : 'From your saved scans. Open the game\'s Empire page to add training, factory, attacks and fleets.'} Inventory, untrained units and heroes use your newest scan (hover a hero card's time on the Nation or Empire page for its exact end).</div></div>
             <div style="overflow-x:auto"><table class="sa-unit-table sa-stmt" style="font-size:11px"><thead><tr><th>Planet</th><th>Training</th><th>Factory</th><th>Resources / tick</th><th>Attacks · fleets · hero</th><th title="Credits on the planet + gold, iron, tritium, coal, steel and untrained slaves at market prices (average of sell and buy). Hover or click for min, max and each part">Resources at risk</th><th title="Turns the Training calculator needs to train the planet's units again. Hover or click for each unit">Turns at risk</th><th title="What a fresh colony (everything at level 0) would cost to build back to this point: areas, Tick Generator, Barracks (credits; iron, gold and tritium at market average) and training every unit except professors and teachers (turns). Credits, resources and untrained units aren't counted. (min) = some facilities' cost formulas aren't known yet. Hover or click for each part">Abandon cost</th></tr></thead>
-            <tbody>${rows}<tr class="sa-stmt-total"><td>Total</td><td></td><td></td><td></td><td></td><td class="sa-num" title="Min ${escapeHtml(fmt(tot.min))} · max ${escapeHtml(fmt(tot.max))}">${f(tot.avg)}</td><td class="sa-num">${tot.known ? fT(tot.turns) : '—'}</td><td class="sa-num">${tot.abC != null ? `${f(tot.abC)}${tot.abT ? ` + ${escapeHtml(Math.ceil(tot.abT).toLocaleString())} turns` : ''}` : '—'}</td></tr></tbody></table></div>
+            <tbody>${rows}<tr class="sa-stmt-total"><td>Total</td><td></td><td></td><td></td><td></td><td class="sa-num" title="Min ${escapeHtml(fmt(tot.min))} · max ${escapeHtml(fmt(tot.max))}">${f(tot.avg)}</td><td class="sa-num">${tot.known ? fT(tot.turns) : '—'}</td><td class="sa-num">${tot.abC != null ? `${f(tot.abC)}${tot.abY ? ` + ${escapeHtml(Math.ceil(tot.abY).toLocaleString())} turns` : ''}` : '—'}</td></tr></tbody></table></div>
             <div class="sa-slot-meta" style="margin-top:4px; display:flex; gap:10px; flex-wrap:wrap; align-items:center">Turns at risk counts:
                 <label><input type="checkbox" id="sa-ov-majors" ${GM_getValue('sa-ov-majors', false) ? 'checked' : ''}> Majors</label>
                 <label><input type="checkbox" id="sa-ov-champs" ${GM_getValue('sa-ov-champs', false) ? 'checked' : ''}> Champions</label>
