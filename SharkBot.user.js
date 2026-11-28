@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SharkBot
 // @namespace    https://spacealpha.net/
-// @version      3.38.3
+// @version      3.38.4
 // @description  SharkBot for Space Alpha: saves your planets' units, facilities, inventory, research, bank and market prices, and calculates credit generation and Tick Generator upgrade costs.
 // @author       SharkBot
 // @match        https://spacealpha.net/*
@@ -239,7 +239,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     const PANEL_ID = 'sa-helper-panel';
     const SLOT_IDS = 'ABCDEFGHIJ'.split('');   // up to 10 planets
     // Version comes from the @version header so it's never out of sync
-    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.38.3';
+    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.38.4';
     // Two copies installed (usually an update pasted in as a new script): since v3.17.1 every copy writes its version on the
     // page before doing anything, so the second copy always sees the first, even if the first has no panel yet or crashed.
     // The second copy stops and shows a large banner at the top of the page naming the older copy to delete.
@@ -11288,7 +11288,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         });
         out.trainKnown = !!pt;
         // Free passive training (1 turn's worth a minute) takes part of the turns: only the rest comes out of your turns
-        const tpd = (memo.tpd !== undefined ? memo.tpd : (memo.tpd = trainTpd())) || 0, free = uvPassiveOn() ? 1440 : 0;
+        const tpd = (memo.tpd !== undefined ? memo.tpd : (memo.tpd = empireTpd())   /* Tick Generator turns/day: the Value Optimizer plan took ~5 s here (since v3.38.4) */) || 0, free = uvPassiveOn() ? 1440 : 0;
         out.yourTurns = tpd + free ? out.turns * tpd / (tpd + free) : out.turns; out.freeTurns = out.turns - out.yourTurns;
         return out;
     }
