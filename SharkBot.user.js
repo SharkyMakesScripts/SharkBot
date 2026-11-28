@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SharkBot
 // @namespace    https://spacealpha.net/
-// @version      3.38.6
+// @version      3.38.9
 // @description  SharkBot for Space Alpha: saves your planets' units, facilities, inventory, research, bank and market prices, and calculates credit generation and Tick Generator upgrade costs.
 // @author       SharkBot
 // @match        https://spacealpha.net/*
@@ -244,7 +244,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     const PANEL_ID = 'sa-helper-panel';
     const SLOT_IDS = 'ABCDEFGHIJ'.split('');   // up to 10 planets
     // Version comes from the @version header so it's never out of sync
-    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.38.6';
+    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.38.9';
     // Two copies installed (usually an update pasted in as a new script): since v3.17.1 every copy writes its version on the
     // page before doing anything, so the second copy always sees the first, even if the first has no panel yet or crashed.
     // The second copy stops and shows a large banner at the top of the page naming the older copy to delete.
@@ -3122,8 +3122,12 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
 
     // ---------- Units tab: slot storage ----------
     // Each slot: { planetName, savedAt, units: [{name, count, countDisplay}] }
-    function getSlot(id) { return GM_getValue('sa-unit-slot-' + id, null); }
-    function setSlot(id, data) { GM_setValue('sa-unit-slot-' + id, data); }
+    // Unit names are kept without the game's hotkey prefix, e.g. "(I)Industrial Workers" → "Industrial Workers" (since v3.38.9;
+    // older saved units are cleaned when read)
+    const unitName = (n) => String(n || '').replace(/^\s*\([A-Z0-9]\)\s*/, '').trim();
+    function cleanUnits(d) { if (d && Array.isArray(d.units) && d.units.some(u => /^\s*\([A-Z0-9]\)/.test(u.name || ''))) d.units = d.units.map(u => Object.assign({}, u, { name: unitName(u.name) })); return d; }
+    function getSlot(id) { return cleanUnits(GM_getValue('sa-unit-slot-' + id, null)); }
+    function setSlot(id, data) { GM_setValue('sa-unit-slot-' + id, cleanUnits(data)); }
     function clearSlot(id) {   // keeps the planet name so Scan still recognises it
         const name = getSlot(id)?.planetName;
         GM_setValue('sa-unit-slot-' + id, name ? { planetName: name, savedAt: null, units: [] } : null);
@@ -8173,7 +8177,8 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             <button class="sa-btn" id="sa-adm-copy" style="margin:8px 0 0; width:100%">⧉ Copy raw data</button>`;
     }
     // ---------- Untrained & Professor value ----------
-    function marketRes(re) { return (getMarket()?.resources || []).find(r => re.test(r.name)) || null; }
+    // Names may carry an icon or spaces before them (since v3.38.7): match the plain name too
+    function marketRes(re) { const list = getMarket()?.resources || []; return list.find(r => re.test(r.name)) || list.find(r => re.test(String(r.name || '').replace(/^[^A-Za-z]+/, '').trim())) || null; }
     function uvSlot() { const ids = planetIds(); const s = GM_getValue('sa-uv-slot', null); return ids.includes(s) ? s : ids[0] || 'A'; }
     // Professors trained in one turn (Training formula, best professor card)
     // Workers (Soldiers & workers row) trained per turn: (50 + 10·L³) × (1 + Education) × (1 + best card)
@@ -11194,7 +11199,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         const det = detectPlanet(); if (!det || !det.slot || det.assign) return;
         const rows = Array.from(q.querySelectorAll('table tr td > div > div > div > div:nth-child(2)'));
         const texts = (rows.length ? rows : [q]).map(el => (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim()).filter(Boolean);
-        const names = [...new Set((getSlot(det.slot)?.units || []).map(u => String(u.name).trim()).filter(Boolean))].sort((a, b) => b.length - a.length);
+        const names = [...new Set((getSlot(det.slot)?.units || []).map(u => String(u.name).replace(/^\s*\([A-Z0-9]\)\s*/, '').trim()).filter(Boolean))].sort((a, b) => b.length - a.length);   // without the hotkey prefix, e.g. "(I)" (since v3.38.8)
         const items = [];
         texts.forEach(t => { let rest = t; names.forEach(n => { const re = new RegExp(n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'); const m = rest.match(re); if (m) { m.forEach(() => items.push(n)); rest = rest.replace(re, ' '); } }); });
         const sig = det.slot + '|' + items.join(',');
@@ -11268,7 +11273,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     function riskOf(p, profsAll, memo) {
         const price = (re) => { const m = marketRes(re); if (!m) return null; const a = [m.sellPrice, m.buyPrice].filter(x => x != null); return a.length ? { min: Math.min(...a), max: Math.max(...a), avg: a.reduce((x, y) => x + y, 0) / a.length } : null; };
         const res = { avg: 0, min: 0, max: 0, parts: [] };
-        const add = (label, amount, pr) => { if (!amount) return; const q = pr || { min: 1, max: 1, avg: 1 }; res.avg += amount * q.avg; res.min += amount * q.min; res.max += amount * q.max; res.parts.push({ label, amount, value: amount * q.avg, priced: !!pr || label === 'Credits' }); };
+        const add = (label, amount, pr) => { if (!amount) return; if (!pr && label !== 'Credits') { res.parts.push({ label, amount, value: 0, priced: false }); res.noPrice = true; return; } const q = pr || { min: 1, max: 1, avg: 1 }; res.avg += amount * q.avg; res.min += amount * q.min; res.max += amount * q.max; res.parts.push({ label, amount, value: amount * q.avg, priced: !!pr || label === 'Credits' }); };
         const inv = p.inv || [], amt = (re) => inv.filter(x => re.test(x.name)).reduce((t, x) => t + (x.amount || 0), 0);
         add('Credits', amt(/^credits?$/i), null);
         [['Gold', /^gold/i], ['Iron', /^iron/i], ['Tritium', /^trit/i], ['Coal', /^coal/i], ['Steel', /^steel/i]].forEach(([l, re]) => add(l, amt(re), price(re)));
@@ -11348,7 +11353,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                 ...(ab.noPrice.size ? [`No market price for ${[...ab.noPrice].join(', ')}`] : [])].join('\n') : '';
             const aCell = !ab ? '—' : `<details title="${escapeHtml(aTip)}"><summary style="cursor:pointer"><b>${f(ab.credits)}</b>${ab.turns ? ` + <b>${escapeHtml(Math.ceil(ab.yourTurns).toLocaleString())}</b> turns` : ''}${ab.unknown.length ? ' <span style="color:var(--muted)">(min)</span>' : ''}${ab.saved || ab.freeTurns ? `<div style="font-size:9px; color:var(--pos)">saves ${f(ab.saved || 0)}${ab.freeTurns ? ` + ${escapeHtml(Math.ceil(ab.freeTurns).toLocaleString())} free turns` : ''}</div>` : ''}</summary><div style="font-size:10px; color:var(--muted)">${escapeHtml(aTip).replace(/\n/g, '<br>')}</div></details>`;
             const rk = lagSpan('overview: at risk', () => riskOf(p, profsAll, memo)); tot.avg += rk.res.avg; tot.min += rk.res.min; tot.max += rk.res.max; tot.turns += rk.turns.total; if (rk.turns.known) tot.known = true;
-            const rTip = `Min ${fmt(rk.res.min)} · max ${fmt(rk.res.max)} (sell / buy prices)\n` + rk.res.parts.map(x => `${x.label}: ${fmt(x.amount)}${x.label === 'Credits' ? '' : ` ≈ ${fmt(x.value)} credits`}`).join('\n');
+            const rTip = `Min ${fmt(rk.res.min)} · max ${fmt(rk.res.max)} (sell / buy prices)\n` + rk.res.parts.map(x => `${x.label}: ${fmt(x.amount)}${x.label === 'Credits' ? '' : x.priced ? ` ≈ ${fmt(x.value)} credits` : ' · no market price (scan Market), not counted'}`).join('\n');
             const rCell = rk.res.parts.length ? `<details title="${escapeHtml(rTip)}"><summary style="cursor:pointer"><b>${f(rk.res.avg)}</b></summary><div style="font-size:10px; color:var(--muted)">${escapeHtml(rTip).replace(/\n/g, '<br>')}</div></details>` : '—';
             const tTip = rk.turns.parts.map(x => `${x.label}: ${fmt(x.n)} → ${fmt(Math.ceil(x.t))} turns`).join('\n');
             const tkCell = !rk.turns.known ? '<span style="color:var(--muted)" title="Needs the Barracks level (Train Units page)">—</span>' : rk.turns.parts.length ? `<details title="${escapeHtml(tTip)}"><summary style="cursor:pointer"><b>${fT(rk.turns.total)}</b></summary><div style="font-size:10px; color:var(--muted)">${escapeHtml(tTip).replace(/\n/g, '<br>')}</div></details>` : '0';
