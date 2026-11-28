@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SharkBot
 // @namespace    https://spacealpha.net/
-// @version      3.38.2
+// @version      3.38.3
 // @description  SharkBot for Space Alpha: saves your planets' units, facilities, inventory, research, bank and market prices, and calculates credit generation and Tick Generator upgrade costs.
 // @author       SharkBot
 // @match        https://spacealpha.net/*
@@ -28,7 +28,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     // ---------- Lag report (since v3.38.1) ----------
     // SharkBot's own timers and page watchers are timed only while a 30-second lag recording runs (otherwise they run as is)
     const LAG = { on: false, tasks: new Map(), runs: [], labels: new WeakMap(), cur: null };
-    const lagLabel = (fn, kind) => { let l = LAG.labels.get(fn); if (!l) { l = kind + ': ' + (fn.name || String(fn).replace(/\s+/g, ' ').slice(0, 70)); LAG.labels.set(fn, l); } return l; };
+    const lagLabel = (fn, kind) => { if (kind[0] === '=') return kind.slice(1); let l = LAG.labels.get(fn); if (!l) { l = kind + ': ' + (fn.name || String(fn).replace(/\s+/g, ' ').slice(0, 70)); LAG.labels.set(fn, l); } return l; };
     function lagTimed(fn, kind) {
         if (typeof fn !== 'function') return fn;
         return function (...a) {
@@ -239,7 +239,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     const PANEL_ID = 'sa-helper-panel';
     const SLOT_IDS = 'ABCDEFGHIJ'.split('');   // up to 10 planets
     // Version comes from the @version header so it's never out of sync
-    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.38.2';
+    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.38.3';
     // Two copies installed (usually an update pasted in as a new script): since v3.17.1 every copy writes its version on the
     // page before doing anything, so the second copy always sees the first, even if the first has no panel yet or crashed.
     // The second copy stops and shows a large banner at the top of the page naming the older copy to delete.
@@ -1935,7 +1935,9 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         onTabShown(name);
     }
     // What a tab needs when it comes on screen (in the panel or a window)
-    function onTabShown(name) {
+    // Drawing a tab is timed in lag reports too (since v3.38.3)
+    function onTabShown(name) { return lagTimed(() => onTabShownRaw(name), '=showing tab ' + name)(); }
+    function onTabShownRaw(name) {
         const group = groupOf(name);
         if (['factorycalc', 'printer', 'barracks', 'invcreate', 'attack', 'assassin'].includes(name) && typeof sbReady !== 'undefined' && sbReady) { try { renderXc(name); } catch (e) {} }
         if (name === "valueopt" && typeof sbReady !== "undefined" && sbReady) { try { renderValueOpt(); } catch (e) {} }
@@ -3087,10 +3089,10 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     document.getElementById('sa-scan').title = 'Scan this page and save everything to the open planet\'s slot';
     document.getElementById('sa-copy').addEventListener('click', copyScan);
     document.getElementById('sa-lag').addEventListener('click', async (e) => {
-        const btn = e.currentTarget; if (LAG.on) return;
-        LAG.on = true; LAG.tasks.clear(); LAG.runs = []; const longs = [], start = performance.now();
+        const btn = e.currentTarget; if (LAG.on) { LAG.stop = true; return; }   // a second click ends the recording early (since v3.38.3)
+        LAG.stop = false; LAG.on = true; LAG.tasks.clear(); LAG.runs = []; const longs = [], start = performance.now();
         let po = null; try { po = new PerformanceObserver(l => l.getEntries().forEach(x => longs.push({ t0: x.startTime, d: x.duration }))); po.observe({ type: 'longtask', buffered: false }); } catch (err) {}
-        for (let s = 30; s > 0; s--) { btn.textContent = `⏱ Recording… ${s} s (keep playing)`; await new Promise(r => __st(r, 1000)); }
+        for (let s = 30; s > 0 && !LAG.stop; s--) { btn.textContent = `⏱ Recording… ${s} s · click to stop`; for (let q = 0; q < 10 && !LAG.stop; q++) await new Promise(r => __st(r, 100)); }
         LAG.on = false; try { po && po.disconnect(); } catch (err) {}
         const secs = (performance.now() - start) / 1000, ms = (x) => Math.round(x) + ' ms';
         const keys = (__SB_GM.list ? __SB_GM.list() : []).filter(k => /^sa-/.test(k));
@@ -5429,7 +5431,9 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     }
     // Hero cards that boost training, best first (only one card can be active at a time).
     // "Best" = biggest total boost across the unit groups.
-    function trCards() {
+    var trCardsMemo = null;
+    function trCards() { const c = GM_getValue('sa-cards', null); const key = c ? (c.savedAt || '') + '|' + (c.cards || []).length : ''; if (trCardsMemo && trCardsMemo.key === key) return trCardsMemo.v; const v = trCardsRaw(); trCardsMemo = { key, v }; return v; }
+    function trCardsRaw() {
         // Group identical effects: one row per effect, with the days of one card and the
         // total days of every card you hold with that effect
         const groups = {};
@@ -5983,7 +5987,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     // ---------- Backup & restore (since v3.26.0) ----------
     // Items never in a backup or touched by an import: registration and install code, admin data, layout and look, data fetched from the game
     // or Sharky's server (VIEW_OWN), plus this browser's profile send list and the admin's open/closed sections
-    function backupSkip(k) { return VIEW_OWN.test(k) || /^sa-(profile-queue|profile-sent|pl-folds|pull-|layout|lock|request)/.test(k); }
+    function backupSkip(k) { return VIEW_OWN.test(k) || /^sa-(profile-queue|profile-sent|pl-folds|pull-|layout|lock|request|admin-login)/.test(k); }
     var bkMsg = '';
     function renderBackup() {
         const box = document.getElementById('sa-backup-box');
@@ -6026,7 +6030,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             const nl = await lockWrap(raw, n, cur.id); __SB_GM.set('sa-lock', nl); sessionSave(raw, nl, false); encBackupSave();   // a new password ends Remember me
             pwMsg = 'Password changed.'; renderPwBox();
         });
-        box.querySelector('#sa-pw-lock').addEventListener('click', () => { try { __SB_GM.del('sa-lock-session'); } catch (e) {} location.reload(); });
+        box.querySelector('#sa-pw-lock').addEventListener('click', () => { try { __SB_GM.del('sa-lock-session'); __SB_GM.del('sa-admin-login'); } catch (e) {} location.reload(); });
     }
     function readImportFile(file) {
         if (isLocked() || sbView) return;
@@ -6190,7 +6194,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     var unregArmed = false;
 
     // Admin: log in (checked by the Apps Script) and browse everyone's shared data
-    var relockArmed = false, relockMsg = '', suggestMsg = '';
+    var adminAutoTried = false, relockArmed = false, relockMsg = '', suggestMsg = '';
     var adminCreds = null, adminData = null, adminUsers = null, adminResetArmed = null, adminSelfNote = '', adminPullAt = null, adminPullMsg = '', adminPullTimer = null;
     function renderAdmin() {
         const view = document.getElementById('sa-admin-view');
@@ -6204,7 +6208,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                     <label>Password</label><input id="sa-adm-pass" type="password" autocomplete="current-password" /><span></span>
                 </div>
                 <button class="sa-btn" id="sa-adm-login" style="margin:6px 0 0; width:100%">Log in</button>
-                <div class="sa-slot-meta" id="sa-adm-msg" style="margin-top:6px">The login is checked by your Apps Script; it isn't stored in SharkBot.</div>`;
+                <div class="sa-slot-meta" id="sa-adm-msg" style="margin-top:6px">The login is checked by your Apps Script. Once it works, SharkBot remembers it (encrypted with your SharkBot password) until you Log out.</div>`;
             const go = async () => {
                 const u = url, msg = view.querySelector('#sa-adm-msg');
                 if (!u) { msg.textContent = 'Sharing isn\'t set up in this copy of SharkBot.'; return; }
@@ -6219,14 +6223,18 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                     if (r.self && r.self.status === 'accepted')
                         regSave({ status: 'accepted', username: r.self.username || '', checkedAt: new Date().toISOString() });
                     GM_setValue('sa-admin-copy', true);
+                    // Remember the admin login (since v3.38.3): only for an accepted copy, only inside the password-encrypted storage, until Log out
+                    if (ENC.key && !sbView && regLoad().status === 'accepted') GM_setValue('sa-admin-login', { user: adminCreds.user, pass: adminCreds.pass });
                     GM_deleteValue('sa-admin-noconfirm');   // every admin login starts with the confirm box on (since v3.18.0)
                     setAdminIn(true);
                     applyLock(); renderAdmin(); renderShareSettings(); loadAdminUsers(); renderPlayers(); fetchOnline(true); fetchHolders(true);
                     adminSync();   // shared admin data (since v3.8.0)
-                } catch (e) { adminCreds = null; msg.textContent = 'Login failed: ' + e.message; }
+                } catch (e) { adminCreds = null; msg.textContent = 'Login failed: ' + e.message; if (/wrong|password|refused/i.test(e.message)) GM_deleteValue('sa-admin-login'); }
             };
             view.querySelector('#sa-adm-login').addEventListener('click', go);
             view.querySelector('#sa-adm-pass').addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
+            const saved = ENC.key && !sbView && !adminAutoTried ? GM_getValue('sa-admin-login', null) : null;
+            if (saved && saved.user && saved.pass) { adminAutoTried = true; view.querySelector('#sa-adm-user').value = saved.user; view.querySelector('#sa-adm-pass').value = saved.pass; view.querySelector('#sa-adm-msg').textContent = 'Logging in (remembered)…'; go(); }
             return;
         }
         const f = (v) => v == null ? '—' : escapeHtml(fmt(v));
@@ -6303,7 +6311,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             renderAdmin(); try { renderPlayers(); } catch (e) {}
         });
         view.querySelector('#sa-adm-pull').addEventListener('click', () => requestBox());
-        view.querySelector('#sa-adm-logout').addEventListener('click', () => { GM_deleteValue('sa-admin-noconfirm'); adminCreds = null; adminData = null; adminUsers = null; allyOpen = {}; plOpen = null; setAdminIn(false); renderAdmin(); renderAdminUsers(); renderPlayers(); });
+        view.querySelector('#sa-adm-logout').addEventListener('click', () => { GM_deleteValue('sa-admin-noconfirm'); GM_deleteValue('sa-admin-login'); adminCreds = null; adminData = null; adminUsers = null; allyOpen = {}; plOpen = null; setAdminIn(false); renderAdmin(); renderAdminUsers(); renderPlayers(); });
         if (sel) wireAdminDetail(view, sel);
         wireManagedAdmin(view);
         view.querySelectorAll('tr[data-player]').forEach(tr => tr.addEventListener('click', () => { GM_setValue('sa-admin-pick', tr.dataset.player); resetPick = null; renderAdmin(); }));
@@ -7211,7 +7219,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         box.querySelector('.sa-confirm-ok').addEventListener('click', () => { box.remove(); if (btn.isConnected) { ask.arm(); sbConfirmOk = btn; btn.click(); } });
     }, true);
     if (sbView) { panel.classList.add('sa-viewing'); renderViewBar(); }
-    else if (__SB_GM.list && __SB_GM.del) { try { __SB_GM.list().filter(k => k === 'sa-admin-viewing' || (/^sa-admin-viewing:/.test(k) && Date.now() - new Date((__SB_GM.get(k, {}) || {}).openedAt || 0) > 2 * 86400e3)).forEach(k => __SB_GM.del(k)); } catch (e) {} }
+    else if (__SB_GM.list && __SB_GM.del) { try { __SB_GM.list().filter(k => k === 'sa-admin-viewing' || (/^sa-admin-viewing:/.test(k) && Date.now() - new Date((__SB_GM.get(k, {}) || {}).openedAt || 0) > 120e3)).forEach(k => __SB_GM.del(k)); } catch (e) {} }
     renderUpdateBar();
     // On a page load: the full check (server + GitHub) if the last one is 30+ minutes old (since v3.14.1), otherwise GitHub alone (since v3.27.2)
     setTimeout(() => { const last = updLoad().checkedAt, due = !last || Date.now() - new Date(last) >= 30 * 60e3;
@@ -11227,7 +11235,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     }
     // At risk (since v3.35.0): resources = credits on the planet + gold, iron, tritium, coal, steel and untrained slaves at market prices
     // (average of sell and buy; min and max on hover); turns = turns the Training calculator needs to train the planet's units again
-    function riskOf(p, profsAll) {
+    function riskOf(p, profsAll, memo) {
         const price = (re) => { const m = marketRes(re); if (!m) return null; const a = [m.sellPrice, m.buyPrice].filter(x => x != null); return a.length ? { min: Math.min(...a), max: Math.max(...a), avg: a.reduce((x, y) => x + y, 0) / a.length } : null; };
         const res = { avg: 0, min: 0, max: 0, parts: [] };
         const add = (label, amount, pr) => { if (!amount) return; const q = pr || { min: 1, max: 1, avg: 1 }; res.avg += amount * q.avg; res.min += amount * q.min; res.max += amount * q.max; res.parts.push({ label, amount, value: amount * q.avg, priced: !!pr || label === 'Credits' }); };
@@ -11238,7 +11246,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         if (slaves == null && p.slot) slaves = (getSlot(p.slot)?.units || []).filter(u => /untrained/i.test(u.name) && /slave/i.test(u.name)).reduce((t, u) => t + (u.count || 0), 0) || null;
         if (slaves) add('Untrained slaves', slaves, price(/slave|untrained/i));
         const turns = { total: 0, parts: [], known: false };
-        const pt = p.slot ? trPerTurn(p.slot, profsAll) : null;
+        const pt = p.slot ? (memo && memo.ptP[p.slot] !== undefined ? memo.ptP[p.slot] : (memo ? memo.ptP[p.slot] = trPerTurn(p.slot, profsAll) : trPerTurn(p.slot, profsAll))) : null;
         if (pt) {
             turns.known = true;
             const units = getSlot(p.slot)?.units || [], cnt = (re) => units.filter(u => re.test(u.name)).reduce((t, u) => t + (u.count || 0), 0);
@@ -11253,8 +11261,8 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     // Counted: every Area (40,000·Σk^1.7), the Tick Generator (Sean's formula), Barracks, and training every unit back except
     // professors and teachers (turns, from the Training formulas). Not counted: credits, resources, untrained units and professors
     // (they can be moved or sold), and facilities whose cost formula isn't known yet (listed).
-    function abandonOf(p) {
-        if (!p.slot) return null;
+    function abandonOf(p, memo) {
+        if (!p.slot) return null; memo = memo || { pt: {}, ac: {} };
         const price = (n) => { const m = marketRes(new RegExp('^' + n, 'i')); if (!m) return null; const a = [m.sellPrice, m.buyPrice].filter(x => x != null); return a.length ? a.reduce((x, y) => x + y, 0) / a.length : null; };
         const out = { credits: 0, parts: [], unknown: [], turns: 0, units: [], noPrice: new Set() };
         const mats = (o) => { let t = 0; Object.entries(o).forEach(([n, q]) => { if (!q) return; const pr = price(n); if (pr == null) out.noPrice.add(n); else t += q * pr; }); return t; };
@@ -11263,7 +11271,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         items.forEach(i => {
             const L = i.kind === 'area' ? levelFrom(i).value ?? i.value : i.value; if (!(L > 0)) return;
             const nm = cleanName(i.name);
-            if (i.kind === 'area') { const full = Math.round(40000 * sumPowFast(1, L, 1.7)), cp = areaCardPct(p.slot, nm) / 100; add(`${nm} (level ${fmt(L)})`, full * (1 - cp), null, full * cp, cp ? ` (−${+(cp * 100).toFixed(2)}% card)` : ''); }
+            if (i.kind === 'area') { const full = Math.round(40000 * sumPowFast(1, L, 1.7)), ak = p.slot + '|' + nm, cp = (memo.ac[ak] ?? (memo.ac[ak] = areaCardPct(p.slot, nm))) / 100; add(`${nm} (level ${fmt(L)})`, full * (1 - cp), null, full * cp, cp ? ` (−${+(cp * 100).toFixed(2)}% card)` : ''); }
             else if (/tick\s*generator/i.test(nm)) { const n = L, s25 = sumPowFast(1, L - 1, 2.5), s13 = sumPowFast(1, L - 1, 1.3), s15 = sumPowFast(1, L - 1, 1.5);
                 add(`Tick Generator (level ${fmt(L)})`, 8e8 * n + 1.2e9 * s25, { Gold: n + 8 * s13, Iron: 3 * n + 10 * s15, Tritium: n + 10 * s13 }); }
             else if (/barracks/i.test(nm)) {}
@@ -11271,7 +11279,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         });
         const bl = trSaved(p.slot).barracks;
         if (bl > 0) { const cp = (trCostCards()[0]?.value || 0) / 100, c = barracksCost(0, bl, cp); add(`Barracks (level ${fmt(bl)})`, c.credits, { Iron: c.iron, Gold: c.gold }, c.credits / (1 - cp || 1) * cp, cp ? ` (−${+(cp * 100).toFixed(2)}% card)` : ''); }
-        const pt = trPerTurn(p.slot);
+        const pt = memo.pt[p.slot] !== undefined ? memo.pt[p.slot] : (memo.pt[p.slot] = trPerTurn(p.slot));
         if (pt) (getSlot(p.slot)?.units || []).forEach(u => {
             const n = u.count || 0, nm = String(u.name); if (!n || /untrained|professor|teacher/i.test(nm)) return;
             const key = /corporal/i.test(nm) ? 'corporals' : /major/i.test(nm) ? 'majors' : /champion/i.test(nm) ? 'champions' : /tactician/i.test(nm) ? 'profs'
@@ -11280,7 +11288,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         });
         out.trainKnown = !!pt;
         // Free passive training (1 turn's worth a minute) takes part of the turns: only the rest comes out of your turns
-        const tpd = trainTpd() || 0, free = uvPassiveOn() ? 1440 : 0;
+        const tpd = (memo.tpd !== undefined ? memo.tpd : (memo.tpd = trainTpd())) || 0, free = uvPassiveOn() ? 1440 : 0;
         out.yourTurns = tpd + free ? out.turns * tpd / (tpd + free) : out.turns; out.freeTurns = out.turns - out.yourTurns;
         return out;
     }
@@ -11298,17 +11306,18 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         const alerts = [];
         const typedProfs = parseNumber(GM_getValue('sa-ov-profs', '')), sumProfs = planetIds().reduce((t, id) => t + (getSlot(id)?.units || []).filter(u => /professor/i.test(u.name)).reduce((s, u) => s + (u.count || 0), 0), 0);
         const profsAll = typedProfs != null ? typedProfs : sumProfs, tot = { avg: 0, min: 0, max: 0, turns: 0 };
+        const memo = { pt: {}, ptP: {}, ac: {} };   // worked out once per draw (since v3.38.3: Value Optimizer and the card list were redone per planet)
         const fT = (t) => t == null ? '—' : escapeHtml(fmt(Math.ceil(t)));
         const rows = planets.map(p => {
             const tr = p.train, fa = p.factory, hero = p.hero;
-            const ab = abandonOf(p); if (ab) { tot.abC = (tot.abC || 0) + ab.credits; tot.abT = (tot.abT || 0) + ab.turns; }
+            const ab = abandonOf(p, memo); if (ab) { tot.abC = (tot.abC || 0) + ab.credits; tot.abT = (tot.abT || 0) + ab.turns; }
             if (ab) tot.abY = (tot.abY || 0) + ab.yourTurns;
             const aTip = ab ? [`Cheapest way: best card for each part, free training counted.`, `Saved: ${fmt(ab.saved || 0)} credits by cards · ${Math.ceil(ab.freeTurns).toLocaleString()} turns trained free (1 a minute) of ${Math.ceil(ab.turns).toLocaleString()} turns' worth`,
                 ...ab.parts.map(x => `${x.label}: ${fmt(x.v)} credits`), ...ab.units.map(x => `${x.label}: ${fmt(x.n)} → ${Math.ceil(x.t).toLocaleString()} turns' worth`),
                 ...(ab.trainKnown ? [] : ['Units: needs the Barracks level (Train Units page)']), ...(ab.unknown.length ? [`Not counted (cost formula unknown): ${ab.unknown.join(', ')}`] : []),
                 ...(ab.noPrice.size ? [`No market price for ${[...ab.noPrice].join(', ')}`] : [])].join('\n') : '';
             const aCell = !ab ? '—' : `<details title="${escapeHtml(aTip)}"><summary style="cursor:pointer"><b>${f(ab.credits)}</b>${ab.turns ? ` + <b>${escapeHtml(Math.ceil(ab.yourTurns).toLocaleString())}</b> turns` : ''}${ab.unknown.length ? ' <span style="color:var(--muted)">(min)</span>' : ''}${ab.saved || ab.freeTurns ? `<div style="font-size:9px; color:var(--pos)">saves ${f(ab.saved || 0)}${ab.freeTurns ? ` + ${escapeHtml(Math.ceil(ab.freeTurns).toLocaleString())} free turns` : ''}</div>` : ''}</summary><div style="font-size:10px; color:var(--muted)">${escapeHtml(aTip).replace(/\n/g, '<br>')}</div></details>`;
-            const rk = riskOf(p, profsAll); tot.avg += rk.res.avg; tot.min += rk.res.min; tot.max += rk.res.max; tot.turns += rk.turns.total; if (rk.turns.known) tot.known = true;
+            const rk = riskOf(p, profsAll, memo); tot.avg += rk.res.avg; tot.min += rk.res.min; tot.max += rk.res.max; tot.turns += rk.turns.total; if (rk.turns.known) tot.known = true;
             const rTip = `Min ${fmt(rk.res.min)} · max ${fmt(rk.res.max)} (sell / buy prices)\n` + rk.res.parts.map(x => `${x.label}: ${fmt(x.amount)}${x.label === 'Credits' ? '' : ` ≈ ${fmt(x.value)} credits`}`).join('\n');
             const rCell = rk.res.parts.length ? `<details title="${escapeHtml(rTip)}"><summary style="cursor:pointer"><b>${f(rk.res.avg)}</b></summary><div style="font-size:10px; color:var(--muted)">${escapeHtml(rTip).replace(/\n/g, '<br>')}</div></details>` : '—';
             const tTip = rk.turns.parts.map(x => `${x.label}: ${fmt(x.n)} → ${fmt(Math.ceil(x.t))} turns`).join('\n');
