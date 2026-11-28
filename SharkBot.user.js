@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SharkBot
 // @namespace    https://spacealpha.net/
-// @version      3.38.10
+// @version      4.0.0
 // @description  SharkBot for Space Alpha: saves your planets' units, facilities, inventory, research, bank and market prices, and calculates credit generation and Tick Generator upgrade costs.
 // @author       SharkBot
 // @match        https://spacealpha.net/*
@@ -244,7 +244,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     const PANEL_ID = 'sa-helper-panel';
     const SLOT_IDS = 'ABCDEFGHIJ'.split('');   // up to 10 planets
     // Version comes from the @version header so it's never out of sync
-    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '3.38.10';
+    const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '4.0.0';
     // Two copies installed (usually an update pasted in as a new script): since v3.17.1 every copy writes its version on the
     // page before doing anything, so the second copy always sees the first, even if the first has no panel yet or crashed.
     // The second copy stops and shows a large banner at the top of the page naming the older copy to delete.
@@ -5783,7 +5783,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         };
     }
     // The server refused this copy ("not registered"): check its status now, which locks the panel if it was denied
-    function refusedCheck(r) { updFromServer(r); if (r && r.ok === false && /not registered|update SharkBot/i.test(r.error || '')) checkReg(true); }
+    function refusedCheck(r) { updFromServer(r); if (r && r.ok === false && /not registered|update SharkBot|pre-release/i.test(r.error || '')) checkReg(true); }
     // ---------- Updates (since v3.4.0) ----------
     // Sharky's server says which versions it needs (minVersion) and the newest (latestVersion), and where the newest file
     // lives (updateUrl: SharkBot.user.js in the SharkyMakesScripts/SharkBot GitHub repository). Check for update in the header checks now; the newest file's @version is read from there too.
@@ -5793,8 +5793,11 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     function updSave(patch) { GM_setValue('sa-update', Object.assign(updLoad(), patch)); renderUpdateBar(); }
     function updFromServer(r) {
         if (!r || (!r.latestVersion && !r.minVersion)) return;
-        const cur = updLoad(), latest = [r.latestVersion, cur.gistVersion].filter(Boolean).sort((a, b) => verLess(a, b) ? 1 : -1)[0];
-        updSave({ min: r.minVersion || cur.min, latest, url: safeUpdateUrl(r.updateUrl), serverAt: new Date().toISOString() });
+        const cur = updLoad(), pre = r.preVersion && GM_getValue('sa-admin-copy', false) && GM_getValue('sa-update-channel', 'public') === 'pre';
+        // Pre-release channel (since v4.0.0): admin copies can follow SharkBot-pre.user.js; everyone else follows the public file
+        const latest = [r.latestVersion, pre ? r.preVersion : null, cur.gistVersion].filter(Boolean).sort((a, b) => verLess(a, b) ? 1 : -1)[0];
+        updSave({ min: r.minVersion || cur.min, latest, url: safeUpdateUrl(pre ? r.preUrl : r.updateUrl), publicVersion: r.publicVersion || cur.publicVersion || null,
+                  preBlocked: r.prerelease === true || (r.status != null ? false : !!cur.preBlocked), serverAt: new Date().toISOString() });
     }
     var updMsg = '', updMsgTimer = null;
     var updGhFail = false;
@@ -5848,14 +5851,14 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
         const bar = document.getElementById('sa-update-bar');
         if (!bar) return;
         const u = updLoad(), need = u.min && verLess(VERSION, u.min) || regLoad().status === 'update', avail = u.latest && verLess(VERSION, u.latest);
-        const url = safeUpdateUrl(u.url);
+        const url = u.preBlocked ? UPDATE_URL : safeUpdateUrl(u.url);
         // A new major or minor version (x.y.0) is strongly recommended (since v3.33.0); only major (x.0.0) versions are forced by the server
         const strong = avail && !need && (() => { const a = String(VERSION).split('.').map(Number), b = String(u.latest).split('.').map(Number); return (b[0] || 0) > (a[0] || 0) || (b[1] || 0) > (a[1] || 0); })();
         if (!need && !avail && !updMsg) { bar.style.display = 'none'; bar.innerHTML = ''; return; }
         bar.style.cssText = `display:flex; gap:6px; align-items:center; flex-wrap:wrap; padding:5px 10px; font-size:11px; border-bottom:1px solid var(--border);
             background:${need ? 'rgba(220,70,70,0.18)' : strong ? 'rgba(245,158,11,0.22)' : avail ? 'rgba(80,160,255,0.15)' : 'var(--inset)'}`;
         bar.innerHTML = !need && !avail ? `<span style="flex:1">${escapeHtml(updMsg)}</span>${updGhFail && /GitHub/.test(updMsg) ? `<button class="sa-btn" id="sa-update-open" style="margin:0">Open update page</button>` : ''}`
-            : `<span style="flex:1">${need ? `<b>Update required:</b> Sharky's server needs SharkBot v${escapeHtml(u.min || u.latest || '?')} or newer` : strong ? `<b>Strongly recommended:</b> update to SharkBot v${escapeHtml(u.latest)}` : `<b>SharkBot v${escapeHtml(u.latest)}</b> is available`} (you have v${escapeHtml(VERSION)}).${
+            : `<span style="flex:1">${need && u.preBlocked ? `<b>Admin-only pre-release:</b> v${escapeHtml(VERSION)} is for Sharky only. Install the public SharkBot${u.publicVersion ? ' v' + escapeHtml(u.publicVersion) : ''}` : need ? `<b>Update required:</b> Sharky's server needs SharkBot v${escapeHtml(u.min || u.latest || '?')} or newer` : strong ? `<b>Strongly recommended:</b> update to SharkBot v${escapeHtml(u.latest)}` : `<b>SharkBot v${escapeHtml(u.latest)}</b> is available`} (you have v${escapeHtml(VERSION)}).${
                 url ? '' : ' Ask Sharky for the new file.'}</span>${url ? `<button class="sa-btn" id="sa-update-go" style="margin:0">Update</button>` : ''}`;
         bar.querySelector('#sa-update-open')?.addEventListener('click', () => { window.open(url, '_blank'); updMsg = 'If Tampermonkey shows an Update or Reinstall page, click it, then refresh this page (F5) to start the new version.'; updGhFail = false; renderUpdateBar(); });
         bar.querySelector('#sa-update-go')?.addEventListener('click', () => {
@@ -6213,7 +6216,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
     var unregArmed = false;
 
     // Admin: log in (checked by the Apps Script) and browse everyone's shared data
-    var adminAutoTried = false, relockArmed = false, relockMsg = '', suggestMsg = '';
+    var adminPublic = null, adminPre = null, publicMsg = '', adminAutoTried = false, relockArmed = false, relockMsg = '', suggestMsg = '';
     var adminCreds = null, adminData = null, adminUsers = null, adminResetArmed = null, adminSelfNote = '', adminPullAt = null, adminPullMsg = '', adminPullTimer = null;
     function renderAdmin() {
         const view = document.getElementById('sa-admin-view');
@@ -6236,7 +6239,7 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                 try {
                     const r = await gmPost(u, Object.assign({ action: 'admin', user: adminCreds.user, pass: adminCreds.pass, version: VERSION }, regIdentity()));
                     if (!r || !r.ok) throw new Error((r && r.error) || 'refused');
-                    adminData = r.players || []; adminDataAt = Date.now(); adminSelfNote = r.selfNote || ''; adminPullAt = r.pullAt || null; adminRequest = r.request || null; adminTemps = r.temps || [];
+                    adminData = r.players || []; adminDataAt = Date.now(); adminSelfNote = r.selfNote || ''; adminPullAt = r.pullAt || null; adminRequest = r.request || null; adminPublic = r.publicVersion || null; adminPre = r.preVersion || null; adminTemps = r.temps || [];
                     if (r.config) allianceSave(r.config);
                     // The Apps Script accepts the admin's own copy
                     if (r.self && r.self.status === 'accepted')
@@ -6270,6 +6273,10 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                 <button class="sa-btn" id="sa-adm-refresh" style="margin:0; flex:1">↻ Refresh</button>
                 <button class="sa-btn" id="sa-adm-pull" style="margin:0; flex:1" title="Ask players for data: pick what, from whom and for how long; each player sees a note and chooses whether to send">⇣ Request data</button>
                 <button class="sa-btn" id="sa-adm-logout" style="margin:0; flex:1">Log out</button></div>
+            <div style="margin-bottom:6px; display:flex; gap:6px; align-items:center; flex-wrap:wrap; font-size:11px">Update channel
+                <select class="sa-select" id="sa-adm-channel" style="width:auto"><option value="public" ${GM_getValue('sa-update-channel', 'public') !== 'pre' ? 'selected' : ''}>Public</option><option value="pre" ${GM_getValue('sa-update-channel', 'public') === 'pre' ? 'selected' : ''}>Pre-release</option></select>
+                <span style="color:var(--muted)">Public: v${escapeHtml(adminPublic || updLoad().publicVersion || '?')}${adminPre ? ` · newest: v${escapeHtml(adminPre)}` : ''}</span>
+                ${adminPublic && verLess(adminPublic, VERSION) ? `<button class="sa-btn" id="sa-adm-setpublic" style="margin:0" title="Everyone may then run v${escapeHtml(VERSION)}; until then it's an admin-only pre-release">Make v${escapeHtml(VERSION)} public</button>` : ''}${publicMsg ? `<span class="sa-slot-meta">${escapeHtml(publicMsg)}</span>` : ''}</div>
             <div style="margin-bottom:6px"><button class="sa-btn" id="sa-adm-suggest" style="margin:0; width:100%" title="Players on an older version get a pop-up within a minute suggesting the update (once each)">⇧ Suggest update to v${escapeHtml(updLoad().latest || VERSION)}</button>${suggestMsg ? `<div class="sa-slot-meta">${escapeHtml(suggestMsg)}</div>` : ''}</div>
             <div style="margin-bottom:6px"><button class="sa-btn sa-btn-danger" id="sa-adm-relock" style="margin:0; width:100%" title="Every player's SharkBot locks within a minute and asks for their password again (Remember me included). Admin copies aren't affected.">🔒 Make everyone re-enter their password</button>${relockMsg ? `<div class="sa-slot-meta">${escapeHtml(relockMsg)}</div>` : ''}</div>
             ${(() => { const c = clearCandidates(); return `<div style="margin-bottom:6px"><button class="sa-btn sa-btn-danger" id="sa-adm-clear" style="margin:0; width:100%" ${c.names.length ? '' : 'disabled'}
@@ -6303,6 +6310,13 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
                 ${deleteBtn(resetPick)}` : ''}
             ${managedAdminHtml()}`;
         view.querySelector('#sa-adm-refresh').addEventListener('click', adminRefresh);
+        view.querySelector('#sa-adm-channel')?.addEventListener('change', (e) => { GM_setValue('sa-update-channel', e.target.value); checkUpdate(true); });
+        view.querySelector('#sa-adm-setpublic')?.addEventListener('click', async () => {
+            try { const r = await gmPost(shareUrl(), Object.assign({ action: 'setpublic', publicVersion: VERSION, user: adminCreds.user, pass: adminCreds.pass, version: VERSION }, regIdentity()));
+                  if (r && r.ok) { adminPublic = r.publicVersion; publicMsg = `v${r.publicVersion} is now public: commit it as SharkBot.user.js too.`; } else publicMsg = 'Failed: ' + ((r && r.error) || 'no answer');
+            } catch (e) { publicMsg = 'Failed: ' + e.message; }
+            renderAdmin();
+        });
         view.querySelector('#sa-adm-suggest').addEventListener('click', async () => {
             try { const r = await gmPost(shareUrl(), Object.assign({ action: 'suggestupdate', user: adminCreds.user, pass: adminCreds.pass, version: VERSION }, regIdentity()));
                   suggestMsg = r && r.ok ? `Suggested v${r.suggest.version} at ${new Date(r.suggest.at).toLocaleTimeString()}: open SharkBots on older versions see a pop-up within a minute.` : 'Failed: ' + ((r && r.error) || 'no answer');
@@ -6933,6 +6947,8 @@ const __SB_GM = { get: GM_getValue, set: GM_setValue, list: typeof GM_listValues
             state = `<b>Waiting for Sharky to accept</b> (requested ${when(r.requestedAt)}${r.verified === false ? ', not verified online' : ''}). SharkBot checks every 15 minutes.`;
         else if (r.status === 'denied')
             state = `<b>Your registration was denied.</b> ${waitDenied ? `You can register again after ${when(r.retryAt)}.` : 'You can register again.'}`;
+        else if (r.status === 'update' && updLoad().preBlocked)
+            state = `<b>This is an admin-only pre-release.</b> Install the public SharkBot${updLoad().publicVersion ? ' v' + escapeHtml(updLoad().publicVersion) : ''} with <b>Update</b> in the bar at the top.`;
         else if (r.status === 'update')
             state = `<b>Update SharkBot.</b> Sharky's server needs SharkBot v${escapeHtml((updLoad().min) || '?')} or newer (you have v${escapeHtml(VERSION)}). Use <b>Update</b> in the bar at the top.`;
         else if (r.status === 'unregistered')
